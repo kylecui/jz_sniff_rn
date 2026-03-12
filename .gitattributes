@@ -1,0 +1,9 @@
+# Force LF line endings — target is Ubuntu
+* text=auto eol=lf
+
+# Binary files
+*.o binary
+*.so binary
+*.a binary
+*.db binary
+*.pcap binary
