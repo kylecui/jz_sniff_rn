@@ -80,7 +80,17 @@ jzguard list
 jzlog attack --since 2026-03-01
 ```
 
-See [design.md](design.md) for full architecture documentation.
+See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.md](DEVELOPMENT.md) for detailed build instructions, API reference, and development guide.
+
+## Current Status
+
+Phases 1-5 are complete (~11,245 lines across 42 files):
+- 8 BPF kernel modules (all pipeline stages)
+- 6 user-space library modules (db, mac_pool, config, config_map, config_history, config_diff)
+- 13 test files (8 BPF + 5 unit)
+- Build system, configuration, and infrastructure
+
+Remaining: Phase 6 (bg collection user-space), Phase 7 (daemons), Phase 8 (CLI + REST API + deployment).
 
 ## Project Structure
 
