@@ -1,0 +1,65 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.skel.h
+*.tmp
+
+# BPF compiled objects
+bpf/*.o
+
+# User-space binaries
+src/sniffd/sniffd
+src/configd/configd
+src/collectord/collectord
+src/uploadd/uploadd
+cli/jzctl
+cli/jzguard
+cli/jzlog
+
+# Generated files
+vmlinux.h
+*.gcda
+*.gcno
+*.gcov
+coverage/
+lcov.info
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+compile_commands.json
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.p12
+!config/profiles/*.yaml
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime
+/var/
+*.pid
+*.sock
+*.log
+
+# Third-party vendored source is tracked, but build artifacts are not
+third_party/**/*.o
+third_party/**/*.a
+third_party/**/*.so
+
+# Nul file (Windows artifact)
+nul

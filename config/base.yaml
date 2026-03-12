@@ -1,0 +1,118 @@
+# /etc/jz/base.yaml — Base configuration profile
+---
+version: 1
+
+system:
+  device_id: "jz-sniff-001"
+  log_level: "info"                  # debug, info, warn, error
+  data_dir: "/var/lib/jz"
+  run_dir: "/var/run/jz"
+
+modules:
+  guard_classifier:
+    enabled: true
+    stage: 22
+  arp_honeypot:
+    enabled: true
+    stage: 23
+    rate_limit_pps: 100
+    log_all: false
+  icmp_honeypot:
+    enabled: true
+    stage: 24
+    ttl: 64                          # Emulate Linux
+    rate_limit_pps: 100
+  sniffer_detect:
+    enabled: true
+    stage: 25
+    probe_interval_sec: 30
+    probe_count: 5                   # Number of probe IPs per cycle
+  traffic_weaver:
+    enabled: true
+    stage: 35
+    default_action: "pass"
+  bg_collector:
+    enabled: true
+    stage: 40
+    sample_rate: 1                   # 1 = every packet
+    protocols:
+      arp: true
+      dhcp: true
+      mdns: true
+      ssdp: true
+      lldp: true
+      cdp: true
+      stp: true
+      igmp: true
+  threat_detect:
+    enabled: true
+    stage: 50
+  forensics:
+    enabled: true
+    stage: 55
+    max_payload_bytes: 256
+    sample_rate: 0                   # 0 = only sample flagged packets
+
+guards:
+  static: []
+  #  - ip: "10.0.1.50"
+  #    mac: "aa:bb:cc:dd:ee:01"     # Optional, use pool if omitted
+  #    vlan: 0                       # 0 = all VLANs
+
+  dynamic:
+    auto_discover: false
+    max_entries: 16384
+    ttl_hours: 24                    # Auto-expire after 24h
+
+  whitelist: []
+  #  - ip: "10.0.1.1"
+  #    mac: "00:11:22:33:44:55"
+  #    match_mac: true
+
+fake_mac_pool:
+  prefix: "aa:bb:cc"                # OUI prefix for fake MACs
+  count: 64                          # Number of fake MACs to generate
+
+policies: []
+  # - src_ip: "0.0.0.0"              # 0.0.0.0 = wildcard
+  #   dst_ip: "10.0.1.50"
+  #   src_port: 0                     # 0 = wildcard
+  #   dst_port: 22
+  #   proto: "tcp"
+  #   action: "redirect"
+  #   redirect_port: 8               # Interface index
+  #   mirror_port: 0
+
+threats:
+  blacklist_file: "/etc/jz/blacklist.txt"  # One IP per line
+  patterns: []
+  #  - id: 1
+  #    dst_port: 445
+  #    proto: "tcp"
+  #    threat_level: "high"
+  #    action: "log_drop"
+  #    description: "SMB exploit attempt"
+
+collector:
+  db_path: "/var/lib/jz/jz.db"
+  max_db_size_mb: 512
+  dedup_window_sec: 10
+  rate_limit_eps: 1000               # Max events per second
+
+uploader:
+  enabled: false
+  platform_url: ""
+  interval_sec: 60
+  batch_size: 1000
+  tls_cert: ""
+  tls_key: ""
+  compress: true                     # gzip compression
+
+api:
+  enabled: true
+  listen: "0.0.0.0:8443"
+  tls_cert: "/etc/jz/tls/server.crt"
+  tls_key: "/etc/jz/tls/server.key"
+  auth_tokens:
+    - token: ""                      # Generated on first boot
+      role: "admin"
