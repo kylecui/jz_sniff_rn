@@ -1,0 +1,337 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * bpf_loader.c - BPF module loader implementation for sniffd.
+ *
+ * Uses libbpf to load compiled BPF object files and register programs
+ * in the rSwitch pipeline via the rs_progs map.
+ */
+
+#define _GNU_SOURCE
+
+#include "bpf_loader.h"
+#include "log.h"
+
+#include <errno.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <bpf/libbpf.h>
+#include <bpf/bpf.h>
+
+/* ── Module Definitions ───────────────────────────────────────── */
+
+/* Default BPF pin path */
+#define JZ_BPF_PIN_PATH  "/sys/fs/bpf/jz"
+
+/* rSwitch program registration map */
+#define RS_PROGS_PIN     "/sys/fs/bpf/rswitch/rs_progs"
+
+static const struct {
+    const char *name;
+    const char *obj_file;
+    int         stage;
+} module_defs[JZ_MOD_COUNT] = {
+    [JZ_MOD_GUARD_CLASSIFIER] = { "guard_classifier",  "guard_classifier.bpf.o",  22 },
+    [JZ_MOD_ARP_HONEYPOT]     = { "arp_honeypot",      "arp_honeypot.bpf.o",      23 },
+    [JZ_MOD_ICMP_HONEYPOT]    = { "icmp_honeypot",     "icmp_honeypot.bpf.o",     24 },
+    [JZ_MOD_SNIFFER_DETECT]   = { "sniffer_detect",    "sniffer_detect.bpf.o",    25 },
+    [JZ_MOD_TRAFFIC_WEAVER]   = { "traffic_weaver",    "traffic_weaver.bpf.o",    35 },
+    [JZ_MOD_BG_COLLECTOR]     = { "bg_collector",      "bg_collector.bpf.o",      40 },
+    [JZ_MOD_THREAT_DETECT]    = { "threat_detect",     "threat_detect.bpf.o",     50 },
+    [JZ_MOD_FORENSICS]        = { "forensics",         "forensics.bpf.o",         55 },
+};
+
+/* ── Internal Helpers ─────────────────────────────────────────── */
+
+/* Ensure pin directory exists. */
+static int ensure_pin_dir(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        if (S_ISDIR(st.st_mode))
+            return 0;
+        return -1;  /* exists but not a directory */
+    }
+    if (mkdir(path, 0755) < 0 && errno != EEXIST)
+        return -1;
+    return 0;
+}
+
+/* Register BPF program fd in rs_progs map at the given stage key. */
+static int register_in_rswitch(int prog_fd, int stage)
+{
+    int map_fd = bpf_obj_get(RS_PROGS_PIN);
+    if (map_fd < 0) {
+        jz_log_warn("Cannot open rs_progs map at %s: %s",
+                     RS_PROGS_PIN, strerror(errno));
+        return -1;
+    }
+
+    uint32_t key = (uint32_t)stage;
+    int ret = bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
+    close(map_fd);
+
+    if (ret < 0) {
+        jz_log_error("Failed to register stage %d in rs_progs: %s",
+                      stage, strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Remove BPF program from rs_progs map at the given stage key. */
+static int unregister_from_rswitch(int stage)
+{
+    int map_fd = bpf_obj_get(RS_PROGS_PIN);
+    if (map_fd < 0)
+        return -1;
+
+    uint32_t key = (uint32_t)stage;
+    int ret = bpf_map_delete_elem(map_fd, &key);
+    close(map_fd);
+
+    return ret;
+}
+
+/* ── Public API ───────────────────────────────────────────────── */
+
+int jz_bpf_loader_init(jz_bpf_loader_t *loader, const char *bpf_dir)
+{
+    if (!loader || !bpf_dir)
+        return -1;
+
+    memset(loader, 0, sizeof(*loader));
+    snprintf(loader->bpf_dir, sizeof(loader->bpf_dir), "%s", bpf_dir);
+    snprintf(loader->pin_path, sizeof(loader->pin_path), "%s", JZ_BPF_PIN_PATH);
+
+    for (int i = 0; i < JZ_MOD_COUNT; i++) {
+        loader->modules[i].name     = module_defs[i].name;
+        loader->modules[i].obj_file = module_defs[i].obj_file;
+        loader->modules[i].stage    = module_defs[i].stage;
+        loader->modules[i].loaded   = false;
+        loader->modules[i].enabled  = false;
+        loader->modules[i].bpf_obj  = NULL;
+        loader->modules[i].prog_fd  = -1;
+    }
+
+    loader->initialized = true;
+    loader->loaded_count = 0;
+
+    return 0;
+}
+
+int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
+{
+    if (!loader || !loader->initialized)
+        return -1;
+    if (mod_id < 0 || mod_id >= JZ_MOD_COUNT)
+        return -1;
+
+    jz_bpf_module_t *mod = &loader->modules[mod_id];
+    if (mod->loaded) {
+        jz_log_warn("Module %s already loaded", mod->name);
+        return 0;
+    }
+
+    /* Build full path to object file */
+    char obj_path[512];
+    snprintf(obj_path, sizeof(obj_path), "%s/%s",
+             loader->bpf_dir, mod->obj_file);
+
+    /* Check file exists */
+    if (access(obj_path, R_OK) < 0) {
+        jz_log_error("BPF object not found: %s", obj_path);
+        return -1;
+    }
+
+    /* Ensure pin directory */
+    if (ensure_pin_dir(loader->pin_path) < 0) {
+        jz_log_error("Cannot create pin directory: %s", loader->pin_path);
+        return -1;
+    }
+
+    /* Open BPF object */
+    struct bpf_object *obj = bpf_object__open(obj_path);
+    if (!obj) {
+        jz_log_error("Failed to open BPF object %s: %s",
+                      obj_path, strerror(errno));
+        return -1;
+    }
+
+    /* Load (verify + load into kernel) */
+    if (bpf_object__load(obj) < 0) {
+        jz_log_error("Failed to load BPF object %s: %s",
+                      obj_path, strerror(errno));
+        bpf_object__close(obj);
+        return -1;
+    }
+
+    /* Find the main program (bpf_program__next for libbpf < 0.7 compat) */
+    struct bpf_program *prog = bpf_program__next(NULL, obj);
+    if (!prog) {
+        jz_log_error("No BPF program found in %s", obj_path);
+        bpf_object__close(obj);
+        return -1;
+    }
+
+    int prog_fd = bpf_program__fd(prog);
+    if (prog_fd < 0) {
+        jz_log_error("Invalid program fd for %s", mod->name);
+        bpf_object__close(obj);
+        return -1;
+    }
+
+    /* Pin all maps under /sys/fs/bpf/jz/<map_name> */
+    struct bpf_map *map;
+    bpf_object__for_each_map(map, obj) {
+        const char *map_name = bpf_map__name(map);
+        if (!map_name)
+            continue;
+
+        char pin[512];
+        snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+
+        /* Try to reuse existing pinned map first */
+        int existing_fd = bpf_obj_get(pin);
+        if (existing_fd >= 0) {
+            if (bpf_map__reuse_fd(map, existing_fd) < 0) {
+                jz_log_warn("Cannot reuse pinned map %s: %s",
+                             map_name, strerror(errno));
+            }
+            close(existing_fd);
+            continue;
+        }
+
+        /* Pin new map */
+        if (bpf_map__pin(map, pin) < 0) {
+            jz_log_warn("Failed to pin map %s at %s: %s",
+                         map_name, pin, strerror(errno));
+            /* Non-fatal: continue loading */
+        }
+    }
+
+    mod->bpf_obj = obj;
+    mod->prog_fd = prog_fd;
+    mod->loaded = true;
+    loader->loaded_count++;
+
+    jz_log_info("Loaded BPF module: %s (stage %d)", mod->name, mod->stage);
+    return 0;
+}
+
+int jz_bpf_loader_load_all(jz_bpf_loader_t *loader)
+{
+    if (!loader || !loader->initialized)
+        return -1;
+
+    int loaded = 0;
+    for (int i = 0; i < JZ_MOD_COUNT; i++) {
+        if (jz_bpf_loader_load(loader, (jz_mod_id_t)i) == 0)
+            loaded++;
+        else
+            jz_log_warn("Skipping module %s (load failed)",
+                         loader->modules[i].name);
+    }
+
+    jz_log_info("Loaded %d/%d BPF modules", loaded, JZ_MOD_COUNT);
+    return loaded;
+}
+
+int jz_bpf_loader_unload(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
+{
+    if (!loader || !loader->initialized)
+        return -1;
+    if (mod_id < 0 || mod_id >= JZ_MOD_COUNT)
+        return -1;
+
+    jz_bpf_module_t *mod = &loader->modules[mod_id];
+    if (!mod->loaded)
+        return 0;
+
+    /* Unregister from rSwitch if enabled */
+    if (mod->enabled) {
+        unregister_from_rswitch(mod->stage);
+        mod->enabled = false;
+    }
+
+    /* Close BPF object (also closes prog_fd) */
+    if (mod->bpf_obj) {
+        bpf_object__close((struct bpf_object *)mod->bpf_obj);
+        mod->bpf_obj = NULL;
+    }
+
+    mod->prog_fd = -1;
+    mod->loaded = false;
+    loader->loaded_count--;
+
+    jz_log_info("Unloaded BPF module: %s", mod->name);
+    return 0;
+}
+
+int jz_bpf_loader_enable(jz_bpf_loader_t *loader, jz_mod_id_t mod_id,
+                         bool enable)
+{
+    if (!loader || !loader->initialized)
+        return -1;
+    if (mod_id < 0 || mod_id >= JZ_MOD_COUNT)
+        return -1;
+
+    jz_bpf_module_t *mod = &loader->modules[mod_id];
+    if (!mod->loaded) {
+        jz_log_error("Cannot enable unloaded module: %s", mod->name);
+        return -1;
+    }
+
+    if (enable == mod->enabled)
+        return 0;  /* Already in desired state */
+
+    if (enable) {
+        if (register_in_rswitch(mod->prog_fd, mod->stage) < 0)
+            return -1;
+        mod->enabled = true;
+        jz_log_info("Enabled BPF module: %s (stage %d)", mod->name, mod->stage);
+    } else {
+        if (unregister_from_rswitch(mod->stage) < 0)
+            return -1;
+        mod->enabled = false;
+        jz_log_info("Disabled BPF module: %s", mod->name);
+    }
+
+    return 0;
+}
+
+const jz_bpf_module_t *jz_bpf_loader_get_module(const jz_bpf_loader_t *loader,
+                                                  jz_mod_id_t mod_id)
+{
+    if (!loader || mod_id < 0 || mod_id >= JZ_MOD_COUNT)
+        return NULL;
+    return &loader->modules[mod_id];
+}
+
+int jz_bpf_loader_find(const jz_bpf_loader_t *loader, const char *name)
+{
+    if (!loader || !name)
+        return -1;
+
+    for (int i = 0; i < JZ_MOD_COUNT; i++) {
+        if (strcmp(loader->modules[i].name, name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+void jz_bpf_loader_destroy(jz_bpf_loader_t *loader)
+{
+    if (!loader)
+        return;
+
+    for (int i = 0; i < JZ_MOD_COUNT; i++) {
+        if (loader->modules[i].loaded)
+            jz_bpf_loader_unload(loader, (jz_mod_id_t)i);
+    }
+
+    loader->initialized = false;
+}
