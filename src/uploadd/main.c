@@ -18,6 +18,14 @@
 #include "ipc.h"
 #include "log.h"
 
+#if __has_include(<mongoose.h>)
+#include <mongoose.h>
+#elif __has_include("../../third_party/mongoose/mongoose.h")
+#include "../../third_party/mongoose/mongoose.h"
+#else
+#include <mongoose.h>
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -32,7 +40,7 @@
 
 /* ── Version ──────────────────────────────────────────────────── */
 
-#define UPLOADD_VERSION  "0.7.0"
+#define UPLOADD_VERSION  "0.8.0"
 
 /* ── Defaults ─────────────────────────────────────────────────── */
 
@@ -127,19 +135,138 @@ static uint8_t *gzip_compress(const void *data, size_t data_len,
     return out;
 }
 
-/* ── HTTP Upload (simplified) ─────────────────────────────────── */
+/* ── HTTP Upload (mongoose HTTPS client) ──────────────────────── */
+
+#define HTTP_CONNECT_TIMEOUT_MS  10000  /* 10 seconds */
+#define HTTP_RESPONSE_TIMEOUT_MS 30000  /* 30 seconds */
 
 /*
- * Upload compressed data to the management platform via HTTPS POST.
- *
- * In production, this would use libcurl or a similar HTTP client.
- * For now, we implement a lightweight approach using an external
- * helper or direct socket connection.
+ * Per-request state, passed as fn_data to the mongoose event handler.
+ */
+typedef struct {
+    bool             done;         /* true when request cycle is complete */
+    int              http_code;    /* HTTP status code, or -1 on error */
+    const char      *url;
+    const char      *tls_cert_pem; /* client cert PEM content (may be NULL) */
+    const char      *tls_key_pem;  /* client key  PEM content (may be NULL) */
+    const void      *body;
+    size_t           body_len;
+    bool             compressed;
+} http_req_t;
+
+/*
+ * Read a file fully into a malloc'd buffer.  Returns NULL on error.
+ */
+static char *read_file_full(const char *path)
+{
+    if (!path || !path[0])
+        return NULL;
+
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (sz <= 0 || sz > 1024 * 1024) {   /* sanity cap: 1 MB */
+        fclose(f);
+        return NULL;
+    }
+
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) {
+        fclose(f);
+        return NULL;
+    }
+
+    size_t nread = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+
+    buf[nread] = '\0';
+    return buf;
+}
+
+/*
+ * Mongoose event handler for the outbound HTTPS POST.
+ */
+static void upload_ev_handler(struct mg_connection *c, int ev, void *ev_data)
+{
+    http_req_t *req = (http_req_t *)c->fn_data;
+
+    if (ev == MG_EV_OPEN) {
+        /* Store connect deadline in c->data (8 bytes available) */
+        *(uint64_t *)c->data = mg_millis() + HTTP_CONNECT_TIMEOUT_MS;
+    }
+    else if (ev == MG_EV_POLL) {
+        if (mg_millis() > *(uint64_t *)c->data) {
+            if (c->is_connecting || c->is_resolving)
+                mg_error(c, "Connect timeout");
+            else
+                mg_error(c, "Response timeout");
+        }
+    }
+    else if (ev == MG_EV_CONNECT) {
+        /* TCP connected — set up TLS if needed, then send HTTP request */
+        if (c->is_tls) {
+            struct mg_tls_opts opts;
+            memset(&opts, 0, sizeof(opts));
+            opts.name = mg_url_host(req->url);
+
+            /* Client certificate (mTLS) */
+            if (req->tls_cert_pem)
+                opts.cert = mg_str(req->tls_cert_pem);
+            if (req->tls_key_pem)
+                opts.key = mg_str(req->tls_key_pem);
+
+            mg_tls_init(c, &opts);
+        }
+
+        *(uint64_t *)c->data = mg_millis() + HTTP_RESPONSE_TIMEOUT_MS;
+
+        struct mg_str host = mg_url_host(req->url);
+
+        mg_printf(c,
+                  "POST %s HTTP/1.0\r\n"
+                  "Host: %.*s\r\n"
+                  "Content-Type: application/json\r\n"
+                  "%s"
+                  "Content-Length: %lu\r\n"
+                  "\r\n",
+                  mg_url_uri(req->url),
+                  (int)host.len, host.buf,
+                  req->compressed ? "Content-Encoding: gzip\r\n" : "",
+                  (unsigned long)req->body_len);
+        mg_send(c, req->body, req->body_len);
+    }
+    else if (ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+        req->http_code = mg_http_status(hm);
+        req->done = true;
+        c->is_draining = 1;
+    }
+    else if (ev == MG_EV_ERROR) {
+        jz_log_error("HTTP client error: %s", (const char *)ev_data);
+        req->http_code = -1;
+        req->done = true;
+    }
+    else if (ev == MG_EV_CLOSE) {
+        if (!req->done) {
+            req->http_code = -1;
+            req->done = true;
+        }
+    }
+}
+
+/*
+ * Upload data to the management platform via native HTTPS POST.
+ * Uses mongoose HTTP client with built-in TLS.
  *
  * Returns 0 on success (HTTP 2xx), -1 on error.
  */
-static int http_post_upload(const char *url, const char *tls_cert,
-                             const char *tls_key,
+static int http_post_upload(const char *url, const char *tls_cert_path,
+                             const char *tls_key_path,
                              const void *data, size_t data_len,
                              bool compressed)
 {
@@ -148,84 +275,77 @@ static int http_post_upload(const char *url, const char *tls_cert,
         return -1;
     }
 
-    /*
-     * Strategy: Write payload to a temp file and invoke curl.
-     * This is a pragmatic approach for an embedded appliance that
-     * avoids linking libcurl. The alternative is a raw TLS socket
-     * via OpenSSL, which adds significant complexity.
-     *
-     * TODO: Replace with direct libcurl or raw HTTPS when
-     * third_party/mongoose HTTPS support is integrated.
-     */
+    /* Read TLS cert/key files if provided */
+    char *cert_pem = NULL;
+    char *key_pem = NULL;
 
-    char tmpfile[] = "/tmp/jz_upload_XXXXXX";
-    int fd = mkstemp(tmpfile);
-    if (fd < 0) {
-        jz_log_error("mkstemp failed: %s", strerror(errno));
+    if (tls_cert_path && tls_cert_path[0]) {
+        cert_pem = read_file_full(tls_cert_path);
+        if (!cert_pem) {
+            jz_log_error("Cannot read TLS cert: %s", tls_cert_path);
+            return -1;
+        }
+    }
+    if (tls_key_path && tls_key_path[0]) {
+        key_pem = read_file_full(tls_key_path);
+        if (!key_pem) {
+            jz_log_error("Cannot read TLS key: %s", tls_key_path);
+            free(cert_pem);
+            return -1;
+        }
+    }
+
+    /* Set up request state */
+    http_req_t req = {
+        .done          = false,
+        .http_code     = -1,
+        .url           = url,
+        .tls_cert_pem  = cert_pem,
+        .tls_key_pem   = key_pem,
+        .body          = data,
+        .body_len      = data_len,
+        .compressed    = compressed,
+    };
+
+    /* Create event manager and connect */
+    struct mg_mgr mgr;
+    mg_mgr_init(&mgr);
+    mg_log_set(MG_LL_NONE);   /* suppress mongoose internal logging */
+
+    struct mg_connection *c = mg_http_connect(&mgr, url,
+                                              upload_ev_handler, &req);
+    if (!c) {
+        jz_log_error("mg_http_connect failed for %s", url);
+        mg_mgr_free(&mgr);
+        free(cert_pem);
+        free(key_pem);
         return -1;
     }
 
-    ssize_t written = write(fd, data, data_len);
-    close(fd);
+    /* Poll until done or global shutdown */
+    while (!req.done && g_running) {
+        mg_mgr_poll(&mgr, 50);
+    }
 
-    if (written != (ssize_t)data_len) {
-        jz_log_error("Failed to write upload payload");
-        unlink(tmpfile);
+    mg_mgr_free(&mgr);
+    free(cert_pem);
+    free(key_pem);
+
+    if (!g_running) {
+        jz_log_info("Upload aborted — shutting down");
         return -1;
     }
 
-    /* Build curl command */
-    char cmd[2048];
-    int off = 0;
-
-    off += snprintf(cmd + off, sizeof(cmd) - (size_t)off,
-                    "curl -s -o /dev/null -w '%%{http_code}' "
-                    "--max-time 30 --retry 0 "
-                    "-X POST '%s' "
-                    "-H 'Content-Type: application/json' ",
-                    url);
-
-    if (compressed) {
-        off += snprintf(cmd + off, sizeof(cmd) - (size_t)off,
-                        "-H 'Content-Encoding: gzip' ");
-    }
-
-    if (tls_cert[0] && tls_key[0]) {
-        off += snprintf(cmd + off, sizeof(cmd) - (size_t)off,
-                        "--cert '%s' --key '%s' ", tls_cert, tls_key);
-    }
-
-    snprintf(cmd + off, sizeof(cmd) - (size_t)off,
-             "--data-binary '@%s' 2>/dev/null", tmpfile);
-
-    jz_log_debug("Upload command: %s", cmd);
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp) {
-        jz_log_error("popen(curl) failed: %s", strerror(errno));
-        unlink(tmpfile);
-        return -1;
-    }
-
-    char http_code[16] = "";
-    if (fgets(http_code, sizeof(http_code), fp) == NULL)
-        http_code[0] = '\0';
-    int status = pclose(fp);
-
-    unlink(tmpfile);
-
-    if (status != 0) {
-        jz_log_error("curl exited with status %d", status);
-        return -1;
-    }
-
-    int code = atoi(http_code);
-    if (code >= 200 && code < 300) {
-        jz_log_info("Upload successful (HTTP %d)", code);
+    if (req.http_code >= 200 && req.http_code < 300) {
+        jz_log_info("Upload successful (HTTP %d)", req.http_code);
         return 0;
     }
 
-    jz_log_error("Upload failed (HTTP %s)", http_code);
+    if (req.http_code > 0) {
+        jz_log_error("Upload failed (HTTP %d)", req.http_code);
+    } else {
+        jz_log_error("Upload failed (connection error)");
+    }
     return -1;
 }
 
@@ -544,7 +664,7 @@ static int do_upload_cycle(void)
         /* Notify collectord to mark records as uploaded */
         notify_uploaded("attack_log", 0);
         notify_uploaded("sniffer_log", 0);
-        notify_uploaded("bg_captures", 0);
+        notify_uploaded("bg_capture", 0);
 
         char ts[32];
         now_iso8601(ts, sizeof(ts));
