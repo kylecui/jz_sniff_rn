@@ -1,0 +1,40 @@
+# jz_sniff_rn — uploadd: Batch upload to management platform via HTTPS
+#
+# Depends on collectord (reads from SQLite populated by collectord).
+# Upload interval is 5 minutes; non-critical if delayed.
+
+[Unit]
+Description=jz_sniff_rn Upload Daemon
+Documentation=file:/usr/share/doc/jz_sniff_rn/design.md
+After=collectord.service
+Wants=collectord.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/usr/sbin/uploadd --daemon --config /etc/jz/base.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/run/jz/uploadd.pid
+
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/jz /var/run/jz
+ProtectHome=yes
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=uploadd
+
+[Install]
+WantedBy=multi-user.target
