@@ -19,6 +19,7 @@
 #include "db.h"
 #include "ipc.h"
 #include "log.h"
+#include "remote.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,6 +31,7 @@
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <bpf/bpf.h>
 
 /* ── Version ──────────────────────────────────────────────────── */
 
@@ -59,10 +61,16 @@ static struct {
     jz_config_t       prev_config;
     jz_db_t           db;
     jz_ipc_server_t   ipc;
+    jz_remote_t       remote;
 
     int               inotify_fd;
     int               watch_fd;
     int               config_version;
+
+    char              tls_cert[256];
+    char              tls_key[256];
+    char              tls_ca[256];
+    char              listen_addr[64];
 } g_ctx;
 
 /* ── Signal Handlers ──────────────────────────────────────────── */
@@ -188,6 +196,95 @@ static bool check_config_changed(void)
 
 /* ── Apply Config to BPF Maps ─────────────────────────────────── */
 
+/*
+ * Open pinned BPF HASH map, push key/value entries, close fd.
+ * Returns -1 if map not pinned yet (non-fatal during early startup).
+ */
+static int push_hash_map(const char *map_name,
+                         const void *keys, size_t key_size,
+                         const void *values, size_t value_size,
+                         int count)
+{
+    char pin[512];
+    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
+
+    int fd = bpf_obj_get(pin);
+    if (fd < 0) {
+        jz_log_warn("Cannot open pinned map %s: %s (BPF modules may not be loaded yet)",
+                     pin, strerror(errno));
+        return -1;
+    }
+
+    int errors = 0;
+    for (int i = 0; i < count; i++) {
+        const void *k = (const char *)keys + (size_t)i * key_size;
+        const void *v = (const char *)values + (size_t)i * value_size;
+        if (bpf_map_update_elem(fd, k, v, BPF_ANY) < 0) {
+            jz_log_error("bpf_map_update_elem(%s, entry %d) failed: %s",
+                          map_name, i, strerror(errno));
+            errors++;
+        }
+    }
+
+    close(fd);
+    if (errors > 0)
+        jz_log_warn("%s: %d/%d entries failed", map_name, errors, count);
+    return errors > 0 ? -1 : 0;
+}
+
+static int push_array_singleton(const char *map_name,
+                                const void *value, size_t value_size)
+{
+    char pin[512];
+    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
+
+    int fd = bpf_obj_get(pin);
+    if (fd < 0) {
+        jz_log_warn("Cannot open pinned map %s: %s",
+                     pin, strerror(errno));
+        return -1;
+    }
+
+    uint32_t key = 0;
+    int ret = bpf_map_update_elem(fd, &key, value, BPF_ANY);
+    if (ret < 0) {
+        jz_log_error("bpf_map_update_elem(%s) failed: %s",
+                      map_name, strerror(errno));
+    }
+
+    close(fd);
+    return ret < 0 ? -1 : 0;
+}
+
+static int push_array_map(const char *map_name,
+                          const void *entries, size_t entry_size,
+                          int count)
+{
+    char pin[512];
+    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
+
+    int fd = bpf_obj_get(pin);
+    if (fd < 0) {
+        jz_log_warn("Cannot open pinned map %s: %s",
+                     pin, strerror(errno));
+        return -1;
+    }
+
+    int errors = 0;
+    for (int i = 0; i < count; i++) {
+        uint32_t key = (uint32_t)i;
+        const void *v = (const char *)entries + (size_t)i * entry_size;
+        if (bpf_map_update_elem(fd, &key, v, BPF_ANY) < 0) {
+            jz_log_error("bpf_map_update_elem(%s, idx %d) failed: %s",
+                          map_name, i, strerror(errno));
+            errors++;
+        }
+    }
+
+    close(fd);
+    return errors > 0 ? -1 : 0;
+}
+
 static int apply_config_to_maps(const jz_config_t *cfg)
 {
     jz_config_map_batch_t *batch = calloc(1, sizeof(jz_config_map_batch_t));
@@ -213,24 +310,100 @@ static int apply_config_to_maps(const jz_config_t *cfg)
         jz_config_load_blacklist(cfg->threats.blacklist_file, batch);
     }
 
-    /*
-     * TODO: Push batch entries to pinned BPF maps via bpf_map_update_elem.
-     * For each map category in batch:
-     *   1. Open pinned map fd via bpf_obj_get()
-     *   2. Iterate entries and bpf_map_update_elem()
-     *   3. Close fd
-     *
-     * This will be fully implemented when we integrate with the
-     * config_map_apply module (requires pinned maps to exist).
-     */
+    int warnings = 0;
 
-    jz_log_info("Config translated: %d guards, %d whitelist, %d policies, "
-                 "%d threats, %d fake MACs",
+    /* ── Push HASH maps ── */
+
+    if (batch->static_guards.count > 0) {
+        if (push_hash_map("jz_static_guards",
+                          batch->static_guards.keys, sizeof(uint32_t),
+                          batch->static_guards.values, sizeof(struct jz_guard_entry),
+                          batch->static_guards.count) < 0)
+            warnings++;
+    }
+
+    /* Whitelist: HASH, key=uint32(ip), value=jz_whitelist_entry */
+    if (batch->whitelist.count > 0) {
+        if (push_hash_map("jz_whitelist",
+                          batch->whitelist.keys, sizeof(uint32_t),
+                          batch->whitelist.values, sizeof(struct jz_whitelist_entry),
+                          batch->whitelist.count) < 0)
+            warnings++;
+    }
+
+    /* Flow policies: HASH, key=jz_flow_key, value=jz_flow_policy */
+    if (batch->policies.count > 0) {
+        if (push_hash_map("jz_flow_policy",
+                          batch->policies.keys, sizeof(struct jz_flow_key),
+                          batch->policies.values, sizeof(struct jz_flow_policy),
+                          batch->policies.count) < 0)
+            warnings++;
+    }
+
+    /* Threat patterns: HASH, key=uint32(pattern_id), value=jz_threat_pattern */
+    if (batch->threat_patterns.count > 0) {
+        if (push_hash_map("jz_threat_patterns",
+                          batch->threat_patterns.keys, sizeof(uint32_t),
+                          batch->threat_patterns.values, sizeof(struct jz_threat_pattern),
+                          batch->threat_patterns.count) < 0)
+            warnings++;
+    }
+
+    /* Threat blacklist: LRU_HASH, key=uint32(ip), value=uint64(timestamp) */
+    if (batch->threat_blacklist.count > 0) {
+        if (push_hash_map("jz_threat_blacklist",
+                          batch->threat_blacklist.keys, sizeof(uint32_t),
+                          batch->threat_blacklist.values, sizeof(uint64_t),
+                          batch->threat_blacklist.count) < 0)
+            warnings++;
+    }
+
+    /* Background filters: HASH, key=uint32(filter_id), value=jz_bg_filter_entry */
+    if (batch->bg_filters.count > 0) {
+        if (push_hash_map("jz_bg_filter",
+                          batch->bg_filters.keys, sizeof(uint32_t),
+                          batch->bg_filters.values, sizeof(struct jz_bg_filter_entry),
+                          batch->bg_filters.count) < 0)
+            warnings++;
+    }
+
+    /* ── Push ARRAY singleton maps ── */
+
+    /* ARP config: ARRAY[1] */
+    if (push_array_singleton("jz_arp_config",
+                             &batch->arp_config, sizeof(struct jz_arp_config)) < 0)
+        warnings++;
+
+    /* ICMP config: ARRAY[1] */
+    if (push_array_singleton("jz_icmp_config",
+                             &batch->icmp_config, sizeof(struct jz_icmp_config)) < 0)
+        warnings++;
+
+    /* Forensic sample config: ARRAY[1] */
+    if (push_array_singleton("jz_sample_config",
+                             &batch->sample_config, sizeof(struct jz_sample_config)) < 0)
+        warnings++;
+
+    /* ── Push ARRAY multi-entry maps ── */
+
+    /* Fake MAC pool: ARRAY[256], key=idx, value=jz_fake_mac */
+    if (batch->fake_macs.count > 0) {
+        if (push_array_map("jz_fake_mac_pool",
+                           batch->fake_macs.entries, sizeof(struct jz_fake_mac),
+                           batch->fake_macs.count) < 0)
+            warnings++;
+    }
+
+    jz_log_info("Config pushed to BPF maps: %d guards, %d whitelist, %d policies, "
+                 "%d threats, %d blacklist, %d bg_filters, %d fake MACs (%d map warnings)",
                  batch->static_guards.count,
                  batch->whitelist.count,
                  batch->policies.count,
                  batch->threat_patterns.count,
-                 batch->fake_macs.count);
+                 batch->threat_blacklist.count,
+                 batch->bg_filters.count,
+                 batch->fake_macs.count,
+                 warnings);
 
     free(batch);
     return 0;
@@ -307,6 +480,96 @@ static int do_reload(void)
     return 0;
 }
 
+static int remote_config_handler(const char *json, int len, int version, void *data)
+{
+    (void) data;
+
+    if (!json || len <= 0)
+        return -1;
+    if (version <= g_ctx.config_version)
+        return -1;
+
+    char tmp_path[320];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.remote.XXXXXX", g_ctx.config_path);
+
+    int fd = mkstemp(tmp_path);
+    if (fd < 0) {
+        jz_log_error("Remote push: mkstemp failed: %s", strerror(errno));
+        return -1;
+    }
+
+    ssize_t wr = write(fd, json, (size_t) len);
+    if (wr != len) {
+        jz_log_error("Remote push: write failed: %s", strerror(errno));
+        close(fd);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (fsync(fd) < 0) {
+        jz_log_warn("Remote push: fsync failed: %s", strerror(errno));
+    }
+    close(fd);
+
+    jz_config_t new_config;
+    jz_config_defaults(&new_config);
+    jz_config_errors_t errors = { .count = 0 };
+
+    if (jz_config_load(&new_config, tmp_path, &errors) < 0) {
+        jz_log_error("Remote push: config parse failed (%d errors)", errors.count);
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (jz_config_validate(&new_config, &errors) < 0) {
+        jz_log_error("Remote push: config validation failed (%d errors)", errors.count);
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    jz_config_diff_t diff;
+    jz_config_diff(&g_ctx.config, &new_config, &diff);
+
+    if (apply_config_to_maps(&new_config) < 0) {
+        jz_log_error("Remote push: failed to apply config to BPF maps");
+        jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "failure");
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (rename(tmp_path, g_ctx.config_path) < 0) {
+        jz_log_error("Remote push: rename(%s -> %s) failed: %s",
+                     tmp_path, g_ctx.config_path, strerror(errno));
+        jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "failure");
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    g_ctx.config_version = version;
+    char *yaml = jz_config_serialize(&new_config);
+    if (yaml) {
+        jz_config_history_save(&g_ctx.db, g_ctx.config_version,
+                               yaml, "remote", "remote:platform");
+        free(yaml);
+    }
+
+    jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "success");
+
+    jz_config_free(&g_ctx.prev_config);
+    memcpy(&g_ctx.prev_config, &g_ctx.config, sizeof(jz_config_t));
+    memcpy(&g_ctx.config, &new_config, sizeof(jz_config_t));
+
+    if (!g_ctx.verbose)
+        jz_log_set_level(jz_log_level_from_str(g_ctx.config.system.log_level));
+
+    jz_log_info("Remote config push applied: version %d", g_ctx.config_version);
+    return 0;
+}
+
 /* ── IPC Command Handler ─────────────────────────────────────── */
 
 static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
@@ -376,6 +639,10 @@ static void usage(const char *prog)
         "  -d, --daemon        Run as daemon\n"
         "  -p, --pidfile PATH  PID file (default: %s)\n"
         "  --db PATH           SQLite database (default: %s)\n"
+        "  --tls-cert PATH     TLS server certificate PEM (enables remote endpoint)\n"
+        "  --tls-key PATH      TLS server private key PEM\n"
+        "  --tls-ca PATH       TLS CA PEM for optional mTLS client verification\n"
+        "  --listen ADDR       Remote endpoint listen URL (default: https://0.0.0.0:8443)\n"
         "  -v, --verbose       Verbose logging\n"
         "  -V, --version       Print version\n"
         "  -h, --help          Show help\n",
@@ -389,6 +656,10 @@ static int parse_args(int argc, char *argv[])
         { "daemon",  no_argument,       NULL, 'd' },
         { "pidfile", required_argument, NULL, 'p' },
         { "db",      required_argument, NULL, 'D' },
+        { "tls-cert", required_argument, NULL, 't' },
+        { "tls-key",  required_argument, NULL, 'k' },
+        { "tls-ca",   required_argument, NULL, 'a' },
+        { "listen",   required_argument, NULL, 'l' },
         { "verbose", no_argument,       NULL, 'v' },
         { "version", no_argument,       NULL, 'V' },
         { "help",    no_argument,       NULL, 'h' },
@@ -401,9 +672,14 @@ static int parse_args(int argc, char *argv[])
              "%s", DEFAULT_PID_FILE);
     snprintf(g_ctx.db_path, sizeof(g_ctx.db_path),
              "%s", DEFAULT_DB_PATH);
+    snprintf(g_ctx.listen_addr, sizeof(g_ctx.listen_addr),
+             "%s", "https://0.0.0.0:8443");
+    g_ctx.tls_cert[0] = '\0';
+    g_ctx.tls_key[0] = '\0';
+    g_ctx.tls_ca[0] = '\0';
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:dp:D:vVh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:dp:D:t:k:a:l:vVh", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'c':
             snprintf(g_ctx.config_path, sizeof(g_ctx.config_path),
@@ -418,6 +694,22 @@ static int parse_args(int argc, char *argv[])
             break;
         case 'D':
             snprintf(g_ctx.db_path, sizeof(g_ctx.db_path),
+                     "%s", optarg);
+            break;
+        case 't':
+            snprintf(g_ctx.tls_cert, sizeof(g_ctx.tls_cert),
+                     "%s", optarg);
+            break;
+        case 'k':
+            snprintf(g_ctx.tls_key, sizeof(g_ctx.tls_key),
+                     "%s", optarg);
+            break;
+        case 'a':
+            snprintf(g_ctx.tls_ca, sizeof(g_ctx.tls_ca),
+                     "%s", optarg);
+            break;
+        case 'l':
+            snprintf(g_ctx.listen_addr, sizeof(g_ctx.listen_addr),
                      "%s", optarg);
             break;
         case 'v':
@@ -543,10 +835,23 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
+    if (g_ctx.tls_cert[0]) {
+        g_ctx.remote.config_version_ptr = &g_ctx.config_version;
+        jz_remote_set_callback(&g_ctx.remote, remote_config_handler, NULL);
+        if (jz_remote_init(&g_ctx.remote, g_ctx.listen_addr,
+                           g_ctx.tls_cert, g_ctx.tls_key, g_ctx.tls_ca) < 0) {
+            jz_log_warn("Remote config endpoint failed to start");
+        } else {
+            jz_log_info("Remote config endpoint listening on %s", g_ctx.listen_addr);
+        }
+    }
+
     jz_log_info("configd ready — config v%d loaded", g_ctx.config_version);
 
     /* ── Main Loop ── */
     while (g_running) {
+        jz_remote_poll(&g_ctx.remote, 0);
+
         /* Poll IPC */
         jz_ipc_server_poll(&g_ctx.ipc, 100);
 
@@ -570,6 +875,7 @@ int main(int argc, char *argv[])
 cleanup:
     if (g_ctx.inotify_fd >= 0)
         close(g_ctx.inotify_fd);
+    jz_remote_shutdown(&g_ctx.remote);
     jz_ipc_server_destroy(&g_ctx.ipc);
     jz_db_close(&g_ctx.db);
     jz_config_free(&g_ctx.config);
