@@ -103,4 +103,77 @@ int jz_db_mark_uploaded(jz_db_t *ctx, const char *table, int max_id);
 /* Get count of pending (un-uploaded) records in a table. Returns count or -1. */
 int jz_db_pending_count(jz_db_t *ctx, const char *table);
 
+/* -- Query Result Structures -- */
+
+typedef struct jz_attack_row {
+    int      id;
+    int      event_type;
+    char     timestamp[32];
+    uint64_t timestamp_ns;
+    char     src_ip[46];
+    char     src_mac[18];
+    char     dst_ip[46];
+    char     dst_mac[18];
+    char     guard_type[16];
+    char     protocol[8];
+    int      ifindex;
+    int      threat_level;
+    char     details[256];
+} jz_attack_row_t;
+
+typedef struct jz_sniffer_row {
+    int  id;
+    char mac[18];
+    char ip[46];
+    int  ifindex;
+    char first_seen[32];
+    char last_seen[32];
+    int  response_count;
+    char probe_ip[46];
+} jz_sniffer_row_t;
+
+typedef struct jz_bg_capture_row {
+    int  id;
+    char period_start[32];
+    char period_end[32];
+    char protocol[16];
+    int  packet_count;
+    int  byte_count;
+    int  unique_sources;
+    char sample_data[256];
+} jz_bg_capture_row_t;
+
+/* -- Pending Record Queries -- */
+
+/* Fetch up to max_rows pending (uploaded=0) attack records.
+ * Allocates *rows via realloc; caller must free with jz_db_free_attacks().
+ * Returns number of rows fetched, or -1 on error. */
+int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
+                                jz_attack_row_t **rows);
+
+/* Fetch up to max_rows pending sniffer records. */
+int jz_db_fetch_pending_sniffers(jz_db_t *ctx, int max_rows,
+                                 jz_sniffer_row_t **rows);
+
+/* Fetch up to max_rows pending background capture records. */
+int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
+                                    jz_bg_capture_row_t **rows);
+
+void jz_db_free_attacks(jz_attack_row_t *rows);
+void jz_db_free_sniffers(jz_sniffer_row_t *rows);
+void jz_db_free_bg_captures(jz_bg_capture_row_t *rows);
+
+/* -- Database Pruning -- */
+
+/* Delete oldest uploaded (uploaded=1) records from all data tables.
+ * Deletes up to batch_size rows per table per call.
+ * Returns total number of rows deleted across all tables, or -1 on error. */
+int jz_db_prune_uploaded(jz_db_t *ctx, int batch_size);
+
+/* Delete records older than the given cutoff timestamp from all data tables.
+ * Only deletes records where uploaded=1.
+ * Timestamp format: ISO-8601 (e.g. "2026-03-01T00:00:00").
+ * Returns total rows deleted, or -1 on error. */
+int jz_db_prune_before(jz_db_t *ctx, const char *cutoff_timestamp);
+
 #endif /* JZ_DB_H */

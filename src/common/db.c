@@ -492,3 +492,266 @@ int jz_db_pending_count(jz_db_t *ctx, const char *table)
     sqlite3_finalize(stmt);
     return count;
 }
+
+/* -- Pending Record Queries -- */
+
+static const char *safe_text(sqlite3_stmt *stmt, int col)
+{
+    const char *v = (const char *)sqlite3_column_text(stmt, col);
+    return v ? v : "";
+}
+
+int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
+                                jz_attack_row_t **rows)
+{
+    if (!ctx || !ctx->initialized || !rows)
+        return -1;
+
+    *rows = NULL;
+
+    const char *sql =
+        "SELECT id, event_type, timestamp, timestamp_ns, src_ip, src_mac, "
+        "dst_ip, dst_mac, guard_type, protocol, ifindex, threat_level, details "
+        "FROM attack_log WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    sqlite3_bind_int(stmt, 1, max_rows > 0 ? max_rows : 10000);
+
+    jz_attack_row_t *out = NULL;
+    int n = 0;
+    int cap = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (n == cap) {
+            int new_cap = (cap == 0) ? 16 : cap * 2;
+            jz_attack_row_t *tmp = realloc(out, (size_t)new_cap * sizeof(*tmp));
+            if (!tmp) {
+                free(out);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            out = tmp;
+            cap = new_cap;
+        }
+
+        jz_attack_row_t *r = &out[n];
+        r->id           = sqlite3_column_int(stmt, 0);
+        r->event_type   = sqlite3_column_int(stmt, 1);
+        snprintf(r->timestamp,  sizeof(r->timestamp),  "%s", safe_text(stmt, 2));
+        r->timestamp_ns = (uint64_t)sqlite3_column_int64(stmt, 3);
+        snprintf(r->src_ip,     sizeof(r->src_ip),     "%s", safe_text(stmt, 4));
+        snprintf(r->src_mac,    sizeof(r->src_mac),    "%s", safe_text(stmt, 5));
+        snprintf(r->dst_ip,     sizeof(r->dst_ip),     "%s", safe_text(stmt, 6));
+        snprintf(r->dst_mac,    sizeof(r->dst_mac),    "%s", safe_text(stmt, 7));
+        snprintf(r->guard_type, sizeof(r->guard_type), "%s", safe_text(stmt, 8));
+        snprintf(r->protocol,   sizeof(r->protocol),   "%s", safe_text(stmt, 9));
+        r->ifindex      = sqlite3_column_int(stmt, 10);
+        r->threat_level = sqlite3_column_int(stmt, 11);
+        snprintf(r->details,    sizeof(r->details),    "%s", safe_text(stmt, 12));
+        n++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        free(out);
+        return -1;
+    }
+
+    *rows = out;
+    return n;
+}
+
+int jz_db_fetch_pending_sniffers(jz_db_t *ctx, int max_rows,
+                                 jz_sniffer_row_t **rows)
+{
+    if (!ctx || !ctx->initialized || !rows)
+        return -1;
+
+    *rows = NULL;
+
+    const char *sql =
+        "SELECT id, mac, ip, ifindex, first_seen, last_seen, "
+        "response_count, probe_ip "
+        "FROM sniffer_log WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    sqlite3_bind_int(stmt, 1, max_rows > 0 ? max_rows : 10000);
+
+    jz_sniffer_row_t *out = NULL;
+    int n = 0;
+    int cap = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (n == cap) {
+            int new_cap = (cap == 0) ? 16 : cap * 2;
+            jz_sniffer_row_t *tmp = realloc(out, (size_t)new_cap * sizeof(*tmp));
+            if (!tmp) {
+                free(out);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            out = tmp;
+            cap = new_cap;
+        }
+
+        jz_sniffer_row_t *r = &out[n];
+        r->id             = sqlite3_column_int(stmt, 0);
+        snprintf(r->mac,        sizeof(r->mac),        "%s", safe_text(stmt, 1));
+        snprintf(r->ip,         sizeof(r->ip),         "%s", safe_text(stmt, 2));
+        r->ifindex        = sqlite3_column_int(stmt, 3);
+        snprintf(r->first_seen, sizeof(r->first_seen), "%s", safe_text(stmt, 4));
+        snprintf(r->last_seen,  sizeof(r->last_seen),  "%s", safe_text(stmt, 5));
+        r->response_count = sqlite3_column_int(stmt, 6);
+        snprintf(r->probe_ip,   sizeof(r->probe_ip),   "%s", safe_text(stmt, 7));
+        n++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        free(out);
+        return -1;
+    }
+
+    *rows = out;
+    return n;
+}
+
+int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
+                                    jz_bg_capture_row_t **rows)
+{
+    if (!ctx || !ctx->initialized || !rows)
+        return -1;
+
+    *rows = NULL;
+
+    const char *sql =
+        "SELECT id, period_start, period_end, protocol, packet_count, "
+        "byte_count, unique_sources, sample_data "
+        "FROM bg_capture WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    sqlite3_bind_int(stmt, 1, max_rows > 0 ? max_rows : 10000);
+
+    jz_bg_capture_row_t *out = NULL;
+    int n = 0;
+    int cap = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (n == cap) {
+            int new_cap = (cap == 0) ? 16 : cap * 2;
+            jz_bg_capture_row_t *tmp = realloc(out, (size_t)new_cap * sizeof(*tmp));
+            if (!tmp) {
+                free(out);
+                sqlite3_finalize(stmt);
+                return -1;
+            }
+            out = tmp;
+            cap = new_cap;
+        }
+
+        jz_bg_capture_row_t *r = &out[n];
+        r->id             = sqlite3_column_int(stmt, 0);
+        snprintf(r->period_start, sizeof(r->period_start), "%s", safe_text(stmt, 1));
+        snprintf(r->period_end,   sizeof(r->period_end),   "%s", safe_text(stmt, 2));
+        snprintf(r->protocol,     sizeof(r->protocol),     "%s", safe_text(stmt, 3));
+        r->packet_count   = sqlite3_column_int(stmt, 4);
+        r->byte_count     = sqlite3_column_int(stmt, 5);
+        r->unique_sources = sqlite3_column_int(stmt, 6);
+        snprintf(r->sample_data,  sizeof(r->sample_data),  "%s", safe_text(stmt, 7));
+        n++;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        free(out);
+        return -1;
+    }
+
+    *rows = out;
+    return n;
+}
+
+void jz_db_free_attacks(jz_attack_row_t *rows) { free(rows); }
+void jz_db_free_sniffers(jz_sniffer_row_t *rows) { free(rows); }
+void jz_db_free_bg_captures(jz_bg_capture_row_t *rows) { free(rows); }
+
+/* -- Database Pruning -- */
+
+static const char *PRUNE_TABLES[] = {
+    "attack_log", "sniffer_log", "bg_capture"
+};
+#define PRUNE_TABLE_COUNT 3
+
+int jz_db_prune_uploaded(jz_db_t *ctx, int batch_size)
+{
+    if (!ctx || !ctx->initialized || batch_size <= 0)
+        return -1;
+
+    int total = 0;
+
+    for (int t = 0; t < PRUNE_TABLE_COUNT; t++) {
+        char sql[256];
+        snprintf(sql, sizeof(sql),
+                 "DELETE FROM %s WHERE id IN ("
+                 "SELECT id FROM %s WHERE uploaded = 1 "
+                 "ORDER BY id ASC LIMIT ?)",
+                 PRUNE_TABLES[t], PRUNE_TABLES[t]);
+
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK)
+            continue;
+
+        sqlite3_bind_int(stmt, 1, batch_size);
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc == SQLITE_DONE)
+            total += sqlite3_changes(ctx->db);
+    }
+
+    return total;
+}
+
+int jz_db_prune_before(jz_db_t *ctx, const char *cutoff_timestamp)
+{
+    if (!ctx || !ctx->initialized || !cutoff_timestamp)
+        return -1;
+
+    int total = 0;
+
+    for (int t = 0; t < PRUNE_TABLE_COUNT; t++) {
+        const char *ts_col = (strcmp(PRUNE_TABLES[t], "bg_capture") == 0)
+                             ? "period_end" : "timestamp";
+        char sql[256];
+        snprintf(sql, sizeof(sql),
+                 "DELETE FROM %s WHERE uploaded = 1 AND %s < ?",
+                 PRUNE_TABLES[t], ts_col);
+
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK)
+            continue;
+
+        sqlite3_bind_text(stmt, 1, cutoff_timestamp, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc == SQLITE_DONE)
+            total += sqlite3_changes(ctx->db);
+    }
+
+    return total;
+}
