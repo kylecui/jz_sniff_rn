@@ -27,13 +27,14 @@ typedef enum {
 
 /* ── Per-Module State ── */
 typedef struct jz_bpf_module {
-    const char *name;         /* e.g. "guard_classifier" */
-    const char *obj_file;     /* e.g. "guard_classifier.bpf.o" */
-    int         stage;        /* pipeline stage number */
-    bool        loaded;       /* successfully loaded */
-    bool        enabled;      /* active in pipeline */
-    void       *bpf_obj;     /* opaque libbpf object handle */
-    int         prog_fd;      /* BPF program fd */
+    const char *name;
+    const char *obj_file;
+    int         stage;
+    int         slot;         /* assigned rs_progs slot (-1 = unassigned) */
+    bool        loaded;
+    bool        enabled;
+    void       *bpf_obj;
+    int         prog_fd;
 } jz_bpf_module_t;
 
 /* ── Loader Context ── */

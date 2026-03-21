@@ -45,6 +45,7 @@ enum rs_hook_point {
 #define RS_FLAG_MODIFIES_PACKET    (1u << 3)  /* RS_API_STABLE: May modify packet data */
 #define RS_FLAG_MAY_DROP           (1u << 4)  /* RS_API_STABLE: May drop packets */
 #define RS_FLAG_CREATES_EVENTS     (1u << 5)  /* RS_API_STABLE: Generates ringbuf events */
+#define RS_FLAG_MAY_REDIRECT       (1u << 6)  /* RS_API_STABLE: May redirect packets to another interface */
 
 /* Module descriptor - embedded in .rodata.mod section
  * 

@@ -7,15 +7,19 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-/* ── Stage Numbers ── */
-#define JZ_STAGE_GUARD_CLASSIFIER   22
-#define JZ_STAGE_ARP_HONEYPOT       23
-#define JZ_STAGE_ICMP_HONEYPOT      24
-#define JZ_STAGE_SNIFFER_DETECT     25
-#define JZ_STAGE_TRAFFIC_WEAVER     35
-#define JZ_STAGE_BG_COLLECTOR       40
-#define JZ_STAGE_THREAT_DETECT      50
-#define JZ_STAGE_FORENSICS          55
+/* ── Stage Numbers ──
+ * All jz modules run in the 21-28 range (after VLAN at 20, before ACL at 30).
+ * This avoids collision with rSwitch core modules (vlan=20, acl=30, route=50,
+ * mirror=70, l2learn=80, lastcall=90).
+ */
+#define JZ_STAGE_GUARD_CLASSIFIER   21
+#define JZ_STAGE_ARP_HONEYPOT       22
+#define JZ_STAGE_ICMP_HONEYPOT      23
+#define JZ_STAGE_SNIFFER_DETECT     24
+#define JZ_STAGE_TRAFFIC_WEAVER     25
+#define JZ_STAGE_BG_COLLECTOR       26
+#define JZ_STAGE_THREAT_DETECT      27
+#define JZ_STAGE_FORENSICS          28
 
 /* ── rs_ctx Offsets (jz reserved: 192-255) ── */
 #define JZ_CTX_OFFSET               192

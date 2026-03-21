@@ -122,14 +122,14 @@ typedef struct jz_config jz_config_t;
 
 typedef struct jz_config_map_batch {
     struct {
-        uint32_t keys[256];
-        struct jz_guard_entry values[256];
+        uint32_t keys[4096];
+        struct jz_guard_entry values[4096];
         int count;
     } static_guards;
 
     struct {
-        uint32_t keys[256];
-        struct jz_whitelist_entry values[256];
+        uint32_t keys[4096];
+        struct jz_whitelist_entry values[4096];
         int count;
     } whitelist;
 

@@ -33,14 +33,14 @@ static const struct {
     const char *obj_file;
     int         stage;
 } module_defs[JZ_MOD_COUNT] = {
-    [JZ_MOD_GUARD_CLASSIFIER] = { "guard_classifier",  "guard_classifier.bpf.o",  22 },
-    [JZ_MOD_ARP_HONEYPOT]     = { "arp_honeypot",      "arp_honeypot.bpf.o",      23 },
-    [JZ_MOD_ICMP_HONEYPOT]    = { "icmp_honeypot",     "icmp_honeypot.bpf.o",     24 },
-    [JZ_MOD_SNIFFER_DETECT]   = { "sniffer_detect",    "sniffer_detect.bpf.o",    25 },
-    [JZ_MOD_TRAFFIC_WEAVER]   = { "traffic_weaver",    "traffic_weaver.bpf.o",    35 },
-    [JZ_MOD_BG_COLLECTOR]     = { "bg_collector",      "bg_collector.bpf.o",      40 },
-    [JZ_MOD_THREAT_DETECT]    = { "threat_detect",     "threat_detect.bpf.o",     50 },
-    [JZ_MOD_FORENSICS]        = { "forensics",         "forensics.bpf.o",         55 },
+    [JZ_MOD_GUARD_CLASSIFIER] = { "guard_classifier",  "guard_classifier.bpf.o",  21 },
+    [JZ_MOD_ARP_HONEYPOT]     = { "arp_honeypot",      "arp_honeypot.bpf.o",      22 },
+    [JZ_MOD_ICMP_HONEYPOT]    = { "icmp_honeypot",     "icmp_honeypot.bpf.o",     23 },
+    [JZ_MOD_SNIFFER_DETECT]   = { "sniffer_detect",    "sniffer_detect.bpf.o",    24 },
+    [JZ_MOD_TRAFFIC_WEAVER]   = { "traffic_weaver",    "traffic_weaver.bpf.o",    25 },
+    [JZ_MOD_BG_COLLECTOR]     = { "bg_collector",      "bg_collector.bpf.o",      26 },
+    [JZ_MOD_THREAT_DETECT]    = { "threat_detect",     "threat_detect.bpf.o",     27 },
+    [JZ_MOD_FORENSICS]        = { "forensics",         "forensics.bpf.o",         28 },
 };
 
 /* ── Internal Helpers ─────────────────────────────────────────── */
@@ -59,7 +59,12 @@ static int ensure_pin_dir(const char *path)
     return 0;
 }
 
-/* Register BPF program fd in rs_progs map at the given stage key. */
+/* Register BPF program fd in rs_progs map at a consecutive slot.
+ * rSwitch assigns ingress slots as 0, 1, 2, ... (ascending).
+ * The stage number is for ordering only — not for map keys.
+ * Returns the assigned slot number on success, -1 on error. */
+static int next_slot = 0;
+
 static int register_in_rswitch(int prog_fd, int stage)
 {
     int map_fd = bpf_obj_get(RS_PROGS_PIN);
@@ -69,27 +74,29 @@ static int register_in_rswitch(int prog_fd, int stage)
         return -1;
     }
 
-    uint32_t key = (uint32_t)stage;
+    int assigned = next_slot;
+    uint32_t key = (uint32_t)assigned;
     int ret = bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
     close(map_fd);
 
     if (ret < 0) {
-        jz_log_error("Failed to register stage %d in rs_progs: %s",
-                      stage, strerror(errno));
+        jz_log_error("Failed to register stage %d at slot %d in rs_progs: %s",
+                      stage, assigned, strerror(errno));
         return -1;
     }
 
-    return 0;
+    jz_log_info("Registered stage %d at rs_progs slot %d", stage, assigned);
+    next_slot++;
+    return assigned;
 }
 
-/* Remove BPF program from rs_progs map at the given stage key. */
-static int unregister_from_rswitch(int stage)
+static int unregister_from_rswitch(int slot)
 {
     int map_fd = bpf_obj_get(RS_PROGS_PIN);
     if (map_fd < 0)
         return -1;
 
-    uint32_t key = (uint32_t)stage;
+    uint32_t key = (uint32_t)slot;
     int ret = bpf_map_delete_elem(map_fd, &key);
     close(map_fd);
 
@@ -111,6 +118,7 @@ int jz_bpf_loader_init(jz_bpf_loader_t *loader, const char *bpf_dir)
         loader->modules[i].name     = module_defs[i].name;
         loader->modules[i].obj_file = module_defs[i].obj_file;
         loader->modules[i].stage    = module_defs[i].stage;
+        loader->modules[i].slot     = -1;
         loader->modules[i].loaded   = false;
         loader->modules[i].enabled  = false;
         loader->modules[i].bpf_obj  = NULL;
@@ -253,8 +261,9 @@ int jz_bpf_loader_unload(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
 
     /* Unregister from rSwitch if enabled */
     if (mod->enabled) {
-        unregister_from_rswitch(mod->stage);
+        unregister_from_rswitch(mod->slot);
         mod->enabled = false;
+        mod->slot = -1;
     }
 
     /* Close BPF object (also closes prog_fd) */
@@ -289,13 +298,17 @@ int jz_bpf_loader_enable(jz_bpf_loader_t *loader, jz_mod_id_t mod_id,
         return 0;  /* Already in desired state */
 
     if (enable) {
-        if (register_in_rswitch(mod->prog_fd, mod->stage) < 0)
+        int assigned = register_in_rswitch(mod->prog_fd, mod->stage);
+        if (assigned < 0)
             return -1;
+        mod->slot = assigned;
         mod->enabled = true;
-        jz_log_info("Enabled BPF module: %s (stage %d)", mod->name, mod->stage);
+        jz_log_info("Enabled BPF module: %s (stage %d, slot %d)",
+                     mod->name, mod->stage, mod->slot);
     } else {
-        if (unregister_from_rswitch(mod->stage) < 0)
+        if (unregister_from_rswitch(mod->slot) < 0)
             return -1;
+        mod->slot = -1;
         mod->enabled = false;
         jz_log_info("Disabled BPF module: %s", mod->name);
     }
