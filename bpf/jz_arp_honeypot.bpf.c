@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_arp_honeypot.bpf.c — ARP honeypot response generator
  *
- * Stage 23 in the rSwitch ingress pipeline.
+ * Stage 22 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
- * Reads guard classification result from stage 22 and, for guarded ARP
+ * Reads guard classification result from stage 21 and, for guarded ARP
  * requests, crafts a fake ARP reply in-place and transmits it with XDP_TX.
  */
 

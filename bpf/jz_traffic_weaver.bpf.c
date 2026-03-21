@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_traffic_weaver.bpf.c -- Per-flow traffic steering engine
  *
- * Stage 35 in the rSwitch ingress pipeline.
+ * Stage 25 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
  * Performs exact 5-tuple policy lookup and executes one of:
  *   PASS, DROP, REDIRECT, MIRROR, REDIRECT_MIRROR
  *
  * Pipeline flow:
- *   guard_classifier(22) -> arp_honeypot(23) / icmp_honeypot(24)
- *                        -> sniffer_detect(25)
- *                        -> traffic_weaver(35)
- *                        -> bg_collector(40)
+ *   guard_classifier(21) -> arp_honeypot(22) / icmp_honeypot(23)
+ *                        -> sniffer_detect(24)
+ *                        -> traffic_weaver(25)
+ *                        -> bg_collector(26)
  */
 
 #include "rswitch_bpf.h"       /* vmlinux.h, CO-RE helpers, map_defs.h, uapi.h */
@@ -22,7 +22,7 @@
 
 RS_DECLARE_MODULE("jz_traffic_weaver",
                   RS_HOOK_XDP_INGRESS,
-                  JZ_STAGE_TRAFFIC_WEAVER,   // = 35
+                  JZ_STAGE_TRAFFIC_WEAVER,
                   RS_FLAG_NEED_L2L3_PARSE | RS_FLAG_MAY_DROP | RS_FLAG_MAY_REDIRECT | RS_FLAG_CREATES_EVENTS,
                   "Per-flow traffic steering and mirroring");
 

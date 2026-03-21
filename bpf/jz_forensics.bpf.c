@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_forensics.bpf.c -- Forensic packet sampling module
  *
- * Stage 55 in the rSwitch ingress pipeline.
+ * Stage 28 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
  * Reads threat sampling hints from upstream threat detection and captures
  * packet bytes into a dedicated forensic ring buffer.

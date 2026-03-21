@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_bg_collector.bpf.c -- Background broadcast/multicast collector
  *
- * Stage 40 in the rSwitch ingress pipeline.
+ * Stage 26 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
  * Detects common background L2/L3 broadcast/multicast protocols,
  * updates per-CPU baseline stats, and emits sampled capture events.
  *
  * Pipeline flow:
- *   guard_classifier(22) -> arp_honeypot(23) / icmp_honeypot(24)
- *                        -> sniffer_detect(25)
- *                        -> traffic_weaver(35)
- *                        -> bg_collector(40)
- *                        -> threat_detect(50)
+ *   guard_classifier(21) -> arp_honeypot(22) / icmp_honeypot(23)
+ *                        -> sniffer_detect(24)
+ *                        -> traffic_weaver(25)
+ *                        -> bg_collector(26)
+ *                        -> threat_detect(27)
  */
 
 #include "rswitch_bpf.h"       /* vmlinux.h, CO-RE helpers, map_defs.h, uapi.h */

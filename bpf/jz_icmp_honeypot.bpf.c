@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_icmp_honeypot.bpf.c - ICMP echo reply honeypot
  *
- * Stage 24 in the rSwitch ingress pipeline.
+ * Stage 23 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
- * Reads guard classification result from stage 22 and, for guarded
+ * Reads guard classification result from stage 21 and, for guarded
  * ICMP echo requests, crafts an in-place echo reply with configurable
  * TTL spoofing to emulate a target host fingerprint.
  */

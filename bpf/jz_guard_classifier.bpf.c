@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_guard_classifier.bpf.c — Guard IP classifier for honeypot deception
  *
- * Stage 22 in the rSwitch ingress pipeline.
+ * Stage 21 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
  * Classifies incoming packets against guard tables (static guards,
  * dynamic guards, whitelists). Sets guard result in per-CPU map
  * for downstream honeypot modules.
  *
  * Pipeline flow:
- *   guard_classifier(22) -> arp_honeypot(23) / icmp_honeypot(24)
- *                        -> sniffer_detect(25)
- *                        -> traffic_weaver(35)
+ *   guard_classifier(21) -> arp_honeypot(22) / icmp_honeypot(23)
+ *                        -> sniffer_detect(24)
+ *                        -> traffic_weaver(25)
  */
 
 #include "rswitch_bpf.h"       /* vmlinux.h, CO-RE helpers, map_defs.h, uapi.h */

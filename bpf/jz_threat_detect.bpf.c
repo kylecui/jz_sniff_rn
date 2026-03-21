@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /* jz_threat_detect.bpf.c -- Fast-path threat pattern matching engine
  *
- * Stage 50 in the rSwitch ingress pipeline.
+ * Stage 27 in the jz_sniff_rn ingress pipeline (rSwitch user module).
  *
  * Performs quick source-IP blacklist checks and bounded threat pattern
  * matching. Emits threat events, updates per-CPU counters, and stores a
  * small per-packet threat result for the downstream forensics stage.
  *
  * Pipeline flow:
- *   guard_classifier(22) -> arp_honeypot(23) / icmp_honeypot(24)
- *                        -> sniffer_detect(25)
- *                        -> traffic_weaver(35)
- *                        -> bg_collector(40)
- *                        -> threat_detect(50)
- *                        -> forensics(55)
+ *   guard_classifier(21) -> arp_honeypot(22) / icmp_honeypot(23)
+ *                        -> sniffer_detect(24)
+ *                        -> traffic_weaver(25)
+ *                        -> bg_collector(26)
+ *                        -> threat_detect(27)
+ *                        -> forensics(28)
  */
 
 #include "rswitch_bpf.h"       /* vmlinux.h, CO-RE helpers, map_defs.h, uapi.h */
@@ -270,9 +270,8 @@ int jz_threat_detect_prog(struct xdp_md *xdp_ctx)
         return XDP_DROP;
     }
 
-    /* 5) Pattern matching loop: bounded 0..31, first match wins. */
-#pragma unroll
-    for (int i = 0; i < 32; i++) {
+    /* 5) Pattern matching loop: bounded 0..127, first match wins. */
+    for (int i = 0; i < 128; i++) {
         struct jz_threat_pattern *pattern;
         __u32 pattern_id = i;
 
@@ -337,7 +336,7 @@ int jz_threat_detect_prog(struct xdp_md *xdp_ctx)
         }
     }
 
-    /* 7) No threat detected -> continue pipeline to forensics (stage 55). */
+    /* 7) No threat detected -> continue pipeline to forensics (stage 28). */
     return jz_tail_pass(xdp_ctx, ctx);
 }
 
