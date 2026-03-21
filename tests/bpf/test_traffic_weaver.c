@@ -218,7 +218,10 @@ static void test_flow_key_construction(void **state)
     assert_int_equal(key.src_port, 12345);
     assert_int_equal(key.dst_port, 80);
     assert_int_equal(key.proto, IPPROTO_TCP);
-    assert_memory_equal(key._pad, (const uint8_t[3]){0, 0, 0}, sizeof(key._pad));
+    {
+        const uint8_t zero_pad[3] = {0, 0, 0};
+        assert_memory_equal(key._pad, zero_pad, sizeof(key._pad));
+    }
 }
 
 static void test_prog_run_pass_unmatched(void **state)

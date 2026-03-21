@@ -7,12 +7,11 @@
  * Client: blocking connect with timeout and reconnect logic.
  */
 
-#define _GNU_SOURCE
-
 #include "ipc.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>

@@ -131,13 +131,14 @@ static int cmp_str_field(jz_config_diff_t *diff,
                          const char *section,
                          const char *key,
                          const char *old_v,
-                         const char *new_v)
+                         const char *new_v,
+                         const char *action)
 {
     const char *a = old_v ? old_v : "";
     const char *b = new_v ? new_v : "";
     if (strcmp(a, b) == 0)
         return 0;
-    return add_diff_entry(diff, changed, section, "modified", key, a, b);
+    return add_diff_entry(diff, changed, section, action, key, a, b);
 }
 
 static int cmp_int_field(jz_config_diff_t *diff,
@@ -145,7 +146,8 @@ static int cmp_int_field(jz_config_diff_t *diff,
                          const char *section,
                          const char *key,
                          int old_v,
-                         int new_v)
+                         int new_v,
+                         const char *action)
 {
     char old_s[32];
     char new_s[32];
@@ -154,7 +156,7 @@ static int cmp_int_field(jz_config_diff_t *diff,
         return 0;
     snprintf(old_s, sizeof(old_s), "%d", old_v);
     snprintf(new_s, sizeof(new_s), "%d", new_v);
-    return add_diff_entry(diff, changed, section, "modified", key, old_s, new_s);
+    return add_diff_entry(diff, changed, section, action, key, old_s, new_s);
 }
 
 static int find_static_guard_by_ip(const jz_config_guards_t *guards, const char *ip)
@@ -275,6 +277,7 @@ int jz_config_diff(const jz_config_t *old_cfg, const jz_config_t *new_cfg, jz_co
     jz_config_t empty_cfg;
     int changed[SECTION_COUNT] = {0};
     diff_stats_t stats = {0};
+    const char *scalar_action;
     int i;
 
     if (!new_cfg || !diff)
@@ -282,6 +285,7 @@ int jz_config_diff(const jz_config_t *old_cfg, const jz_config_t *new_cfg, jz_co
 
     memset(&empty_cfg, 0, sizeof(empty_cfg));
     memset(diff, 0, sizeof(*diff));
+    scalar_action = old_cfg ? "modified" : "added";
     if (!old_cfg)
         old_cfg = &empty_cfg;
 
@@ -303,7 +307,7 @@ int jz_config_diff(const jz_config_t *old_cfg, const jz_config_t *new_cfg, jz_co
             {"api", "tls_key", old_cfg->api.tls_key, new_cfg->api.tls_key, NULL}
         };
         for (i = 0; i < (int)(sizeof(sc) / sizeof(sc[0])); ++i) {
-            if (cmp_str_field(diff, changed, sc[i].s, sc[i].k, sc[i].o, sc[i].n) != 0)
+            if (cmp_str_field(diff, changed, sc[i].s, sc[i].k, sc[i].o, sc[i].n, scalar_action) != 0)
                 return -1;
             if (sc[i].counter && strcmp(sc[i].o, sc[i].n) != 0)
                 (*sc[i].counter)++;
@@ -360,7 +364,7 @@ int jz_config_diff(const jz_config_t *old_cfg, const jz_config_t *new_cfg, jz_co
             {"api", "auth_token_count", old_cfg->api.auth_token_count, new_cfg->api.auth_token_count, NULL}
         };
         for (i = 0; i < (int)(sizeof(ic) / sizeof(ic[0])); ++i) {
-            if (cmp_int_field(diff, changed, ic[i].s, ic[i].k, ic[i].o, ic[i].n) != 0)
+            if (cmp_int_field(diff, changed, ic[i].s, ic[i].k, ic[i].o, ic[i].n, scalar_action) != 0)
                 return -1;
             if (ic[i].counter && ic[i].o != ic[i].n)
                 (*ic[i].counter)++;

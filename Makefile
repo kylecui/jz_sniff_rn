@@ -56,7 +56,8 @@ BPF_CFLAGS := -g -O2 \
               -I$(BPF_DIR)/include \
               -I$(INCLUDE_DIR) \
               -I$(INCLUDE_DIR)/rswitch \
-              -I$(TOPDIR)
+              -I$(TOPDIR) \
+              -idirafter /usr/include/x86_64-linux-gnu
 
 # ── User-space Build Flags ────────────────────────────────────
 USER_CFLAGS  := -g -O2 -Wall -Wextra -Werror \
@@ -69,7 +70,7 @@ USER_CFLAGS  := -g -O2 -Wall -Wextra -Werror \
                 -I$(TOPDIR)/third_party/cjson \
                 -I$(TOPDIR)/third_party/libyaml/include
 
-USER_LDFLAGS := -lbpf -lelf -lz -lpthread -lsqlite3 -lm
+USER_LDFLAGS := -lbpf -lelf -lz -lpthread -lsqlite3 -lm -lyaml
 
 # Test flags (cmocka)
 TEST_CFLAGS  := $(USER_CFLAGS) -I$(TEST_DIR) \

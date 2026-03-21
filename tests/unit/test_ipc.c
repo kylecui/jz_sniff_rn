@@ -26,16 +26,6 @@ static int echo_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
     return jz_ipc_server_send(srv, client_fd, reply, (uint32_t)len);
 }
 
-/* Counter handler: increments a counter for each message received */
-static int counter_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
-{
-    (void)client_fd;
-    (void)msg;
-    int *counter = (int *)user_data;
-    (*counter)++;
-    return 0;
-}
-
 /* ── Server Thread for Async Tests ────────────────────────────── */
 
 struct server_thread_ctx {

@@ -21,7 +21,7 @@ struct test_ip_packet {
     struct ethhdr eth;
     struct iphdr ip;
     uint8_t payload[64];
-};
+} __attribute__((packed));
 
 struct jz_threat_pattern {
     uint32_t src_ip;
@@ -199,7 +199,10 @@ static void test_threat_pattern_exact(void **state)
     assert_int_equal(exact.threat_level, 3);
     assert_int_equal(exact.pattern_id, 0x1001);
     assert_int_equal(exact.action, 2);
-    assert_memory_equal(exact._pad, (const uint8_t[3]){0, 0, 0}, sizeof(exact._pad));
+    {
+        const uint8_t zero_pad[3] = {0, 0, 0};
+        assert_memory_equal(exact._pad, zero_pad, sizeof(exact._pad));
+    }
 }
 
 static void test_prog_run_placeholder(void **state)

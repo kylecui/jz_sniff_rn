@@ -7,7 +7,6 @@
  */
 
 #ifndef _GNU_SOURCE
-#define _GNU_SOURCE
 #endif
 
 #if __has_include("db.h")
@@ -191,6 +190,7 @@ static cmd_t parse_command_name(const char *name)
 
 static int parse_global_opts(int argc, char **argv, int cmd_idx, cli_opts_t *opts)
 {
+    (void)argc;
     int i;
 
     for (i = 1; i < cmd_idx; i++) {

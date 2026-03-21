@@ -11,6 +11,7 @@
 
 #include <bpf/bpf.h>
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
@@ -299,7 +300,7 @@ int jz_probe_gen_init(jz_probe_gen_t *pg, const jz_config_t *cfg, int ifindex)
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
     if (ioctl(pg->raw_sock, SIOCGIFHWADDR, &ifr) < 0) {
         jz_log_error("ioctl(SIOCGIFHWADDR) failed: %s", strerror(errno));
         jz_probe_gen_destroy(pg);

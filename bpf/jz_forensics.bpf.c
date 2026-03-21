@@ -86,7 +86,7 @@ jz_should_sample(const struct jz_threat_result *threat,
     if (cfg->sample_rate == 0)
         return false;
 
-    return (bpf_get_prng_u32() % cfg->sample_rate) == 0;
+    return ((__u32)bpf_ktime_get_ns() % cfg->sample_rate) == 0;
 }
 
 static __always_inline void

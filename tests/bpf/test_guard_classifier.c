@@ -43,7 +43,7 @@ struct test_packet {
     uint8_t payload[64];
 };
 
-static void build_test_packet(struct test_packet *pkt,
+static void __attribute__((unused)) build_test_packet(struct test_packet *pkt,
                               const uint8_t *src_mac,
                               const uint8_t *dst_mac,
                               uint32_t src_ip,

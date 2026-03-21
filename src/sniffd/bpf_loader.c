@@ -6,7 +6,6 @@
  * in the rSwitch pipeline via the rs_progs map.
  */
 
-#define _GNU_SOURCE
 
 #include "bpf_loader.h"
 #include "log.h"
@@ -178,7 +177,7 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
     }
 
     /* Find the main program (bpf_program__next for libbpf < 0.7 compat) */
-    struct bpf_program *prog = bpf_program__next(NULL, obj);
+    struct bpf_program *prog = bpf_object__next_program(obj, NULL);
     if (!prog) {
         jz_log_error("No BPF program found in %s", obj_path);
         bpf_object__close(obj);

@@ -6,7 +6,6 @@
  * libbpf's ring_buffer API. Events are dispatched to user callbacks.
  */
 
-#define _GNU_SOURCE
 
 #include "ringbuf.h"
 #include "log.h"

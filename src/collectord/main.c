@@ -10,7 +10,6 @@
  *   - Serve IPC commands (event, query, stats, export)
  */
 
-#define _GNU_SOURCE
 
 #include "config.h"
 #include "db.h"

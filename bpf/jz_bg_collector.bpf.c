@@ -225,7 +225,7 @@ jz_bg_should_capture(__u16 ethertype,
         if (sample_rate == 0)
             sample_rate = 1;
 
-        if (sample_rate > 1 && (bpf_get_prng_u32() % sample_rate) != 0)
+        if (sample_rate > 1 && ((__u32)bpf_ktime_get_ns() % sample_rate) != 0)
             return false;
 
         *out_include_payload = entry->include_payload ? 1 : 0;

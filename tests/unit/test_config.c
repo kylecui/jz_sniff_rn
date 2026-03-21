@@ -9,7 +9,7 @@
 static jz_config_t test_cfg;
 static jz_config_errors_t test_errors;
 static char test_yaml_path[256];
-static char test_overlay_path[256];
+static char test_overlay_path[512];
 
 static int setup(void **state)
 {

@@ -9,7 +9,6 @@
  *   - Daemonize, write PID file, handle signals
  */
 
-#define _GNU_SOURCE
 
 #include "api.h"
 #include "bpf_loader.h"
@@ -399,6 +398,7 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
 
 static int sample_callback(const void *data, uint32_t data_len, void *user_data)
 {
+    (void)data;
     (void)user_data;
 
     jz_log_debug("Forensic sample received: len=%u", data_len);

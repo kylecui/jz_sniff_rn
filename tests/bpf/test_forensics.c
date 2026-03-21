@@ -21,7 +21,7 @@ struct test_generic_packet {
     struct ethhdr eth;
     struct iphdr ip;
     uint8_t payload[256];
-};
+} __attribute__((packed));
 
 struct jz_sample_config {
     uint8_t enabled;

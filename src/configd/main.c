@@ -10,7 +10,6 @@
  *   - Serve IPC commands (config_get, config_set, config_version, etc.)
  */
 
-#define _GNU_SOURCE
 
 #include "config.h"
 #include "config_map.h"
@@ -235,6 +234,7 @@ static int push_hash_map(const char *map_name,
 static int push_array_singleton(const char *map_name,
                                 const void *value, size_t value_size)
 {
+    (void)value_size;
     char pin[512];
     snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
 

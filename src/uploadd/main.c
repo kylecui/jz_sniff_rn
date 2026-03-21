@@ -11,7 +11,6 @@
  *   - Serve IPC commands (status, force_upload, set_platform)
  */
 
-#define _GNU_SOURCE
 
 #include "config.h"
 #include "db.h"
@@ -56,6 +55,12 @@
 #define DEFAULT_BACKOFF_MAX_MS  60000       /* 1 minute */
 
 #define GZIP_CHUNK_SIZE         16384
+
+/* ── Global Signal Flags ─────────────────────────────────────── */
+
+static volatile sig_atomic_t g_running      = 1;
+static volatile sig_atomic_t g_reload       = 0;
+static volatile sig_atomic_t g_force_upload = 0;
 
 /* ── Upload State ─────────────────────────────────────────────── */
 
@@ -349,11 +354,7 @@ static int http_post_upload(const char *url, const char *tls_cert_path,
     return -1;
 }
 
-/* ── Global State ─────────────────────────────────────────────── */
-
-static volatile sig_atomic_t g_running      = 1;
-static volatile sig_atomic_t g_reload       = 0;
-static volatile sig_atomic_t g_force_upload = 0;
+/* ── Global State (continued) ─────────────────────────────────── */
 
 static struct {
     char config_path[256];

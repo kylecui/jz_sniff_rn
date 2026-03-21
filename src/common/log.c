@@ -6,7 +6,6 @@
  * Thread-safe via syslog (which is thread-safe) and flockfile on stderr.
  */
 
-#define _GNU_SOURCE
 
 #include "log.h"
 

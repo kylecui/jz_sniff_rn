@@ -3,9 +3,8 @@
 #ifndef __JZ_COMMON_H
 #define __JZ_COMMON_H
 
-#include <linux/bpf.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_endian.h>
+/* Kernel types and BPF helpers come from rswitch_bpf.h (vmlinux.h + libbpf).
+ * Do NOT add <linux/bpf.h> — it redefines vmlinux.h symbols. */
 
 /* ── Stage Numbers ──
  * All jz modules run in the 21-28 range (after VLAN at 20, before ACL at 30).

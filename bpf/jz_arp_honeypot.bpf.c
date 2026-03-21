@@ -139,7 +139,7 @@ jz_get_fake_mac(const struct jz_guard_result *result, __u8 *out_mac)
         return true;
     }
 
-    __u32 base = bpf_get_prng_u32();
+    __u32 base = (__u32)bpf_ktime_get_ns();
 
     for (int i = 0; i < JZ_MAX_FAKE_MACS; i++) {
         __u32 idx = (base + i) % JZ_MAX_FAKE_MACS;

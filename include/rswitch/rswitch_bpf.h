@@ -22,6 +22,7 @@
  * Original rSwitch repo uses "../core/map_defs.h" from bpf/include/.
  */
 #include "map_defs.h"
+#include "module_abi.h"
 
 #ifndef RS_API_STABLE
 #define RS_API_STABLE
