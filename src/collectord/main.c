@@ -17,6 +17,8 @@
 #include "ipc.h"
 #include "log.h"
 
+#include <cJSON.h>
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -550,25 +552,23 @@ static int persist_event(const char *payload, uint32_t payload_len)
  */
 static char *export_pending_json(int max_records)
 {
-    int attack_pending = jz_db_pending_count(&g_ctx.db, "attack_log");
-    int sniffer_pending = jz_db_pending_count(&g_ctx.db, "sniffer_log");
-    int bg_pending = jz_db_pending_count(&g_ctx.db, "bg_captures");
+    int per_table = (max_records > 0) ? (max_records / 3 + 1) : 0;
 
-    if (attack_pending < 0) attack_pending = 0;
-    if (sniffer_pending < 0) sniffer_pending = 0;
-    if (bg_pending < 0) bg_pending = 0;
+    jz_attack_row_t     *attacks  = NULL;
+    jz_sniffer_row_t    *sniffers = NULL;
+    jz_bg_capture_row_t *bg_caps  = NULL;
 
-    int total = attack_pending + sniffer_pending + bg_pending;
-    if (max_records > 0 && total > max_records)
-        total = max_records;
+    int n_attacks  = jz_db_fetch_pending_attacks(&g_ctx.db, per_table, &attacks);
+    int n_sniffers = jz_db_fetch_pending_sniffers(&g_ctx.db, per_table, &sniffers);
+    int n_bg       = jz_db_fetch_pending_bg_captures(&g_ctx.db, per_table, &bg_caps);
 
-    /* Build a summary JSON — individual record export would require
-     * an iterator API in db.h which we don't have yet.
-     * For now, export metadata that uploadd can use to decide batch size. */
-    size_t buf_size = 1024;
-    char *json = malloc(buf_size);
-    if (!json)
-        return NULL;
+    if (n_attacks < 0)  n_attacks  = 0;
+    if (n_sniffers < 0) n_sniffers = 0;
+    if (n_bg < 0)       n_bg       = 0;
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root)
+        goto fail;
 
     char device_id[64] = "unknown";
     jz_db_get_state(&g_ctx.db, "device_id", device_id, sizeof(device_id));
@@ -576,34 +576,82 @@ static char *export_pending_json(int max_records)
     char ts[32];
     now_iso8601(ts, sizeof(ts));
 
-    snprintf(json, buf_size,
-             "{"
-             "\"device_id\":\"%s\","
-             "\"timestamp\":\"%s\","
-             "\"pending\":{"
-               "\"attacks\":%d,"
-               "\"sniffers\":%d,"
-               "\"bg_captures\":%d,"
-               "\"total\":%d"
-             "},"
-             "\"stats\":{"
-               "\"received\":%lu,"
-               "\"persisted\":%lu,"
-               "\"deduped\":%lu,"
-               "\"rate_limited\":%lu,"
-               "\"errors\":%lu"
-             "}"
-             "}",
-             device_id, ts,
-             attack_pending, sniffer_pending, bg_pending,
-             attack_pending + sniffer_pending + bg_pending,
-             (unsigned long)g_ctx.events_received,
-             (unsigned long)g_ctx.events_persisted,
-             (unsigned long)g_ctx.events_deduped,
-             (unsigned long)g_ctx.events_rate_limited,
-             (unsigned long)g_ctx.events_errors);
+    cJSON_AddStringToObject(root, "device_id", device_id);
+    cJSON_AddStringToObject(root, "timestamp", ts);
+
+    cJSON *arr_attacks = cJSON_AddArrayToObject(root, "attacks");
+    for (int i = 0; i < n_attacks; i++) {
+        jz_attack_row_t *r = &attacks[i];
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "id",           r->id);
+        cJSON_AddNumberToObject(obj, "event_type",   r->event_type);
+        cJSON_AddStringToObject(obj, "timestamp",    r->timestamp);
+        cJSON_AddNumberToObject(obj, "timestamp_ns", (double)r->timestamp_ns);
+        cJSON_AddStringToObject(obj, "src_ip",       r->src_ip);
+        cJSON_AddStringToObject(obj, "src_mac",      r->src_mac);
+        cJSON_AddStringToObject(obj, "dst_ip",       r->dst_ip);
+        cJSON_AddStringToObject(obj, "dst_mac",      r->dst_mac);
+        cJSON_AddStringToObject(obj, "guard_type",   r->guard_type);
+        cJSON_AddStringToObject(obj, "protocol",     r->protocol);
+        cJSON_AddNumberToObject(obj, "ifindex",      r->ifindex);
+        cJSON_AddNumberToObject(obj, "threat_level", r->threat_level);
+        if (r->details[0])
+            cJSON_AddStringToObject(obj, "details", r->details);
+        cJSON_AddItemToArray(arr_attacks, obj);
+    }
+
+    cJSON *arr_sniffers = cJSON_AddArrayToObject(root, "sniffers");
+    for (int i = 0; i < n_sniffers; i++) {
+        jz_sniffer_row_t *r = &sniffers[i];
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "id",             r->id);
+        cJSON_AddStringToObject(obj, "mac",            r->mac);
+        cJSON_AddStringToObject(obj, "ip",             r->ip);
+        cJSON_AddNumberToObject(obj, "ifindex",        r->ifindex);
+        cJSON_AddStringToObject(obj, "first_seen",     r->first_seen);
+        cJSON_AddStringToObject(obj, "last_seen",      r->last_seen);
+        cJSON_AddNumberToObject(obj, "response_count", r->response_count);
+        cJSON_AddStringToObject(obj, "probe_ip",       r->probe_ip);
+        cJSON_AddItemToArray(arr_sniffers, obj);
+    }
+
+    cJSON *arr_bg = cJSON_AddArrayToObject(root, "bg_captures");
+    for (int i = 0; i < n_bg; i++) {
+        jz_bg_capture_row_t *r = &bg_caps[i];
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "id",             r->id);
+        cJSON_AddStringToObject(obj, "period_start",   r->period_start);
+        cJSON_AddStringToObject(obj, "period_end",     r->period_end);
+        cJSON_AddStringToObject(obj, "protocol",       r->protocol);
+        cJSON_AddNumberToObject(obj, "packet_count",   r->packet_count);
+        cJSON_AddNumberToObject(obj, "byte_count",     r->byte_count);
+        cJSON_AddNumberToObject(obj, "unique_sources", r->unique_sources);
+        if (r->sample_data[0])
+            cJSON_AddStringToObject(obj, "sample_data", r->sample_data);
+        cJSON_AddItemToArray(arr_bg, obj);
+    }
+
+    cJSON *stats = cJSON_AddObjectToObject(root, "stats");
+    cJSON_AddNumberToObject(stats, "received",     (double)g_ctx.events_received);
+    cJSON_AddNumberToObject(stats, "persisted",    (double)g_ctx.events_persisted);
+    cJSON_AddNumberToObject(stats, "deduped",      (double)g_ctx.events_deduped);
+    cJSON_AddNumberToObject(stats, "rate_limited", (double)g_ctx.events_rate_limited);
+    cJSON_AddNumberToObject(stats, "errors",       (double)g_ctx.events_errors);
+
+    char *json = cJSON_PrintUnformatted(root);
+
+    cJSON_Delete(root);
+    jz_db_free_attacks(attacks);
+    jz_db_free_sniffers(sniffers);
+    jz_db_free_bg_captures(bg_caps);
 
     return json;
+
+fail:
+    jz_db_free_attacks(attacks);
+    jz_db_free_sniffers(sniffers);
+    jz_db_free_bg_captures(bg_caps);
+    return NULL;
 }
 
 /* ── DB Size Check ────────────────────────────────────────────── */
@@ -612,16 +660,23 @@ static int check_db_size(void)
 {
     struct stat st;
     if (stat(g_ctx.db_path, &st) < 0)
-        return 0;  /* can't check, assume fine */
+        return 0;
 
     int size_mb = (int)(st.st_size / (1024 * 1024));
-    if (size_mb >= g_ctx.max_db_size_mb) {
-        jz_log_warn("Database size %d MB exceeds limit %d MB",
-                     size_mb, g_ctx.max_db_size_mb);
-        /* TODO: Implement auto-pruning of oldest records */
-        return 1;
+    if (size_mb < g_ctx.max_db_size_mb)
+        return 0;
+
+    jz_log_warn("Database size %d MB exceeds limit %d MB, pruning uploaded records",
+                 size_mb, g_ctx.max_db_size_mb);
+
+    int pruned = jz_db_prune_uploaded(&g_ctx.db, 1000);
+    if (pruned > 0) {
+        jz_log_info("Pruned %d uploaded records from database", pruned);
+    } else if (pruned == 0) {
+        jz_log_warn("No uploaded records to prune — database may continue growing");
     }
-    return 0;
+
+    return 1;
 }
 
 /* ── IPC Command Handler ─────────────────────────────────────── */
@@ -666,12 +721,12 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
 
         char *json = export_pending_json(max_records);
         if (json) {
-            len = (int)strlen(json);
-            if (len > (int)sizeof(reply) - 1)
-                len = (int)sizeof(reply) - 1;
-            memcpy(reply, json, (size_t)len);
-            reply[len] = '\0';
+            uint32_t json_len = (uint32_t)strlen(json);
+            if (json_len > JZ_IPC_MAX_MSG_LEN - 1)
+                json_len = JZ_IPC_MAX_MSG_LEN - 1;
+            int rc = jz_ipc_server_send(srv, client_fd, json, json_len);
             free(json);
+            return rc;
         } else {
             len = snprintf(reply, sizeof(reply), "error:export failed");
         }
