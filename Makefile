@@ -86,6 +86,13 @@ BPF_OBJS := $(patsubst $(BPF_DIR)/%.bpf.c,$(BUILD_DIR)/bpf/%.bpf.o,$(BPF_SRCS))
 COMMON_SRCS := $(wildcard $(SRC_DIR)/common/*.c)
 COMMON_OBJS := $(patsubst $(SRC_DIR)/common/%.c,$(BUILD_DIR)/common/%.o,$(COMMON_SRCS))
 
+# Vendored third-party sources (compiled as common objects)
+VENDOR_SRCS := $(TOPDIR)/third_party/cjson/cJSON.c \
+               $(TOPDIR)/third_party/mongoose/mongoose.c
+VENDOR_OBJS := $(BUILD_DIR)/vendor/cJSON.o \
+               $(BUILD_DIR)/vendor/mongoose.o
+COMMON_OBJS += $(VENDOR_OBJS)
+
 # Daemons
 DAEMONS := sniffd configd collectord uploadd
 DAEMON_BINS := $(foreach d,$(DAEMONS),$(BUILD_DIR)/$(d)/$(d))
@@ -116,6 +123,13 @@ user: $(COMMON_OBJS) $(DAEMON_BINS)
 $(BUILD_DIR)/common/%.o: $(SRC_DIR)/common/%.c | $(BUILD_DIR)/common
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
+# Vendored third-party objects (no -Werror to tolerate upstream warnings)
+$(BUILD_DIR)/vendor/cJSON.o: $(TOPDIR)/third_party/cjson/cJSON.c | $(BUILD_DIR)/vendor
+	$(CC) $(USER_CFLAGS) -Wno-error -c $< -o $@
+
+$(BUILD_DIR)/vendor/mongoose.o: $(TOPDIR)/third_party/mongoose/mongoose.c | $(BUILD_DIR)/vendor
+	$(CC) $(USER_CFLAGS) -Wno-error -DMG_TLS=MG_TLS_BUILTIN -DMG_ENABLE_LINES=1 -c $< -o $@
+
 # Daemon build rules (each daemon links common + its own sources)
 define DAEMON_RULES
 $(BUILD_DIR)/$(1)/$(1): $(wildcard $(SRC_DIR)/$(1)/*.c) $(COMMON_OBJS) | $(BUILD_DIR)/$(1)
@@ -134,7 +148,7 @@ $(BUILD_DIR)/cli/%: $(CLI_DIR)/%.c $(COMMON_OBJS) | $(BUILD_DIR)/cli
 
 # ── Build directories ─────────────────────────────────────────
 
-$(BUILD_DIR)/bpf $(BUILD_DIR)/common $(BUILD_DIR)/cli:
+$(BUILD_DIR)/bpf $(BUILD_DIR)/common $(BUILD_DIR)/cli $(BUILD_DIR)/vendor:
 	mkdir -p $@
 
 $(BUILD_DIR)/sniffd $(BUILD_DIR)/configd $(BUILD_DIR)/collectord $(BUILD_DIR)/uploadd:
