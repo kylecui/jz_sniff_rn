@@ -17,12 +17,14 @@ Network security appliance firmware built on the [rSwitch](https://github.com/ky
 
 ```
 BPF Pipeline (kernel-space, XDP):
-  guard_classifier (22) -> arp_honeypot (23) / icmp_honeypot (24)
-                        -> sniffer_detect (25)
-                        -> traffic_weaver (35)
-                        -> bg_collector (40)
-                        -> threat_detect (50)
-                        -> forensics (55)
+  guard_classifier (21) -> arp_honeypot (22) / icmp_honeypot (23)
+                         -> sniffer_detect (24)
+                         -> traffic_weaver (25)
+                         -> bg_collector (26)
+                         -> threat_detect (27)
+                         -> forensics (28)
+  Stages 21-28 sit in the gap between rSwitch VLAN(20) and ACL(30).
+  Actual rs_progs slots are consecutive (0,1,2,...) — stage numbers are for ordering only.
 
 User-space Daemons:
   sniffd      -- BPF loader, event consumer, probe generator
@@ -31,9 +33,9 @@ User-space Daemons:
   uploadd     -- Batch upload to management platform
 
 CLI Tools:
-  jzctl       -- System management
-  jzguard     -- Guard table management
-  jzlog       -- Log viewer
+  jzctl       -- System management (status, config, module, daemon control)
+  jzguard     -- Guard table management (add/del/list, whitelist, probe)
+  jzlog       -- Log viewer (attack, sniffer, bg, audit, threat, tail)
 ```
 
 ## Requirements
@@ -84,13 +86,33 @@ See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.
 
 ## Current Status
 
-Phases 1-5 are complete (~11,245 lines across 42 files):
-- 8 BPF kernel modules (all pipeline stages)
-- 6 user-space library modules (db, mac_pool, config, config_map, config_history, config_diff)
-- 13 test files (8 BPF + 5 unit)
-- Build system, configuration, and infrastructure
+**Overall: ~95% complete** — 24,287 lines of C across 66 source files (plus 33,781 lines vendored).
 
-Remaining: Phase 6 (bg collection user-space), Phase 7 (daemons), Phase 8 (CLI + REST API + deployment).
+### What's Done
+
+| Component | Files | Lines | Status |
+|---|---|---|---|
+| BPF pipeline (8 modules + 3 headers) | 11 | 2,423 | ✅ Complete |
+| Common library (8 modules: db, mac_pool, config, config_map, config_history, config_diff, ipc, log) | 16 | 6,889 | ✅ Complete (incl. DB pruning APIs) |
+| sniffd (main loop, BPF loader, ringbuf, probe_gen, guard_mgr, REST API) | 11 | 4,665 | ✅ Complete (incl. 31-endpoint HTTPS API) |
+| configd (main loop, inotify watcher, reload, BPF map push, remote TLS endpoint) | 3 | 1,313 | ✅ Complete (incl. mTLS HTTPS config push) |
+| collectord (main loop, dedup, rate limiter, SQLite batch, JSON export, DB auto-pruning) | 1 | 1,021 | ✅ Complete |
+| uploadd (main loop, batch assembly, gzip, native HTTPS via mongoose) | 1 | 1,102 | ✅ Complete (incl. mTLS HTTPS upload) |
+| Tests (8 BPF + 7 unit + test_helpers) | 16 | 3,698 | ✅ Complete for implemented modules |
+| CLI tools (jzctl, jzguard, jzlog) | 3 | 2,157 | ✅ Complete |
+| REST API (31 endpoints, bearer auth, HTTPS/TLS) | 2 | 2,153 | ✅ Complete |
+| Systemd services (sniffd, configd, collectord, uploadd) | 4 | 167 | ✅ Complete |
+| Vendored: rSwitch headers | 4 | 954 | ✅ |
+| Vendored: mongoose (TLS HTTP), cJSON | 4 | 33,781 | ✅ |
+| Build system, config, scripts | 3 | ~540 | ✅ |
+
+### What's Remaining
+
+- **Phase 10: Integration & Validation** — End-to-end tests with rSwitch pipeline, performance benchmarks (PPS/latency), final deployment guide.
+
+### Known Issues
+
+All 5 rSwitch integration bugs have been fixed. All daemon core gaps (configd TLS, collectord pruning, uploadd table name bug) resolved. Policy endpoints in the REST API return 501 (needs policy manager module for full implementation).
 
 ## Project Structure
 
@@ -100,16 +122,17 @@ jz_sniff_rn/
     include/         Shared BPF headers (jz_common.h, jz_maps.h, jz_events.h)
   src/              User-space daemons
     common/          Shared library (IPC, config, DB, logging)
-    sniffd/          Main orchestrator daemon
+    sniffd/          Main orchestrator daemon + REST API
     configd/         Configuration manager
     collectord/      Data collector
     uploadd/         Upload agent
   cli/              CLI tools (jzctl, jzguard, jzlog)
   config/           Default YAML config profiles
+  systemd/          Systemd service files (sniffd, configd, collectord, uploadd)
   tests/            Unit, BPF, integration, and perf tests
   scripts/          Build and deploy scripts
   include/rswitch/  rSwitch SDK headers (vendored)
-  third_party/      Vendored dependencies (mongoose, cjson, libyaml)
+  third_party/      Vendored dependencies (mongoose v7.20, cJSON v1.7.18)
 ```
 
 ## License

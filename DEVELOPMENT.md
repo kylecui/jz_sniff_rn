@@ -14,7 +14,7 @@ For detailed specifications, refer to the following documents:
 
 ## 2. Development History
 
-The project has progressed through five major phases, documented in the following commits:
+The project has progressed through seven major phases, documented in the following commits:
 
 1.  **67a905e** feat(scaffold): Phase 1. Established the project structure, BPF headers, build system, and test framework. (~1,800 lines)
 2.  **aa9d365** chore(config): Added .editorconfig and .gitattributes to ensure consistent LF line endings across environments. (~30 lines)
@@ -22,22 +22,29 @@ The project has progressed through five major phases, documented in the followin
 4.  **f1858ab** feat(bpf): Phase 3. Developed the traffic weaving engine with per-flow steering capabilities. (~530 lines)
 5.  **20cff53** feat(bpf): Phase 4. Added threat detection, forensic sampling, and background collection modules. (~1,600 lines)
 6.  **c020696** feat(config): Phase 5. Implemented the configuration management system, including the parser, translator, history, and diff modules. (~5,985 lines)
+7.  **Phase 6**: Implemented IPC and logging common modules, all four user-space daemons (sniffd, configd, collectord, uploadd), and additional unit tests. (~6,235 lines)
 
-Total implementation: ~11,245 lines across 42 files.
+8.  **Phase 7**: Completed daemon gaps — uploadd table name bug fix, collectord DB auto-pruning, configd remote TLS endpoint with mTLS support via vendored mongoose v7.20. Vendored cJSON v1.7.18 and mongoose v7.20 into third_party/. (~2,400 lines new code + 33,781 lines vendored)
+
+9.  **Phase 8**: Implemented all three CLI tools — jzctl (604 lines, system management), jzlog (847 lines, log viewer with SQLite queries), jzguard (706 lines, guard table management with IPC). (~2,157 lines)
+
+10. **Phase 9**: REST API & Deployment — 31-endpoint HTTPS management API (api.h/api.c, 2,153 lines) integrated into sniffd with bearer token auth, guard/whitelist CRUD, log queries with pagination, config IPC, stats endpoints. Four systemd service files with dependency ordering, security hardening, and watchdog support (167 lines). sniffd main.c updated with API init/poll/destroy lifecycle and 6 new CLI options. (~2,393 lines)
+
+Total implementation: ~24,287 lines of C across 66 source files (plus 33,781 lines vendored).
 
 ## 3. Architecture Overview
 
 ### BPF Pipeline
 The data plane consists of a series of BPF modules executed in the rSwitch pipeline. Each module handles a specific security or deception task:
 
-- **guard_classifier (22)**: Identifies if a packet targets a guarded IP address.
-- **arp_honeypot (23)**: Generates fake ARP replies for guarded IPs.
-- **icmp_honeypot (24)**: Generates fake ICMP echo replies for guarded IPs.
-- **sniffer_detect (25)**: Monitors responses to ARP probes to detect sniffers.
-- **traffic_weaver (35)**: Applies per-flow steering (pass, drop, redirect, mirror).
-- **bg_collector (40)**: Captures broadcast and multicast traffic for baselining.
-- **threat_detect (50)**: Performs fast-path pattern matching for known threats.
-- **forensics (55)**: Samples suspicious packets for offline analysis.
+- **guard_classifier (21)**: Identifies if a packet targets a guarded IP address.
+- **arp_honeypot (22)**: Generates fake ARP replies for guarded IPs.
+- **icmp_honeypot (23)**: Generates fake ICMP echo replies for guarded IPs.
+- **sniffer_detect (24)**: Monitors responses to ARP probes to detect sniffers.
+- **traffic_weaver (25)**: Applies per-flow steering (pass, drop, redirect, mirror).
+- **bg_collector (26)**: Captures broadcast and multicast traffic for baselining.
+- **threat_detect (27)**: Performs fast-path pattern matching for known threats.
+- **forensics (28)**: Samples suspicious packets for offline analysis.
 
 ### User-Space Library Modules
 The common library provides shared functionality for the daemons:
@@ -48,15 +55,25 @@ The common library provides shared functionality for the daemons:
 - **config_map**: Translates configuration into BPF map entries.
 - **config_history**: Tracks configuration versions and snapshots.
 - **config_diff**: Computes differences between configuration versions.
+- **ipc**: Unix domain socket IPC with epoll and length-prefix framing (server + client).
+- **log**: Structured logging with syslog integration and configurable levels.
+
+### User-Space Daemons
+Four daemons are implemented with core functionality:
+
+- **sniffd** (src/sniffd/): Main orchestrator — BPF module loader, event ring buffer consumer, ARP probe generator, guard table manager, REST API server, signal handling. Sub-modules: bpf_loader.c/.h (429 lines), ringbuf.c/.h (318 lines), probe_gen.c/.h (472 lines), guard_mgr.c/.h (557 lines), api.c/.h (2,153 lines), main.c (800 lines).
+- **configd** (src/configd/): Configuration manager — inotify file watcher, hot-reload orchestration, config validation pipeline, BPF map push, remote TLS config endpoint with mTLS. Sub-modules: remote.c/.h (425 lines), main.c (888 lines). Uses vendored mongoose v7.20 for HTTPS server.
+- **collectord** (src/collectord/): Event collector — deduplication via MAC+type+window, token-bucket rate limiter, SQLite batch writes, full JSON record export via cJSON, DB auto-pruning of uploaded records. main.c (1,021 lines).
+- **uploadd** (src/uploadd/): Upload agent — batch assembly from pending DB records, gzip compression, retry with exponential backoff, native HTTPS client via vendored mongoose v7.20 with mTLS support. main.c (1,102 lines).
 
 ### Build System
 A top-level Makefile handles auto-discovery of BPF modules and user-space components. It supports CO-RE (Compile Once, Run Everywhere) for BPF portability.
 
 ## 4. Complete File Inventory
 
-The project consists of 42 implemented files, organized as follows:
+The project consists of 66 implemented source files (~24,287 lines of C), organized as follows:
 
-### BPF Modules and Headers
+### BPF Modules and Headers (11 files, ~2,420 lines)
 - **bpf/include/jz_common.h**: Shared constants and stage numbers. (80 lines)
 - **bpf/include/jz_events.h**: Event structure definitions. (67 lines)
 - **bpf/include/jz_maps.h**: BPF map definitions. (216 lines)
@@ -69,18 +86,45 @@ The project consists of 42 implemented files, organized as follows:
 - **bpf/jz_threat_detect.bpf.c**: Pattern matching engine. (344 lines)
 - **bpf/jz_traffic_weaver.bpf.c**: Traffic steering engine. (282 lines)
 
-### User-Space Library (src/common/)
+### User-Space Common Library (16 files, ~6,889 lines)
 - **config.c / .h**: YAML configuration management. (2,509 lines)
 - **config_diff.c / .h**: Configuration diffing. (674 lines)
 - **config_history.c / .h**: Version history management. (591 lines)
 - **config_map.c / .h**: BPF map translation. (990 lines)
-- **db.c / .h**: SQLite database wrapper. (600 lines)
+- **db.c / .h**: SQLite database wrapper with query and pruning APIs. (936 lines)
 - **mac_pool.c / .h**: Fake MAC management. (250 lines)
+- **ipc.c / .h**: Unix domain socket IPC (server + client). (695 lines)
+- **log.c / .h**: Structured logging with syslog integration. (244 lines)
 
-### Tests
-- **tests/bpf/test_*.c**: 8 BPF module tests using prog_test_run. (1,666 lines)
-- **tests/unit/test_*.c**: 5 unit tests for library modules. (1,463 lines)
+### User-Space Daemons (14 files, ~7,985 lines)
+- **src/sniffd/main.c**: Orchestrator daemon main loop. (800 lines)
+- **src/sniffd/bpf_loader.c / .h**: BPF module lifecycle manager (8 slots). (429 lines)
+- **src/sniffd/ringbuf.c / .h**: Dual ring buffer consumer (events + forensic samples). (318 lines)
+- **src/sniffd/probe_gen.c / .h**: ARP probe generator with timerfd scheduling. (472 lines)
+- **src/sniffd/guard_mgr.c / .h**: Guard table manager (CRUD, TTL, IPC). (557 lines)
+- **src/sniffd/api.c / .h**: REST API server (31 HTTPS endpoints, bearer auth, mongoose). (2,153 lines)
+- **src/configd/main.c**: Configuration manager daemon with BPF map push. (888 lines)
+- **src/configd/remote.c / .h**: Remote TLS config endpoint (mTLS, mongoose). (425 lines)
+- **src/collectord/main.c**: Event collector daemon with DB auto-pruning. (1,021 lines)
+- **src/uploadd/main.c**: Upload agent daemon with native HTTPS. (1,102 lines)
+
+### Tests (16 files, ~3,698 lines)
+- **tests/bpf/test_*.c**: 8 BPF module tests using prog_test_run. (~1,800 lines)
+- **tests/unit/test_*.c**: 7 unit tests (config, config_diff, config_history, config_map, db, ipc, log). (~1,866 lines)
 - **tests/unit/test_helpers.h**: Shared test utilities. (32 lines)
+
+### CLI Tools (3 files, ~2,157 lines)
+- **cli/jzctl.c**: System management CLI — status, module list/reload, stats, config show/reload/rollback, daemon restart. (604 lines)
+- **cli/jzlog.c**: Log viewer CLI — attack, sniffer, background, audit, threat subcommands with SQLite direct queries, table/JSON output, tail -f mode. (847 lines)
+- **cli/jzguard.c**: Guard table management CLI — add/del static/dynamic guards, whitelist add/del, probe start/stop/results, list with type filter and JSON output. (706 lines)
+
+### Systemd Services (4 files, ~167 lines)
+- **systemd/sniffd.service**: Main orchestrator — After=network-online.target rswitch.service, LimitMEMLOCK=infinity, WatchdogSec=60. (48 lines)
+- **systemd/configd.service**: Config manager — After=sniffd.service, BindsTo=sniffd.service. (41 lines)
+- **systemd/collectord.service**: Data collector — After=sniffd.service, BindsTo=sniffd.service. (38 lines)
+- **systemd/uploadd.service**: Upload agent — After=collectord.service, Wants=network-online.target. (40 lines)
+
+All services include: Restart=on-failure, NoNewPrivileges=yes, ProtectSystem=strict, ProtectHome=yes, PrivateTmp=yes.
 
 ### Configuration and Scripts
 - **config/base.yaml**: Default system configuration. (118 lines)
@@ -88,6 +132,10 @@ The project consists of 42 implemented files, organized as follows:
 
 ### Vendored Headers (include/rswitch/)
 - **map_defs.h, module_abi.h, rswitch_bpf.h, uapi.h**: rSwitch SDK. (954 lines)
+
+### Vendored Libraries (third_party/)
+- **cjson/cJSON.c, cJSON.h**: cJSON v1.7.18 -- JSON parser/generator. (3,443 lines)
+- **mongoose/mongoose.c, mongoose.h**: mongoose v7.20 -- Embedded HTTP/TLS server and client. (30,338 lines)
 
 ### Build and Project Files
 - **Makefile, .gitignore, .editorconfig, .gitattributes, README.md, LICENSE**: Project metadata and build config.
@@ -169,7 +217,7 @@ Or simply build everything (daemons depend on common):
 make user
 ```
 
-Note: Daemon source files (`src/sniffd/`, `src/configd/`, etc.) are not yet implemented (Phase 7). The `make user` target will succeed for the common library but will fail for daemons until their source is created.
+Note: All four daemons (sniffd, configd, collectord, uploadd) have core implementations. The `make user` target builds the common library and all daemon binaries. CLI tools (`cli/`) are built separately with `make cli`.
 
 ### 7. Run Tests
 
@@ -236,49 +284,49 @@ The system uses YAML profiles for configuration. The base configuration is locat
 
 ## 7. BPF Module Reference
 
-### jz_guard_classifier (Stage 22)
+### jz_guard_classifier (Stage 21)
 - **Purpose**: Gatekeeper for the deception engine.
 - **Maps**: `jz_static_guards`, `jz_dynamic_guards`, `jz_whitelist`.
 - **Events**: None.
 - **Operation**: Performs lookups in guard and whitelist maps. Sets classification results in a per-CPU map for downstream modules.
 
-### jz_arp_honeypot (Stage 23)
+### jz_arp_honeypot (Stage 22)
 - **Purpose**: Responds to ARP requests for guarded IPs.
 - **Maps**: `jz_arp_config`, `jz_fake_mac_pool`, `jz_arp_rate`.
 - **Events**: `JZ_EVENT_ATTACK_ARP`.
 - **Operation**: Crafts a fake ARP reply in-place and uses `XDP_TX` to transmit it.
 
-### jz_icmp_honeypot (Stage 24)
+### jz_icmp_honeypot (Stage 23)
 - **Purpose**: Responds to ICMP echo requests for guarded IPs.
 - **Maps**: `jz_icmp_config`, `jz_icmp_rate`.
 - **Events**: `JZ_EVENT_ATTACK_ICMP`.
 - **Operation**: Crafts a fake ICMP echo reply and transmits it via `XDP_TX`.
 
-### jz_sniffer_detect (Stage 25)
+### jz_sniffer_detect (Stage 24)
 - **Purpose**: Detects promiscuous-mode sniffers.
 - **Maps**: `jz_probe_targets`, `jz_sniffer_suspects`.
 - **Events**: `JZ_EVENT_SNIFFER_DETECTED`.
 - **Operation**: Monitors ARP replies to identify responses to non-existent IP probes.
 
-### jz_traffic_weaver (Stage 35)
+### jz_traffic_weaver (Stage 25)
 - **Purpose**: Per-flow traffic steering.
 - **Maps**: `jz_flow_policy`, `jz_redirect_config`, `jz_flow_stats`.
 - **Events**: `JZ_EVENT_POLICY_MATCH`.
 - **Operation**: Matches flows against a 5-tuple and applies steering actions.
 
-### jz_bg_collector (Stage 40)
+### jz_bg_collector (Stage 26)
 - **Purpose**: Captures background network traffic.
 - **Maps**: `jz_bg_filter`, `jz_bg_stats`.
 - **Events**: `JZ_EVENT_BG_CAPTURE`.
 - **Operation**: Identifies broadcast/multicast protocols and emits capture events.
 
-### jz_threat_detect (Stage 50)
+### jz_threat_detect (Stage 27)
 - **Purpose**: Fast-path threat detection.
 - **Maps**: `jz_threat_patterns`, `jz_threat_blacklist`, `jz_threat_stats`.
 - **Events**: `JZ_EVENT_THREAT_DETECTED`.
 - **Operation**: Matches packet headers against known malicious patterns.
 
-### jz_forensics (Stage 55)
+### jz_forensics (Stage 28)
 - **Purpose**: Forensic packet sampling.
 - **Maps**: `jz_sample_config`.
 - **Events**: None (emits raw samples to a dedicated ring buffer).
@@ -357,6 +405,30 @@ The system uses YAML profiles for configuration. The base configuration is locat
   - `jz_config_audit_free(results)` -- Free query results.
 - **Dependencies**: db.h (jz_db_t), config.h (jz_config_t, forward-declared).
 
+### ipc (ipc.h / ipc.c)
+- **Purpose**: Unix domain socket IPC for inter-daemon communication with epoll event loop and length-prefix framing.
+- **Key Types**: `jz_ipc_server_t` (server with multi-client epoll), `jz_ipc_client_t` (blocking client).
+- **Key Functions**:
+  - `jz_ipc_server_init(srv, path, handler, user_data)` -- Create server socket, bind, listen.
+  - `jz_ipc_server_destroy(srv)` -- Close server and all client connections.
+  - `jz_ipc_server_poll(srv, timeout_ms)` -- Epoll wait + dispatch to handler callback.
+  - `jz_ipc_server_broadcast(srv, msg, len)` -- Send message to all connected clients.
+  - `jz_ipc_client_connect(cli, path)` -- Connect to server socket.
+  - `jz_ipc_client_send(cli, msg, len)` -- Send length-prefixed message.
+  - `jz_ipc_client_recv(cli, buf, buflen, timeout_ms)` -- Receive with timeout.
+  - `jz_ipc_client_close(cli)` -- Disconnect.
+- **Protocol**: 4-byte big-endian length prefix + payload. Max message: 64KB.
+- **Dependencies**: None (POSIX sockets + epoll).
+
+### log (log.h / log.c)
+- **Purpose**: Structured logging with syslog integration and configurable per-module levels.
+- **Key Functions**:
+  - `jz_log_init(ident, facility, min_level)` -- Open syslog and set minimum level.
+  - `jz_log_close()` -- Close syslog.
+  - `jz_log(level, fmt, ...)` -- Log with level (DEBUG, INFO, WARN, ERROR, FATAL).
+  - `JZ_LOG_DEBUG/INFO/WARN/ERROR/FATAL(fmt, ...)` -- Convenience macros with file:line.
+- **Dependencies**: syslog.h (POSIX).
+
 ## 9. Key Technical Decisions & Discoveries
 
 1.  **Tail Call Mechanism**: rSwitch uses auto-incrementing slots for tail calls. Modules do not use stage numbers directly for the `bpf_tail_call` index.
@@ -367,37 +439,50 @@ The system uses YAML profiles for configuration. The base configuration is locat
 6.  **Heap Allocation**: The `config_map_batch_t` structure exceeds 800KB. It must be allocated on the heap to avoid stack overflow.
 7.  **Config Schema**: The configuration library uses nested anonymous structs to handle modules with extra parameters while maintaining a clean hierarchy.
 8.  **Threat IDs**: Threat pattern IDs are strings in the YAML config but are parsed into `uint32_t` for efficient BPF map lookups.
+9.  **IPC Protocol**: Inter-daemon communication uses Unix domain sockets with a 4-byte big-endian length prefix. Max message size is 64KB. The server uses epoll for non-blocking multi-client handling.
+10. **Daemon Architecture**: All four daemons follow a common pattern: signal-driven main loop with `signalfd`, epoll for I/O multiplexing, graceful shutdown via SIGTERM/SIGINT, and PID file management.
+11. **REST API Design**: The REST API runs inside sniffd (not as a separate daemon) per design.md §4.6. It uses mongoose for HTTPS with bearer token auth. Guard/whitelist endpoints read BPF maps directly via bpf_map_get_next_key/lookup_elem. Config endpoints use IPC client to communicate with configd. Policy endpoints are stubbed (501) pending a policy manager module.
+12. **Mongoose Routing**: mg_match() does exact pattern matching, not prefix matching. `/api/v1/guards` does NOT match `/api/v1/guards/static` — each route needs its own handler entry.
 
-## 10. Remaining Work (Phases 6-8)
+## 10. Remaining Work
 
-### Phase 6: Background Collection Engine (User-Space)
-BPF module `jz_bg_collector.bpf.c` is already complete (implemented in Phase 4). Remaining work is user-space processing:
-- **S6.4**: Baseline statistics aggregation -- compute protocol distribution baselines from bg_collector events.
-- **S6.5**: Anomaly detection -- detect deviations from established baselines.
-- **S6.6**: Structured JSON export -- export baseline data for upload to management platform.
+### Overall: ~5% remaining
 
-### Phase 7: User-Space Daemons
-Four daemon directories exist but contain no source yet: `src/sniffd/`, `src/configd/`, `src/collectord/`, `src/uploadd/`.
-- **S7.1**: `sniffd` -- BPF loader, event ring buffer consumer, ARP probe generator.
-- **S7.2**: `configd` -- Config file watcher (inotify), hot-reload, BPF map applier via config_map.
-- **S7.3**: `collectord` -- Event deduplication, SQLite persistence via db.h, rate limiting.
-- **S7.4**: `uploadd` -- Batch upload to management platform (gzip + HTTPS).
-- **S7.5-S7.8**: IPC (Unix sockets), signal handling, systemd integration, graceful shutdown.
+### ~~Critical: rSwitch Integration Bugs~~ (All Fixed)
+1. ✅ ~~RS_FLAG_MAY_REDIRECT undefined~~ -- Added to `module_abi.h`.
+2. ✅ ~~bpf_loader slot indexing~~ -- Consecutive slot assignment with proper lifecycle.
+3. ✅ ~~Stage number conflicts~~ -- Remapped to 21-28 (VLAN-to-ACL gap).
+4. ✅ ~~Guard cap mismatch~~ -- `config_map.h` arrays increased to 4096.
+5. ✅ ~~Threat loop bound~~ -- Increased to 128 iterations (verifier-safe bounded loop).
 
-### Phase 8: Management and Deployment
-- **S8.1-S8.3**: CLI tools (`jzctl`, `jzguard`, `jzlog`) in `cli/` directory.
-- **S8.4-S8.5**: REST API via mongoose (vendored in `third_party/mongoose/`), JWT/mTLS auth.
-- **S8.6-S8.7**: Systemd service files, install/deploy scripts.
-- **S10.1-S10.5**: Integration tests, performance benchmarks, documentation.
+### ~~Daemon Gaps~~ (All Complete)
+- **sniffd**: ✅ Complete — probe_gen, guard_mgr, REST API, main.c integration all done.
+- **configd**: ✅ Complete — BPF map push, remote TLS endpoint (mTLS via mongoose), CLI options for TLS cert/key/CA.
+- **collectord**: ✅ Complete — Full JSON record export (cJSON), DB auto-pruning (uploaded + age-based).
+- **uploadd**: ✅ Bug fixed (bg_captures → bg_capture table name). ✅ Native HTTPS client (mongoose, replaced curl shell-out).
 
-### Deferred Items (Blocked on Daemon Phase)
-These stories were deferred from earlier phases because they require daemon infrastructure:
-- **S2.7**: User-space ARP probe generation (needs sniffd S7.1).
-- **S3.5**: Hot-reload without flow disruption (needs configd S7.2).
-- **S3.6**: Advanced flow statistics aggregation (needs sniffd + REST API).
-- **S4.3**: SQLite persistence for attack logs (needs collectord S7.3).
-- **S4.5**: Event deduplication logic (needs collectord S7.3).
-- **S5.3**: Remote configuration receiver (TLS endpoint -- needs configd S7.2).
+### Vendored Dependencies
+- **cJSON v1.7.18** (third_party/cjson/) — JSON serialization for collectord export. (3,443 lines)
+- **mongoose v7.20** (third_party/mongoose/) — HTTPS server/client with built-in TLS 1.3. (30,338 lines)
+
+### ~~Phase 7.5: uploadd Native HTTPS~~ (Complete)
+- **uploadd**: ✅ Replaced curl shell-out with mongoose-based HTTPS client. mTLS support, 10s connect / 30s response timeout, graceful shutdown aware. Version bumped to 0.8.0.
+
+### ~~Phase 8: CLI Tools~~ (Complete)
+Three CLI tools in `cli/` directory:
+- **jzctl** (604 lines): ✅ System management — status, module list/reload, stats, config show/reload/rollback, daemon restart via PID+SIGHUP.
+- **jzguard** (706 lines): ✅ Guard table management — add/del static/dynamic guards, whitelist add/del, probe start/stop/results, list with --type filter and --format json output. Graceful handling of unimplemented sniffd commands.
+- **jzlog** (847 lines): ✅ Log viewer — attack, sniffer, background, audit, threat subcommands with direct SQLite queries, prepared statements, table/JSON output, tail -f mode with configurable interval.
+
+### ~~Phase 9: REST API & Deployment~~ (Complete)
+- **REST API** (api.h + api.c, 2,153 lines): ✅ 31 HTTPS endpoints via mongoose, bearer token auth, guard/whitelist CRUD (direct BPF map iteration), log queries with pagination (SQLite LIMIT/OFFSET), config get/set via IPC to configd, stats from guard_mgr and bpf_loader, health/status/modules endpoints. Policy endpoints stubbed as 501.
+- **Systemd services** (4 files, 167 lines): ✅ sniffd/configd/collectord/uploadd with proper dependency ordering (After/BindsTo/Wants), security hardening (NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp), watchdog (sniffd WatchdogSec=60), LimitMEMLOCK=infinity for BPF.
+- **sniffd integration**: ✅ main.c updated (727→800 lines) with API lifecycle (init/poll/destroy), 6 new CLI options (--api-port, --api-cert, --api-key, --api-ca, --api-token, --no-api), version bumped to 0.8.0.
+
+### Phase 10: Integration & Validation
+- End-to-end integration tests with rSwitch pipeline.
+- Performance benchmarks (PPS, latency at line rate).
+- Final documentation and deployment guide.
 
 ## 11. Development Guidelines
 
@@ -417,7 +502,7 @@ All BPF modules follow this standard boilerplate:
 
 RS_DECLARE_MODULE("jz_module_name",
                   RS_HOOK_XDP_INGRESS,
-                  JZ_STAGE_NUMBER,       /* e.g. 22, 23, 24... */
+                  JZ_STAGE_NUMBER,       /* e.g. 21, 22, 23... */
                   RS_MODULE_F_NONE,
                   "Module description");
 
