@@ -25,21 +25,21 @@
 #define JZ_BPF_PIN_PATH  "/sys/fs/bpf/jz"
 
 /* rSwitch program registration map */
-#define RS_PROGS_PIN     "/sys/fs/bpf/rswitch/rs_progs"
+#define RS_PROGS_PIN     "/sys/fs/bpf/rs_progs"
 
 static const struct {
     const char *name;
     const char *obj_file;
     int         stage;
 } module_defs[JZ_MOD_COUNT] = {
-    [JZ_MOD_GUARD_CLASSIFIER] = { "guard_classifier",  "guard_classifier.bpf.o",  21 },
-    [JZ_MOD_ARP_HONEYPOT]     = { "arp_honeypot",      "arp_honeypot.bpf.o",      22 },
-    [JZ_MOD_ICMP_HONEYPOT]    = { "icmp_honeypot",     "icmp_honeypot.bpf.o",     23 },
-    [JZ_MOD_SNIFFER_DETECT]   = { "sniffer_detect",    "sniffer_detect.bpf.o",    24 },
-    [JZ_MOD_TRAFFIC_WEAVER]   = { "traffic_weaver",    "traffic_weaver.bpf.o",    25 },
-    [JZ_MOD_BG_COLLECTOR]     = { "bg_collector",      "bg_collector.bpf.o",      26 },
-    [JZ_MOD_THREAT_DETECT]    = { "threat_detect",     "threat_detect.bpf.o",     27 },
-    [JZ_MOD_FORENSICS]        = { "forensics",         "forensics.bpf.o",         28 },
+    [JZ_MOD_GUARD_CLASSIFIER] = { "guard_classifier",  "jz_guard_classifier.bpf.o",  21 },
+    [JZ_MOD_ARP_HONEYPOT]     = { "arp_honeypot",      "jz_arp_honeypot.bpf.o",      22 },
+    [JZ_MOD_ICMP_HONEYPOT]    = { "icmp_honeypot",     "jz_icmp_honeypot.bpf.o",     23 },
+    [JZ_MOD_SNIFFER_DETECT]   = { "sniffer_detect",    "jz_sniffer_detect.bpf.o",    24 },
+    [JZ_MOD_TRAFFIC_WEAVER]   = { "traffic_weaver",    "jz_traffic_weaver.bpf.o",    25 },
+    [JZ_MOD_BG_COLLECTOR]     = { "bg_collector",      "jz_bg_collector.bpf.o",      26 },
+    [JZ_MOD_THREAT_DETECT]    = { "threat_detect",     "jz_threat_detect.bpf.o",     27 },
+    [JZ_MOD_FORENSICS]        = { "forensics",         "jz_forensics.bpf.o",         28 },
 };
 
 /* ── Internal Helpers ─────────────────────────────────────────── */

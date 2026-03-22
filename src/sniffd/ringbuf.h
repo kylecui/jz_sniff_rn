@@ -52,7 +52,7 @@ typedef struct jz_ringbuf {
  * and sets up polling. Either handler can be NULL to skip that buffer.
  *
  * event_map_pin:  path to pinned rs_event_bus map
- *                 (e.g. "/sys/fs/bpf/rswitch/rs_event_bus")
+ *                 (e.g. "/sys/fs/bpf/rs_event_bus")
  * sample_map_pin: path to pinned jz_sample_ringbuf map
  *                 (e.g. "/sys/fs/bpf/jz/jz_sample_ringbuf")
  *

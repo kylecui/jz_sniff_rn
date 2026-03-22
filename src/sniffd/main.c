@@ -51,7 +51,7 @@
 #define DEFAULT_API_CERT      "/etc/jz/tls/server.crt"
 #define DEFAULT_API_KEY       "/etc/jz/tls/server.key"
 
-#define EVENT_MAP_PIN         "/sys/fs/bpf/rswitch/rs_event_bus"
+#define EVENT_MAP_PIN         "/sys/fs/bpf/rs_event_bus"
 #define SAMPLE_MAP_PIN        "/sys/fs/bpf/jz/jz_sample_ringbuf"
 
 #define RINGBUF_POLL_MS       100

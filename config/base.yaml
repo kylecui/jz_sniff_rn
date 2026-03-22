@@ -114,5 +114,5 @@ api:
   tls_cert: "/etc/jz/tls/server.crt"
   tls_key: "/etc/jz/tls/server.key"
   auth_tokens:
-    - token: ""                      # Generated on first boot
+    - token: "changeme"              # CHANGE THIS — generate with: openssl rand -hex 32
       role: "admin"

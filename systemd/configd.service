@@ -12,7 +12,7 @@ PartOf=sniffd.service
 
 [Service]
 Type=forking
-ExecStart=/usr/sbin/configd --daemon --config /etc/jz/base.yaml
+ExecStart=/usr/local/sbin/configd --daemon --config /etc/jz/base.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/var/run/jz/configd.pid
 

@@ -339,7 +339,8 @@ int jz_probe_gen_init(jz_probe_gen_t *pg, const jz_config_t *cfg, int ifindex)
 
 int jz_probe_gen_tick(jz_probe_gen_t *pg)
 {
-    uint64_t expirations;
+    uint64_t expirations = 0;
+    ssize_t  n;
     int sent = 0;
     bool warned_full = false;
     int i;
@@ -347,10 +348,15 @@ int jz_probe_gen_tick(jz_probe_gen_t *pg)
     if (!pg || !pg->initialized)
         return -1;
 
-    if (read(pg->timerfd, &expirations, sizeof(expirations)) < 0 && errno != EAGAIN) {
+    n = read(pg->timerfd, &expirations, sizeof(expirations));
+    if (n < 0) {
+        if (errno == EAGAIN)
+            return 0;   /* timer has not fired yet — nothing to do */
         jz_log_error("timerfd read failed: %s", strerror(errno));
         return -1;
     }
+    if (expirations == 0)
+        return 0;       /* spurious wakeup */
 
     expire_targets(pg);
 

@@ -1450,8 +1450,9 @@ static int parse_api(yaml_parser_t *parser, yaml_event_t *start,
             yaml_event_delete(&key_ev);
             return -1;
         }
-        if (!strcmp(key, "enabled") && scalar_to_bool(&val_ev, &cfg->api.enabled) != 0) {
-            add_error(errors, event_line(&val_ev), "api.enabled", "must be bool");
+        if (!strcmp(key, "enabled")) {
+            if (scalar_to_bool(&val_ev, &cfg->api.enabled) != 0)
+                add_error(errors, event_line(&val_ev), "api.enabled", "must be bool");
             yaml_event_delete(&val_ev);
         } else if (!strcmp(key, "listen")) {
             copy_scalar(cfg->api.listen, sizeof(cfg->api.listen), &val_ev);

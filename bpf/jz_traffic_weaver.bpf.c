@@ -252,8 +252,15 @@ int jz_traffic_weaver_prog(struct xdp_md *xdp_ctx)
 
         jz_emit_policy_event(ctx, eth, &flow, JZ_ACTION_MIRROR, now_ns);
 
-        if (ifindex != 0)
-            (void)bpf_clone_redirect(xdp_ctx, ifindex, 0);
+        /*
+         * Pure XDP: no bpf_clone_redirect (TC-only helper).
+         * Signal mirror intent via rs_ctx fields — the rSwitch
+         * mirror module (stage 70) handles the actual duplication.
+         */
+        if (ifindex != 0) {
+            ctx->mirror = 1;
+            ctx->mirror_port = (__u16)ifindex;
+        }
 
         return jz_tail_pass(xdp_ctx, ctx);
 
@@ -264,8 +271,14 @@ int jz_traffic_weaver_prog(struct xdp_md *xdp_ctx)
 
         jz_emit_policy_event(ctx, eth, &flow, JZ_ACTION_REDIRECT_MIRROR, now_ns);
 
-        if (mirror_ifindex != 0)
-            (void)bpf_clone_redirect(xdp_ctx, mirror_ifindex, 0);
+        /*
+         * Signal mirror intent for the rSwitch mirror module,
+         * then redirect the original packet to the target.
+         */
+        if (mirror_ifindex != 0) {
+            ctx->mirror = 1;
+            ctx->mirror_port = (__u16)mirror_ifindex;
+        }
 
         if (redirect_ifindex == 0)
             return XDP_DROP;

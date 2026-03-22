@@ -12,7 +12,7 @@ Requires=rswitch.service
 
 [Service]
 Type=forking
-ExecStart=/usr/sbin/sniffd --daemon --config /etc/jz/base.yaml
+ExecStart=/usr/local/sbin/sniffd --daemon --config /etc/jz/base.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/var/run/jz/sniffd.pid
 
@@ -28,7 +28,7 @@ LimitNOFILE=65536
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/jz /var/run/jz /sys/fs/bpf/jz /sys/fs/bpf/rswitch
+ReadWritePaths=/var/lib/jz /var/run/jz /sys/fs/bpf/jz /sys/fs/bpf
 ProtectHome=yes
 PrivateTmp=yes
 
