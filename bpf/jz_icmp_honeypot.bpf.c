@@ -42,12 +42,13 @@ struct {
     __uint(max_entries, 1);
 } jz_icmp_rate SEC(".maps");
 
-/* Guard classifier output (defined by jz_guard_classifier.bpf.c) */
-extern struct {
+/* Guard classifier output (shared with jz_guard_classifier via pinning) */
+struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
     __type(value, struct jz_guard_result);
     __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_guard_result_map SEC(".maps");
 
 /* -- Local Protocol Header -- */
@@ -180,7 +181,7 @@ int jz_icmp_honeypot_prog(struct xdp_md *xdp_ctx)
     if ((void *)(eth + 1) > data_end)
         return jz_tail_next(xdp_ctx, ctx);
 
-    iph = (void *)((__u8 *)data + ctx->layers.l3_offset);
+    iph = (void *)(eth + 1);
     if ((void *)(iph + 1) > data_end)
         return jz_tail_next(xdp_ctx, ctx);
 

@@ -178,11 +178,20 @@ test-bpf: bpf | $(BUILD_DIR)/tests/bpf
 		$(BUILD_DIR)/tests/bpf/$$name || exit 1; \
 	done
 
-test-integration:
-	@echo "--- Running integration tests ---"
-	cd $(TEST_DIR)/integration && python3 -m pytest -v
+LIBBPF17_INC := /usr/local/bpf/include
+LIBBPF17_LIB := /usr/local/bpf/lib64/libbpf.a
 
-$(BUILD_DIR)/tests/unit $(BUILD_DIR)/tests/bpf:
+test-integration: bpf | $(BUILD_DIR)/tests/integration
+	@echo "--- Running integration tests (requires root, libbpf 1.7) ---"
+	@for src in $(wildcard $(TEST_DIR)/integration/test_*.c); do \
+		name=$$(basename $$src .c); \
+		$(CC) $(USER_CFLAGS) -I$(LIBBPF17_INC) \
+			-o $(BUILD_DIR)/tests/integration/$$name \
+			$$src $(LIBBPF17_LIB) -lelf -lz -lcmocka; \
+		$(BUILD_DIR)/tests/integration/$$name || exit 1; \
+	done
+
+$(BUILD_DIR)/tests/unit $(BUILD_DIR)/tests/bpf $(BUILD_DIR)/tests/integration:
 	mkdir -p $@
 
 # ── Coverage ──────────────────────────────────────────────────
@@ -254,7 +263,7 @@ help:
 	@echo "  test             Run all tests (unit + BPF)"
 	@echo "  test-unit        Run C unit tests (cmocka)"
 	@echo "  test-bpf         Run BPF tests (prog_test_run)"
-	@echo "  test-integration Run Python integration tests"
+	@echo "  test-integration Run BPF pipeline integration tests (requires root)"
 	@echo "  coverage         Generate test coverage report"
 	@echo "  lint             Run static analysis (cppcheck)"
 	@echo "  format           Auto-format source code (clang-format)"

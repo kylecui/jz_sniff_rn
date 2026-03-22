@@ -50,12 +50,13 @@ struct {
     __uint(max_entries, 1);
 } jz_arp_rate SEC(".maps");
 
-/* Guard result produced by jz_guard_classifier */
-extern struct {
+/* Guard classification result (shared with jz_guard_classifier via pinning) */
+struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
     __type(value, struct jz_guard_result);
     __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_guard_result_map SEC(".maps");
 
 /* ── Local ARP Header (Ethernet + IPv4) ── */
