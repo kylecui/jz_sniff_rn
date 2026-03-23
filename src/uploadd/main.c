@@ -36,6 +36,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <zlib.h>
+#include "mqtt.h"
+#include "log_format.h"
 
 /* ── Version ──────────────────────────────────────────────────── */
 
@@ -388,6 +390,11 @@ static struct {
     uint64_t          uploads_failed;
     uint64_t          bytes_uploaded;
     uint64_t          bytes_compressed;
+
+    jz_mqtt_t        *mqtt;
+    bool              mqtt_enabled;
+    int               mqtt_reconnect_sec;
+    uint64_t          mqtt_last_reconnect;
 } g_ctx;
 
 /* ── Signal Handlers ──────────────────────────────────────────── */
@@ -701,6 +708,64 @@ static int do_upload_cycle(void)
 
 /* ── IPC Command Handler ─────────────────────────────────────── */
 
+static int init_mqtt(void)
+{
+    const jz_config_log_mqtt_t *mc = &g_ctx.config.log.mqtt;
+    if (!mc->enabled) {
+        jz_log_info("MQTT disabled in config");
+        return 0;
+    }
+
+    char host[JZ_CONFIG_STR_LONG] = "";
+    int port = 1883;
+    const char *broker = mc->broker;
+    if (strncmp(broker, "tcp://", 6) == 0)
+        broker += 6;
+    const char *colon = strrchr(broker, ':');
+    if (colon && colon != broker) {
+        size_t hlen = (size_t)(colon - broker);
+        if (hlen >= sizeof(host))
+            hlen = sizeof(host) - 1;
+        memcpy(host, broker, hlen);
+        host[hlen] = '\0';
+        port = atoi(colon + 1);
+    } else {
+        snprintf(host, sizeof(host), "%s", broker);
+    }
+
+    char lwt_topic[256];
+    snprintf(lwt_topic, sizeof(lwt_topic), "%s/status",
+             mc->topic_prefix[0] ? mc->topic_prefix : "jz");
+
+    jz_mqtt_cfg_t cfg = {
+        .broker_host   = host,
+        .broker_port   = port,
+        .client_id     = mc->client_id[0] ? mc->client_id : "jz-uploadd",
+        .topic_prefix  = mc->topic_prefix[0] ? mc->topic_prefix : "jz",
+        .qos           = mc->qos,
+        .keepalive_sec = mc->keepalive_sec > 0 ? mc->keepalive_sec : 60,
+        .lwt_topic     = lwt_topic,
+        .lwt_message   = "{\"online\":false}",
+    };
+
+    g_ctx.mqtt = jz_mqtt_create(&cfg);
+    if (!g_ctx.mqtt) {
+        jz_log_error("MQTT create failed");
+        return -1;
+    }
+
+    if (jz_mqtt_connect(g_ctx.mqtt) < 0) {
+        jz_log_warn("MQTT initial connect failed — will retry");
+    }
+
+    g_ctx.mqtt_enabled = true;
+    g_ctx.mqtt_reconnect_sec = 30;
+    g_ctx.mqtt_last_reconnect = 0;
+    jz_log_info("MQTT initialized: %s:%d topic=%s",
+                host, port, cfg.topic_prefix);
+    return 0;
+}
+
 static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
 {
     jz_ipc_server_t *srv = (jz_ipc_server_t *)user_data;
@@ -768,6 +833,24 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
         g_ctx.enabled = false;
         len = snprintf(reply, sizeof(reply), "enabled:no");
         jz_log_info("Upload disabled");
+    }
+    else if (msg->len > 10 && strncmp(cmd, "heartbeat:", 10) == 0) {
+        if (g_ctx.mqtt_enabled && g_ctx.mqtt &&
+            jz_mqtt_is_connected(g_ctx.mqtt)) {
+            const char *hb_json = cmd + 10;
+            int hb_len = (int)(msg->len - 10);
+            if (hb_len > 0) {
+                const char *device_id = g_ctx.config.system.device_id;
+                uint64_t seq = jz_log_next_seq();
+                char *v2 = jz_log_v2_heartbeat(device_id, seq, hb_json);
+                if (v2) {
+                    jz_mqtt_publish(g_ctx.mqtt, "heartbeat",
+                                    v2, (int)strlen(v2));
+                    free(v2);
+                }
+            }
+        }
+        len = snprintf(reply, sizeof(reply), "heartbeat:ok");
     }
     else if (strncmp(cmd, "version", 7) == 0) {
         len = snprintf(reply, sizeof(reply), "%s", UPLOADD_VERSION);
@@ -1048,6 +1131,8 @@ int main(int argc, char *argv[])
                 g_ctx.compress ? "yes" : "no",
                 g_ctx.enabled ? "yes" : "no");
 
+    init_mqtt();
+
     /* Schedule first upload */
     g_ctx.next_upload_time = now_sec() + (uint64_t)g_ctx.interval_sec;
 
@@ -1057,6 +1142,15 @@ int main(int argc, char *argv[])
         jz_ipc_server_poll(&g_ctx.ipc, 100);
 
         uint64_t ts = now_sec();
+
+        if (g_ctx.mqtt_enabled && g_ctx.mqtt) {
+            if (jz_mqtt_is_connected(g_ctx.mqtt)) {
+                jz_mqtt_yield(g_ctx.mqtt, 0);
+            } else if (ts > g_ctx.mqtt_last_reconnect + (uint64_t)g_ctx.mqtt_reconnect_sec) {
+                g_ctx.mqtt_last_reconnect = ts;
+                jz_mqtt_reconnect(g_ctx.mqtt);
+            }
+        }
 
         /* Handle retry backoff */
         if (g_ctx.state == UPLOAD_RETRY_WAIT) {
@@ -1092,6 +1186,8 @@ check_signals:
     jz_log_info("uploadd shutting down...");
 
 cleanup:
+    if (g_ctx.mqtt)
+        jz_mqtt_destroy(g_ctx.mqtt);
     jz_ipc_client_close(&g_ctx.collectord_client);
     jz_ipc_server_destroy(&g_ctx.ipc);
     jz_config_free(&g_ctx.config);

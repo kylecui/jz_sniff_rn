@@ -17,6 +17,7 @@
 #include "guard_mgr.h"
 #include "policy_mgr.h"
 #include "policy_auto.h"
+#include "heartbeat.h"
 #include "probe_gen.h"
 #include "ringbuf.h"
 #include "config.h"
@@ -95,6 +96,8 @@ static struct {
     jz_guard_auto_t   guard_auto;
     jz_policy_mgr_t   policy_mgr;
     jz_policy_auto_t  policy_auto;
+    jz_heartbeat_t    heartbeat;
+    jz_ipc_client_t   uploadd_client;
     jz_api_t          api;
     int               ifindex;
 } g_ctx;
@@ -536,6 +539,9 @@ static int do_reload(void)
     if (g_ctx.policy_auto.initialized)
         jz_policy_auto_update_config(&g_ctx.policy_auto, &g_ctx.config);
 
+    if (g_ctx.heartbeat.initialized)
+        jz_heartbeat_update_config(&g_ctx.heartbeat, &g_ctx.config);
+
     jz_log_info("Configuration reloaded successfully");
     return 0;
 }
@@ -830,6 +836,12 @@ int main(int argc, char *argv[])
         jz_log_warn("Policy auto init failed — auto-policy disabled");
     }
 
+    if (jz_heartbeat_init(&g_ctx.heartbeat, &g_ctx.config,
+                          &g_ctx.loader, &g_ctx.guard_mgr,
+                          &g_ctx.discovery) < 0) {
+        jz_log_warn("Heartbeat init failed — heartbeat disabled");
+    }
+
     /* Initialize IPC server */
     if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_SNIFFD, 0660,
                            ipc_handler, &g_ctx.ipc) < 0) {
@@ -932,6 +944,31 @@ int main(int argc, char *argv[])
         if (g_ctx.policy_auto.initialized)
             jz_policy_auto_tick(&g_ctx.policy_auto);
 
+        if (g_ctx.heartbeat.initialized) {
+            char *hb_json = jz_heartbeat_tick(&g_ctx.heartbeat);
+            if (hb_json) {
+                if (!g_ctx.uploadd_client.connected) {
+                    jz_ipc_client_connect(&g_ctx.uploadd_client,
+                                          JZ_IPC_SOCK_UPLOADD,
+                                          JZ_IPC_DEFAULT_TIMEOUT_MS);
+                }
+                if (g_ctx.uploadd_client.connected) {
+                    char ipc_buf[JZ_IPC_MAX_MSG_LEN];
+                    int ipc_len = snprintf(ipc_buf, sizeof(ipc_buf),
+                                           "heartbeat:%s", hb_json);
+                    if (ipc_len > 0 && (size_t)ipc_len < sizeof(ipc_buf)) {
+                        jz_ipc_msg_t reply;
+                        if (jz_ipc_client_request(&g_ctx.uploadd_client,
+                                                   ipc_buf, (uint32_t)ipc_len,
+                                                   &reply) < 0) {
+                            jz_ipc_client_close(&g_ctx.uploadd_client);
+                        }
+                    }
+                }
+                free(hb_json);
+            }
+        }
+
         if (g_ctx.api.enabled)
             jz_api_poll(&g_ctx.api, 0);
 
@@ -949,6 +986,8 @@ int main(int argc, char *argv[])
 
 cleanup:
     jz_api_destroy(&g_ctx.api);
+    jz_heartbeat_destroy(&g_ctx.heartbeat);
+    jz_ipc_client_close(&g_ctx.uploadd_client);
     jz_policy_auto_destroy(&g_ctx.policy_auto);
     jz_policy_mgr_destroy(&g_ctx.policy_mgr);
     jz_guard_auto_destroy(&g_ctx.guard_auto);

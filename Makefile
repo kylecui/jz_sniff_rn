@@ -68,7 +68,8 @@ USER_CFLAGS  := -g -O2 -Wall -Wextra -Werror \
                 -I$(INCLUDE_DIR)/rswitch \
                 -I$(TOPDIR)/third_party/mongoose \
                 -I$(TOPDIR)/third_party/cjson \
-                -I$(TOPDIR)/third_party/libyaml/include
+                -I$(TOPDIR)/third_party/libyaml/include \
+                -I$(TOPDIR)/third_party/paho-embed
 
 USER_LDFLAGS := -lbpf -lelf -lz -lpthread -lsqlite3 -lm -lyaml
 
@@ -90,8 +91,19 @@ COMMON_OBJS := $(patsubst $(SRC_DIR)/common/%.c,$(BUILD_DIR)/common/%.o,$(COMMON
 # Vendored third-party sources (compiled as common objects)
 VENDOR_SRCS := $(TOPDIR)/third_party/cjson/cJSON.c \
                $(TOPDIR)/third_party/mongoose/mongoose.c
+PAHO_SRCS   := $(TOPDIR)/third_party/paho-embed/MQTTPacket.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTConnectClient.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTSerializePublish.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTDeserializePublish.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTSubscribeClient.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTUnsubscribeClient.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTFormat.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTClient.c \
+               $(TOPDIR)/third_party/paho-embed/MQTTLinux.c
 VENDOR_OBJS := $(BUILD_DIR)/vendor/cJSON.o \
                $(BUILD_DIR)/vendor/mongoose.o
+PAHO_OBJS   := $(patsubst $(TOPDIR)/third_party/paho-embed/%.c,$(BUILD_DIR)/vendor/paho_%.o,$(PAHO_SRCS))
+COMMON_OBJS += $(PAHO_OBJS)
 COMMON_OBJS += $(VENDOR_OBJS)
 
 # Daemons
@@ -130,6 +142,10 @@ $(BUILD_DIR)/vendor/cJSON.o: $(TOPDIR)/third_party/cjson/cJSON.c | $(BUILD_DIR)/
 
 $(BUILD_DIR)/vendor/mongoose.o: $(TOPDIR)/third_party/mongoose/mongoose.c | $(BUILD_DIR)/vendor
 	$(CC) $(USER_CFLAGS) -Wno-error -DMG_TLS=MG_TLS_BUILTIN -DMG_ENABLE_LINES=1 -c $< -o $@
+
+# Paho Embedded-C MQTT vendor objects
+$(BUILD_DIR)/vendor/paho_%.o: $(TOPDIR)/third_party/paho-embed/%.c | $(BUILD_DIR)/vendor
+	$(CC) $(USER_CFLAGS) -Wno-error -DMQTTCLIENT_PLATFORM_HEADER=MQTTLinux.h -c $< -o $@
 
 # Daemon build rules (each daemon links common + its own sources)
 define DAEMON_RULES

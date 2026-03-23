@@ -27,15 +27,17 @@
 
 #define JZ_CONFIG_MAX_ERRORS               64
 
-/* Valid stage IDs in the BPF processing pipeline. */
-#define JZ_STAGE_GUARD_CLASSIFIER         22
-#define JZ_STAGE_ARP_HONEYPOT             23
-#define JZ_STAGE_ICMP_HONEYPOT            24
-#define JZ_STAGE_SNIFFER_DETECT           25
-#define JZ_STAGE_TRAFFIC_WEAVER           35
-#define JZ_STAGE_BG_COLLECTOR             40
-#define JZ_STAGE_THREAT_DETECT            50
-#define JZ_STAGE_FORENSICS                55
+/* Valid stage IDs in the BPF processing pipeline.
+ * MUST match bpf/include/jz_common.h — stages 21-28 sit between
+ * rSwitch VLAN(20) and ACL(30). */
+#define JZ_STAGE_GUARD_CLASSIFIER         21
+#define JZ_STAGE_ARP_HONEYPOT             22
+#define JZ_STAGE_ICMP_HONEYPOT            23
+#define JZ_STAGE_SNIFFER_DETECT           24
+#define JZ_STAGE_TRAFFIC_WEAVER           25
+#define JZ_STAGE_BG_COLLECTOR             26
+#define JZ_STAGE_THREAT_DETECT            27
+#define JZ_STAGE_FORENSICS                28
 
 typedef struct jz_config_error {
     int  line;                                   /* YAML source line (0 if unknown) */
@@ -231,6 +233,44 @@ typedef struct jz_config_api {
     int auth_token_count;
 } jz_config_api_t;
 
+typedef struct jz_config_log_syslog {
+    bool enabled;
+    char format[JZ_CONFIG_STR_SHORT];      /* "v1" or "v2" */
+    char facility[JZ_CONFIG_STR_SHORT];    /* "local0" through "local7" */
+} jz_config_log_syslog_t;
+
+typedef struct jz_config_log_mqtt {
+    bool enabled;
+    char format[JZ_CONFIG_STR_SHORT];      /* "v1" or "v2" */
+    char broker[JZ_CONFIG_STR_LONG];       /* "tcp://broker:1883" */
+    bool tls;
+    char tls_ca[JZ_CONFIG_STR_LONG];
+    char client_id[JZ_CONFIG_STR_MEDIUM];
+    char topic_prefix[JZ_CONFIG_STR_MEDIUM];
+    int  qos;                               /* 0, 1, or 2 */
+    int  keepalive_sec;
+    int  heartbeat_interval_sec;
+    int  heartbeat_max_devices;
+} jz_config_log_mqtt_t;
+
+typedef struct jz_config_log_https {
+    bool enabled;
+    char url[JZ_CONFIG_STR_LONG];
+    char tls_cert[JZ_CONFIG_STR_LONG];
+    char tls_key[JZ_CONFIG_STR_LONG];
+    int  interval_sec;
+    int  batch_size;
+    bool compress;
+} jz_config_log_https_t;
+
+typedef struct jz_config_log {
+    char format[JZ_CONFIG_STR_SHORT];      /* global default: "v2" */
+    int  heartbeat_interval_sec;            /* 1800 for V1 syslog heartbeat */
+    jz_config_log_syslog_t syslog;
+    jz_config_log_mqtt_t mqtt;
+    jz_config_log_https_t https;
+} jz_config_log_t;
+
 typedef struct jz_config {
     int version;
     jz_config_system_t system;
@@ -243,6 +283,7 @@ typedef struct jz_config {
     jz_config_threats_t threats;
     jz_config_collector_t collector;
     jz_config_uploader_t uploader;
+    jz_config_log_t log;
     jz_config_api_t api;
 } jz_config_t;
 

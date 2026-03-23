@@ -30,6 +30,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "syslog_export.h"
+#include "log_format.h"
+#include <linux/types.h>
+#include "jz_events.h"
+
 /* ── Version ──────────────────────────────────────────────────── */
 
 #define COLLECTORD_VERSION  "0.7.0"
@@ -44,8 +49,6 @@
 #define DEFAULT_DEDUP_WINDOW_SEC  60
 #define DEFAULT_RATE_LIMIT_EPS    100   /* events per second */
 #define DEFAULT_MAX_DB_SIZE_MB    512
-
-/* ── Event Types (from jz_common.h, user-space copy) ─────────── */
 
 #define JZ_EVENT_ATTACK_ARP         1
 #define JZ_EVENT_ATTACK_ICMP        2
@@ -214,6 +217,7 @@ static struct {
     uint64_t events_rate_limited;
     uint64_t events_errors;
     uint64_t last_expire_time;
+    bool syslog_enabled;
 } g_ctx;
 
 /* ── Signal Handlers ──────────────────────────────────────────── */
@@ -532,6 +536,21 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
     if (rc == 0) {
         g_ctx.events_persisted++;
+        if (g_ctx.syslog_enabled && jz_syslog_is_open() &&
+            (event_type == JZ_EVENT_ATTACK_ARP ||
+             event_type == JZ_EVENT_ATTACK_ICMP)) {
+            if (payload_len >= sizeof(struct jz_event_attack)) {
+                char syslog_buf[512];
+                char device_id[64] = "unknown";
+                jz_db_get_state(&g_ctx.db, "device_id",
+                                device_id, sizeof(device_id));
+                int slen = jz_log_v1_attack(syslog_buf, sizeof(syslog_buf),
+                                             device_id,
+                                             (const struct jz_event_attack *)payload);
+                if (slen > 0)
+                    jz_syslog_send(syslog_buf);
+            }
+        }
         jz_log_debug("Persisted event type=%u src=%s dst=%s",
                       event_type, src_ip_str, dst_ip_str);
     } else {
@@ -791,6 +810,14 @@ static int do_reload(void)
     if (!g_ctx.verbose)
         jz_log_set_level(jz_log_level_from_str(new_config.system.log_level));
 
+    if (new_config.log.syslog.enabled && !g_ctx.syslog_enabled) {
+        if (jz_syslog_init(new_config.log.syslog.facility) == 0)
+            g_ctx.syslog_enabled = true;
+    } else if (!new_config.log.syslog.enabled && g_ctx.syslog_enabled) {
+        jz_syslog_close();
+        g_ctx.syslog_enabled = false;
+    }
+
     jz_config_free(&g_ctx.config);
     memcpy(&g_ctx.config, &new_config, sizeof(jz_config_t));
 
@@ -980,6 +1007,14 @@ int main(int argc, char *argv[])
 
     jz_log_info("collectord ready — listening on %s", JZ_IPC_SOCK_COLLECTORD);
 
+    if (g_ctx.config.log.syslog.enabled) {
+        if (jz_syslog_init(g_ctx.config.log.syslog.facility) == 0) {
+            g_ctx.syslog_enabled = true;
+            jz_log_info("Syslog export enabled, facility=%s",
+                        g_ctx.config.log.syslog.facility);
+        }
+    }
+
     /* ── Main Loop ── */
     g_ctx.last_expire_time = now_sec();
 
@@ -1011,6 +1046,7 @@ cleanup:
     dedup_destroy(&g_ctx.dedup);
     jz_ipc_server_destroy(&g_ctx.ipc);
     jz_db_close(&g_ctx.db);
+    jz_syslog_close();
     jz_config_free(&g_ctx.config);
     unlink(g_ctx.pid_file);
     jz_log_info("collectord stopped");

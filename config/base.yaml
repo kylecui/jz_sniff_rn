@@ -18,29 +18,29 @@ system:
 modules:
   guard_classifier:
     enabled: true
-    stage: 22
+    stage: 21
   arp_honeypot:
     enabled: true
-    stage: 23
+    stage: 22
     rate_limit_pps: 100
     log_all: false
   icmp_honeypot:
     enabled: true
-    stage: 24
+    stage: 23
     ttl: 64                          # Emulate Linux
     rate_limit_pps: 100
   sniffer_detect:
     enabled: true
-    stage: 25
+    stage: 24
     probe_interval_sec: 30
     probe_count: 5                   # Number of probe IPs per cycle
   traffic_weaver:
     enabled: true
-    stage: 35
+    stage: 25
     default_action: "pass"
   bg_collector:
     enabled: true
-    stage: 40
+    stage: 26
     sample_rate: 1                   # 1 = every packet
     protocols:
       arp: true
@@ -53,10 +53,10 @@ modules:
       igmp: true
   threat_detect:
     enabled: true
-    stage: 50
+    stage: 27
   forensics:
     enabled: true
-    stage: 55
+    stage: 28
     max_payload_bytes: 256
     sample_rate: 0                   # 0 = only sample flagged packets
 
@@ -128,6 +128,34 @@ uploader:
   tls_cert: ""
   tls_key: ""
   compress: true                     # gzip compression
+
+log:
+  format: "v2"                           # Default log format: v1 (KV) or v2 (JSON)
+  heartbeat_interval_sec: 1800           # V1 syslog heartbeat interval
+  syslog:
+    enabled: false
+    format: "v1"                         # Override per-transport
+    facility: "local0"
+  mqtt:
+    enabled: false
+    format: "v2"
+    broker: ""                           # e.g. "tcp://10.0.1.100:1883"
+    tls: false
+    tls_ca: ""
+    client_id: ""                        # Defaults to device_id at runtime
+    topic_prefix: ""                     # e.g. "jz/{device_id}/logs"
+    qos: 1
+    keepalive_sec: 60
+    heartbeat_interval_sec: 300          # MQTT heartbeat publish interval
+    heartbeat_max_devices: 200
+  https:
+    enabled: false
+    url: ""
+    tls_cert: ""
+    tls_key: ""
+    interval_sec: 60
+    batch_size: 1000
+    compress: true
 
 api:
   enabled: true

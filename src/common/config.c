@@ -1652,6 +1652,244 @@ static int parse_uploader(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_log_syslog(yaml_parser_t *parser, yaml_event_t *start,
+                            jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "log.syslog", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "log.syslog") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "log.syslog", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "log.syslog") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+
+        if (!strcmp(key, "enabled") && scalar_to_bool(&val_ev, &cfg->log.syslog.enabled) != 0)
+            add_error(errors, event_line(&val_ev), "log.syslog.enabled", "must be bool");
+        else if (!strcmp(key, "format"))
+            copy_scalar(cfg->log.syslog.format, sizeof(cfg->log.syslog.format), &val_ev);
+        else if (!strcmp(key, "facility"))
+            copy_scalar(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), &val_ev);
+        else if (strcmp(key, "enabled") && strcmp(key, "format") && strcmp(key, "facility"))
+            add_error(errors, event_line(&key_ev), "log.syslog", "unknown key '%s'", key);
+
+        yaml_event_delete(&val_ev);
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
+static int parse_log_mqtt(yaml_parser_t *parser, yaml_event_t *start,
+                          jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "log.mqtt", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "log.mqtt") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "log.mqtt", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "log.mqtt") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+
+        if (!strcmp(key, "enabled") && scalar_to_bool(&val_ev, &cfg->log.mqtt.enabled) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.enabled", "must be bool");
+        else if (!strcmp(key, "format"))
+            copy_scalar(cfg->log.mqtt.format, sizeof(cfg->log.mqtt.format), &val_ev);
+        else if (!strcmp(key, "broker"))
+            copy_scalar(cfg->log.mqtt.broker, sizeof(cfg->log.mqtt.broker), &val_ev);
+        else if (!strcmp(key, "tls") && scalar_to_bool(&val_ev, &cfg->log.mqtt.tls) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.tls", "must be bool");
+        else if (!strcmp(key, "tls_ca"))
+            copy_scalar(cfg->log.mqtt.tls_ca, sizeof(cfg->log.mqtt.tls_ca), &val_ev);
+        else if (!strcmp(key, "client_id"))
+            copy_scalar(cfg->log.mqtt.client_id, sizeof(cfg->log.mqtt.client_id), &val_ev);
+        else if (!strcmp(key, "topic_prefix"))
+            copy_scalar(cfg->log.mqtt.topic_prefix, sizeof(cfg->log.mqtt.topic_prefix), &val_ev);
+        else if (!strcmp(key, "qos") && scalar_to_int(&val_ev, &cfg->log.mqtt.qos) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.qos", "must be int");
+        else if (!strcmp(key, "keepalive_sec") && scalar_to_int(&val_ev, &cfg->log.mqtt.keepalive_sec) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.keepalive_sec", "must be int");
+        else if (!strcmp(key, "heartbeat_interval_sec") && scalar_to_int(&val_ev, &cfg->log.mqtt.heartbeat_interval_sec) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.heartbeat_interval_sec", "must be int");
+        else if (!strcmp(key, "heartbeat_max_devices") && scalar_to_int(&val_ev, &cfg->log.mqtt.heartbeat_max_devices) != 0)
+            add_error(errors, event_line(&val_ev), "log.mqtt.heartbeat_max_devices", "must be int");
+        else if (strcmp(key, "enabled") && strcmp(key, "format") && strcmp(key, "broker") &&
+                 strcmp(key, "tls") && strcmp(key, "tls_ca") && strcmp(key, "client_id") &&
+                 strcmp(key, "topic_prefix") && strcmp(key, "qos") && strcmp(key, "keepalive_sec") &&
+                 strcmp(key, "heartbeat_interval_sec") && strcmp(key, "heartbeat_max_devices"))
+            add_error(errors, event_line(&key_ev), "log.mqtt", "unknown key '%s'", key);
+
+        yaml_event_delete(&val_ev);
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
+static int parse_log_https(yaml_parser_t *parser, yaml_event_t *start,
+                           jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "log.https", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "log.https") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "log.https", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "log.https") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+
+        if (!strcmp(key, "enabled") && scalar_to_bool(&val_ev, &cfg->log.https.enabled) != 0)
+            add_error(errors, event_line(&val_ev), "log.https.enabled", "must be bool");
+        else if (!strcmp(key, "url"))
+            copy_scalar(cfg->log.https.url, sizeof(cfg->log.https.url), &val_ev);
+        else if (!strcmp(key, "tls_cert"))
+            copy_scalar(cfg->log.https.tls_cert, sizeof(cfg->log.https.tls_cert), &val_ev);
+        else if (!strcmp(key, "tls_key"))
+            copy_scalar(cfg->log.https.tls_key, sizeof(cfg->log.https.tls_key), &val_ev);
+        else if (!strcmp(key, "interval_sec") && scalar_to_int(&val_ev, &cfg->log.https.interval_sec) != 0)
+            add_error(errors, event_line(&val_ev), "log.https.interval_sec", "must be int");
+        else if (!strcmp(key, "batch_size") && scalar_to_int(&val_ev, &cfg->log.https.batch_size) != 0)
+            add_error(errors, event_line(&val_ev), "log.https.batch_size", "must be int");
+        else if (!strcmp(key, "compress") && scalar_to_bool(&val_ev, &cfg->log.https.compress) != 0)
+            add_error(errors, event_line(&val_ev), "log.https.compress", "must be bool");
+        else if (strcmp(key, "enabled") && strcmp(key, "url") && strcmp(key, "tls_cert") &&
+                 strcmp(key, "tls_key") && strcmp(key, "interval_sec") && strcmp(key, "batch_size") &&
+                 strcmp(key, "compress"))
+            add_error(errors, event_line(&key_ev), "log.https", "unknown key '%s'", key);
+
+        yaml_event_delete(&val_ev);
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
+static int parse_log(yaml_parser_t *parser, yaml_event_t *start,
+                     jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "log", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "log") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "log", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "log") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+
+        if (!strcmp(key, "format")) {
+            copy_scalar(cfg->log.format, sizeof(cfg->log.format), &val_ev);
+            yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "heartbeat_interval_sec") &&
+                   scalar_to_int(&val_ev, &cfg->log.heartbeat_interval_sec) != 0) {
+            add_error(errors, event_line(&val_ev), "log.heartbeat_interval_sec", "must be int");
+            yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "heartbeat_interval_sec")) {
+            yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "syslog")) {
+            if (parse_log_syslog(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "mqtt")) {
+            if (parse_log_mqtt(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "https")) {
+            if (parse_log_https(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else {
+            add_error(errors, event_line(&key_ev), "log", "unknown key '%s'", key);
+            if (skip_node(parser, &val_ev, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        }
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
 static int parse_api(yaml_parser_t *parser, yaml_event_t *start,
                      jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -1861,6 +2099,11 @@ static int parse_root_mapping(yaml_parser_t *parser, yaml_event_t *start,
             }
         } else if (!strcmp(key, "uploader")) {
             if (parse_uploader(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "log")) {
+            if (parse_log(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
                 return -1;
             }
@@ -2258,6 +2501,26 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->uploader.batch_size = 1000;
     cfg->uploader.compress = true;
 
+    snprintf(cfg->log.format, sizeof(cfg->log.format), "v2");
+    cfg->log.heartbeat_interval_sec = 1800;
+
+    cfg->log.syslog.enabled = false;
+    snprintf(cfg->log.syslog.format, sizeof(cfg->log.syslog.format), "v1");
+    snprintf(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), "local0");
+
+    cfg->log.mqtt.enabled = false;
+    snprintf(cfg->log.mqtt.format, sizeof(cfg->log.mqtt.format), "v2");
+    cfg->log.mqtt.tls = false;
+    cfg->log.mqtt.qos = 1;
+    cfg->log.mqtt.keepalive_sec = 60;
+    cfg->log.mqtt.heartbeat_interval_sec = 300;
+    cfg->log.mqtt.heartbeat_max_devices = 200;
+
+    cfg->log.https.enabled = false;
+    cfg->log.https.interval_sec = 60;
+    cfg->log.https.batch_size = 1000;
+    cfg->log.https.compress = true;
+
     cfg->api.enabled = true;
     snprintf(cfg->api.listen, sizeof(cfg->api.listen), "0.0.0.0:8443");
 }
@@ -2549,6 +2812,33 @@ char *jz_config_serialize(const jz_config_t *cfg)
     if (sb_appendf(&sb,
                    "collector: { db_path: %s, max_db_size_mb: %d, dedup_window_sec: %d, rate_limit_eps: %d }\n"
                    "uploader: { enabled: %s, platform_url: %s, interval_sec: %d, batch_size: %d, tls_cert: %s, tls_key: %s, compress: %s }\n"
+                   "log:\n"
+                   "  format: %s\n"
+                   "  heartbeat_interval_sec: %d\n"
+                   "  syslog:\n"
+                   "    enabled: %s\n"
+                   "    format: %s\n"
+                   "    facility: %s\n"
+                   "  mqtt:\n"
+                   "    enabled: %s\n"
+                   "    format: %s\n"
+                   "    broker: %s\n"
+                   "    tls: %s\n"
+                   "    tls_ca: %s\n"
+                   "    client_id: %s\n"
+                   "    topic_prefix: %s\n"
+                   "    qos: %d\n"
+                   "    keepalive_sec: %d\n"
+                   "    heartbeat_interval_sec: %d\n"
+                   "    heartbeat_max_devices: %d\n"
+                   "  https:\n"
+                   "    enabled: %s\n"
+                   "    url: %s\n"
+                   "    tls_cert: %s\n"
+                   "    tls_key: %s\n"
+                   "    interval_sec: %d\n"
+                   "    batch_size: %d\n"
+                   "    compress: %s\n"
                    "api:\n"
                    "  enabled: %s\n"
                    "  listen: %s\n"
@@ -2566,6 +2856,29 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    cfg->uploader.tls_cert,
                    cfg->uploader.tls_key,
                    cfg->uploader.compress ? "true" : "false",
+                   cfg->log.format,
+                   cfg->log.heartbeat_interval_sec,
+                   cfg->log.syslog.enabled ? "true" : "false",
+                   cfg->log.syslog.format,
+                   cfg->log.syslog.facility,
+                   cfg->log.mqtt.enabled ? "true" : "false",
+                   cfg->log.mqtt.format,
+                   cfg->log.mqtt.broker,
+                   cfg->log.mqtt.tls ? "true" : "false",
+                   cfg->log.mqtt.tls_ca,
+                   cfg->log.mqtt.client_id,
+                   cfg->log.mqtt.topic_prefix,
+                   cfg->log.mqtt.qos,
+                   cfg->log.mqtt.keepalive_sec,
+                   cfg->log.mqtt.heartbeat_interval_sec,
+                   cfg->log.mqtt.heartbeat_max_devices,
+                   cfg->log.https.enabled ? "true" : "false",
+                   cfg->log.https.url,
+                   cfg->log.https.tls_cert,
+                   cfg->log.https.tls_key,
+                   cfg->log.https.interval_sec,
+                   cfg->log.https.batch_size,
+                   cfg->log.https.compress ? "true" : "false",
                    cfg->api.enabled ? "true" : "false",
                    cfg->api.listen,
                    cfg->api.tls_cert,
