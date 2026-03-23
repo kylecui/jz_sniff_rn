@@ -11,6 +11,7 @@
 #include "log.h"
 
 #include <errno.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,31 @@ static const struct {
 };
 
 /* ── Internal Helpers ─────────────────────────────────────────── */
+
+/* Route libbpf messages to jz_log so errors are visible in syslog
+ * (daemon mode redirects stderr to /dev/null). */
+static int libbpf_print_cb(enum libbpf_print_level level, const char *fmt,
+                            va_list ap)
+{
+    char buf[1024];
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n')
+        buf[len - 1] = '\0';
+
+    switch (level) {
+    case LIBBPF_WARN:
+        jz_log_warn("libbpf: %s", buf);
+        break;
+    case LIBBPF_INFO:
+        jz_log_info("libbpf: %s", buf);
+        break;
+    case LIBBPF_DEBUG:
+        jz_log_debug("libbpf: %s", buf);
+        break;
+    }
+    return 0;
+}
 
 /* Ensure pin directory exists. */
 static int ensure_pin_dir(const char *path)
@@ -109,6 +135,8 @@ int jz_bpf_loader_init(jz_bpf_loader_t *loader, const char *bpf_dir)
     if (!loader || !bpf_dir)
         return -1;
 
+    libbpf_set_print(libbpf_print_cb);
+
     memset(loader, 0, sizeof(*loader));
     snprintf(loader->bpf_dir, sizeof(loader->bpf_dir), "%s", bpf_dir);
     snprintf(loader->pin_path, sizeof(loader->pin_path), "%s", JZ_BPF_PIN_PATH);
@@ -168,6 +196,31 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         return -1;
     }
 
+    /* Reuse already-pinned maps (must happen before bpf_object__load) */
+    struct bpf_map *map;
+    bpf_object__for_each_map(map, obj) {
+        const char *map_name = bpf_map__name(map);
+        if (!map_name)
+            continue;
+
+        char pin[512];
+        snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+
+        int existing_fd = bpf_obj_get(pin);
+        if (existing_fd < 0) {
+            /* Fallback: LIBBPF_PIN_BY_NAME pins flat under /sys/fs/bpf/ */
+            snprintf(pin, sizeof(pin), "/sys/fs/bpf/%s", map_name);
+            existing_fd = bpf_obj_get(pin);
+        }
+        if (existing_fd >= 0) {
+            if (bpf_map__reuse_fd(map, existing_fd) < 0) {
+                jz_log_warn("Cannot reuse pinned map %s: %s",
+                             map_name, strerror(errno));
+            }
+            close(existing_fd);
+        }
+    }
+
     /* Load (verify + load into kernel) */
     if (bpf_object__load(obj) < 0) {
         jz_log_error("Failed to load BPF object %s: %s",
@@ -191,8 +244,7 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         return -1;
     }
 
-    /* Pin all maps under /sys/fs/bpf/jz/<map_name> */
-    struct bpf_map *map;
+    /* Pin any NEW maps that weren't reused */
     bpf_object__for_each_map(map, obj) {
         const char *map_name = bpf_map__name(map);
         if (!map_name)
@@ -201,22 +253,15 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         char pin[512];
         snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
 
-        /* Try to reuse existing pinned map first */
-        int existing_fd = bpf_obj_get(pin);
-        if (existing_fd >= 0) {
-            if (bpf_map__reuse_fd(map, existing_fd) < 0) {
-                jz_log_warn("Cannot reuse pinned map %s: %s",
-                             map_name, strerror(errno));
-            }
-            close(existing_fd);
+        int check_fd = bpf_obj_get(pin);
+        if (check_fd >= 0) {
+            close(check_fd);
             continue;
         }
 
-        /* Pin new map */
         if (bpf_map__pin(map, pin) < 0) {
             jz_log_warn("Failed to pin map %s at %s: %s",
                          map_name, pin, strerror(errno));
-            /* Non-fatal: continue loading */
         }
     }
 

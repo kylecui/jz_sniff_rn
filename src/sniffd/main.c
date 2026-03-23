@@ -22,6 +22,7 @@
 
 #include <net/if.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -31,8 +32,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
+#include <linux/capability.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 
@@ -205,6 +209,11 @@ static int drop_privileges(const char *user, const char *group)
         return 0;
     }
 
+    if (prctl(PR_SET_KEEPCAPS, 1) < 0) {
+        jz_log_error("prctl(PR_SET_KEEPCAPS) failed: %s", strerror(errno));
+        return -1;
+    }
+
     if (setgid(grp->gr_gid) < 0) {
         jz_log_error("setgid(%d) failed: %s", grp->gr_gid, strerror(errno));
         return -1;
@@ -213,6 +222,28 @@ static int drop_privileges(const char *user, const char *group)
     if (setuid(pw->pw_uid) < 0) {
         jz_log_error("setuid(%d) failed: %s", pw->pw_uid, strerror(errno));
         return -1;
+    }
+
+    /*
+     * Restore BPF-related capabilities after privilege drop.
+     * CAP_NET_ADMIN(12) in data[0], CAP_PERFMON(38) + CAP_BPF(39) in data[1].
+     * Uses raw syscall to avoid libcap-dev build dependency.
+     */
+    struct __user_cap_header_struct cap_hdr = {
+        .version = _LINUX_CAPABILITY_VERSION_3,
+        .pid = 0
+    };
+    struct __user_cap_data_struct cap_data[2];
+    memset(cap_data, 0, sizeof(cap_data));
+    cap_data[0].effective = cap_data[0].permitted = (1U << 12);             /* CAP_NET_ADMIN */
+    cap_data[1].effective = cap_data[1].permitted = (1U << 6) | (1U << 7);  /* CAP_PERFMON(38) + CAP_BPF(39) */
+
+    if (syscall(SYS_capset, &cap_hdr, cap_data) < 0) {
+        jz_log_error("capset failed: %s (BPF module reload will not work)",
+                     strerror(errno));
+        /* Non-fatal: daemon still runs, just can't reload BPF */
+    } else {
+        jz_log_info("Retained CAP_NET_ADMIN + CAP_BPF + CAP_PERFMON");
     }
 
     jz_log_info("Dropped privileges to %s:%s", user, group);
@@ -752,6 +783,47 @@ int main(int argc, char *argv[])
             jz_log_warn("REST API init failed — API server disabled");
         } else {
             jz_log_info("REST API listening on port %d", g_ctx.api_port);
+        }
+    }
+
+    /* BPF pin dir is under /sys/fs/bpf/ (mode 1700, root-only). Chown jz/ subdir so reload works after setuid. */
+    {
+        struct passwd *bpf_pw = getpwnam("jz");
+        struct group  *bpf_gr = getgrnam("jz");
+        if (bpf_pw && bpf_gr) {
+            uid_t u = bpf_pw->pw_uid;
+            gid_t g = bpf_gr->gr_gid;
+            (void) chmod("/sys/fs/bpf", 0711);
+            if (chown("/sys/fs/bpf/jz", u, g) == 0)
+                (void) chmod("/sys/fs/bpf/jz", 0750);
+
+            /* Chown pinned map files so jz user can bpf_obj_get() them */
+            DIR *d = opendir("/sys/fs/bpf/jz");
+            if (d) {
+                struct dirent *ent;
+                char path[512];
+                while ((ent = readdir(d)) != NULL) {
+                    if (ent->d_name[0] == '.')
+                        continue;
+                    snprintf(path, sizeof(path), "/sys/fs/bpf/jz/%s", ent->d_name);
+                    if (chown(path, u, g) < 0) { }
+                }
+                closedir(d);
+            }
+
+            /* Also chown all pinned BPF maps under /sys/fs/bpf/ (rSwitch + jz) */
+            d = opendir("/sys/fs/bpf");
+            if (d) {
+                struct dirent *ent;
+                char path[512];
+                while ((ent = readdir(d)) != NULL) {
+                    if (ent->d_name[0] == '.')
+                        continue;
+                    snprintf(path, sizeof(path), "/sys/fs/bpf/%s", ent->d_name);
+                    if (chown(path, u, g) < 0) { }
+                }
+                closedir(d);
+            }
         }
     }
 

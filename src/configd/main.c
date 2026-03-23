@@ -480,6 +480,87 @@ static int do_reload(void)
     return 0;
 }
 
+static int apply_config_body(const char *body, size_t body_len, const char *source)
+{
+    char tmp_path[320];
+    int fd;
+    ssize_t wr;
+    jz_config_t new_config;
+    jz_config_errors_t errors = { .count = 0 };
+    jz_config_diff_t diff;
+    char *yaml;
+
+    snprintf(tmp_path, sizeof(tmp_path), "%s.push.XXXXXX", g_ctx.config_path);
+    fd = mkstemp(tmp_path);
+    if (fd < 0) {
+        jz_log_error("config_push(%s): mkstemp failed: %s", source, strerror(errno));
+        return -1;
+    }
+
+    wr = write(fd, body, body_len);
+    if (wr < 0 || (size_t) wr != body_len) {
+        jz_log_error("config_push(%s): write failed: %s", source, strerror(errno));
+        close(fd);
+        unlink(tmp_path);
+        return -1;
+    }
+    (void) fsync(fd);
+    close(fd);
+
+    jz_config_defaults(&new_config);
+    if (jz_config_load(&new_config, tmp_path, &errors) < 0) {
+        jz_log_error("config_push(%s): parse failed (%d errors)", source, errors.count);
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -2;
+    }
+
+    if (jz_config_validate(&new_config, &errors) < 0) {
+        jz_log_error("config_push(%s): validation failed (%d errors)", source, errors.count);
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -3;
+    }
+
+    jz_config_diff(&g_ctx.config, &new_config, &diff);
+
+    if (apply_config_to_maps(&new_config) < 0) {
+        jz_log_error("config_push(%s): failed to apply to BPF maps", source);
+        jz_config_audit_log(&g_ctx.db, "config_push", source, &diff, "failure");
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -4;
+    }
+
+    if (rename(tmp_path, g_ctx.config_path) < 0) {
+        jz_log_error("config_push(%s): rename failed: %s", source, strerror(errno));
+        jz_config_audit_log(&g_ctx.db, "config_push", source, &diff, "failure");
+        jz_config_free(&new_config);
+        unlink(tmp_path);
+        return -5;
+    }
+
+    g_ctx.config_version++;
+    yaml = jz_config_serialize(&new_config);
+    if (yaml) {
+        jz_config_history_save(&g_ctx.db, g_ctx.config_version,
+                               yaml, "push", source);
+        free(yaml);
+    }
+
+    jz_config_audit_log(&g_ctx.db, "config_push", source, &diff, "success");
+
+    jz_config_free(&g_ctx.prev_config);
+    memcpy(&g_ctx.prev_config, &g_ctx.config, sizeof(jz_config_t));
+    memcpy(&g_ctx.config, &new_config, sizeof(jz_config_t));
+
+    if (!g_ctx.verbose)
+        jz_log_set_level(jz_log_level_from_str(g_ctx.config.system.log_level));
+
+    jz_log_info("Config push(%s) applied: version %d", source, g_ctx.config_version);
+    return 0;
+}
+
 static int remote_config_handler(const char *json, int len, int version, void *data)
 {
     (void) data;
@@ -489,85 +570,7 @@ static int remote_config_handler(const char *json, int len, int version, void *d
     if (version <= g_ctx.config_version)
         return -1;
 
-    char tmp_path[320];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.remote.XXXXXX", g_ctx.config_path);
-
-    int fd = mkstemp(tmp_path);
-    if (fd < 0) {
-        jz_log_error("Remote push: mkstemp failed: %s", strerror(errno));
-        return -1;
-    }
-
-    ssize_t wr = write(fd, json, (size_t) len);
-    if (wr != len) {
-        jz_log_error("Remote push: write failed: %s", strerror(errno));
-        close(fd);
-        unlink(tmp_path);
-        return -1;
-    }
-
-    if (fsync(fd) < 0) {
-        jz_log_warn("Remote push: fsync failed: %s", strerror(errno));
-    }
-    close(fd);
-
-    jz_config_t new_config;
-    jz_config_defaults(&new_config);
-    jz_config_errors_t errors = { .count = 0 };
-
-    if (jz_config_load(&new_config, tmp_path, &errors) < 0) {
-        jz_log_error("Remote push: config parse failed (%d errors)", errors.count);
-        jz_config_free(&new_config);
-        unlink(tmp_path);
-        return -1;
-    }
-
-    if (jz_config_validate(&new_config, &errors) < 0) {
-        jz_log_error("Remote push: config validation failed (%d errors)", errors.count);
-        jz_config_free(&new_config);
-        unlink(tmp_path);
-        return -1;
-    }
-
-    jz_config_diff_t diff;
-    jz_config_diff(&g_ctx.config, &new_config, &diff);
-
-    if (apply_config_to_maps(&new_config) < 0) {
-        jz_log_error("Remote push: failed to apply config to BPF maps");
-        jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "failure");
-        jz_config_free(&new_config);
-        unlink(tmp_path);
-        return -1;
-    }
-
-    if (rename(tmp_path, g_ctx.config_path) < 0) {
-        jz_log_error("Remote push: rename(%s -> %s) failed: %s",
-                     tmp_path, g_ctx.config_path, strerror(errno));
-        jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "failure");
-        jz_config_free(&new_config);
-        unlink(tmp_path);
-        return -1;
-    }
-
-    g_ctx.config_version = version;
-    char *yaml = jz_config_serialize(&new_config);
-    if (yaml) {
-        jz_config_history_save(&g_ctx.db, g_ctx.config_version,
-                               yaml, "remote", "remote:platform");
-        free(yaml);
-    }
-
-    jz_config_audit_log(&g_ctx.db, "config_push", "remote:platform", &diff, "success");
-
-    jz_config_free(&g_ctx.prev_config);
-    memcpy(&g_ctx.prev_config, &g_ctx.config, sizeof(jz_config_t));
-    memcpy(&g_ctx.config, &new_config, sizeof(jz_config_t));
-
-    if (!g_ctx.verbose)
-        jz_log_set_level(jz_log_level_from_str(g_ctx.config.system.log_level));
-
-    jz_log_info("Remote config push applied: version %d", g_ctx.config_version);
-    return 0;
+    return apply_config_body(json, (size_t) len, "remote:platform");
 }
 
 /* ── IPC Command Handler ─────────────────────────────────────── */
@@ -616,6 +619,28 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
                        "configd v%s config_version:%d config:%s",
                        CONFIGD_VERSION, g_ctx.config_version,
                        g_ctx.config_path);
+    }
+    else if (strncmp(cmd, "config_push:", 12) == 0) {
+        const char *body = cmd + 12;
+        size_t body_len = strlen(body);
+        if (body_len == 0) {
+            len = snprintf(reply, sizeof(reply), "error:empty config body");
+        } else {
+            int rc = apply_config_body(body, body_len, "ipc:api");
+            if (rc == 0) {
+                len = snprintf(reply, sizeof(reply),
+                               "push:ok version:%d", g_ctx.config_version);
+            } else if (rc == -2) {
+                len = snprintf(reply, sizeof(reply),
+                               "error:config parse failed");
+            } else if (rc == -3) {
+                len = snprintf(reply, sizeof(reply),
+                               "error:config validation failed");
+            } else {
+                len = snprintf(reply, sizeof(reply),
+                               "error:config push failed (rc=%d)", rc);
+            }
+        }
     }
     else if (strncmp(cmd, "version", 7) == 0) {
         len = snprintf(reply, sizeof(reply), "%s", CONFIGD_VERSION);
