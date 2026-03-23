@@ -350,7 +350,7 @@ static int cmd_add(int type, int argc, char **argv)
         return EX_USAGE;
     }
 
-    snprintf(req, sizeof(req), "guard_add:%s:%s:%d:%u", ip_norm, mac, type, vlan);
+    snprintf(req, sizeof(req), "guard_add|%s|%s|%d|%u", ip_norm, mac, type, vlan);
     if (ipc_query(JZ_IPC_SOCK_SNIFFD, req, reply, sizeof(reply)) < 0) {
         fprintf(stderr, "error: guard add request failed: %s\n", strerror(errno));
         return EX_ERR;
@@ -395,7 +395,7 @@ static int cmd_del(int argc, char **argv)
         return EX_USAGE;
     }
 
-    snprintf(req, sizeof(req), "guard_remove:%s", ip_norm);
+    snprintf(req, sizeof(req), "guard_remove|%s", ip_norm);
     if (ipc_query(JZ_IPC_SOCK_SNIFFD, req, reply, sizeof(reply)) < 0) {
         fprintf(stderr, "error: guard remove request failed: %s\n", strerror(errno));
         return EX_ERR;
@@ -454,7 +454,7 @@ static int cmd_whitelist_add(int argc, char **argv)
         return EX_USAGE;
     }
 
-    snprintf(req, sizeof(req), "whitelist_add:%s:%s", ip_norm, mac);
+    snprintf(req, sizeof(req), "whitelist_add|%s|%s", ip_norm, mac);
     if (ipc_query(JZ_IPC_SOCK_SNIFFD, req, reply, sizeof(reply)) < 0) {
         fprintf(stderr, "error: whitelist add request failed: %s\n", strerror(errno));
         return EX_ERR;
@@ -503,7 +503,7 @@ static int cmd_whitelist_del(int argc, char **argv)
         return EX_USAGE;
     }
 
-    snprintf(req, sizeof(req), "whitelist_del:%s", ip_norm);
+    snprintf(req, sizeof(req), "whitelist_del|%s", ip_norm);
     if (ipc_query(JZ_IPC_SOCK_SNIFFD, req, reply, sizeof(reply)) < 0) {
         fprintf(stderr, "error: whitelist del request failed: %s\n", strerror(errno));
         return EX_ERR;
@@ -540,7 +540,7 @@ static int cmd_probe(int argc, char **argv)
         return EX_USAGE;
     }
 
-    snprintf(req, sizeof(req), "probe_%s", sub);
+    snprintf(req, sizeof(req), "probe|%s", sub);
     if (ipc_query(JZ_IPC_SOCK_SNIFFD, req, reply, sizeof(reply)) < 0) {
         fprintf(stderr, "error: probe request failed: %s\n", strerror(errno));
         return EX_ERR;
@@ -596,7 +596,7 @@ static int parse_global_opts(int argc, char **argv)
         { NULL, 0, NULL, 0 }
     };
 
-    while ((opt = getopt_long(argc, argv, "hv", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+hv", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(argv[0]);

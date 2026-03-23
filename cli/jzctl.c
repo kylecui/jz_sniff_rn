@@ -425,7 +425,7 @@ static int parse_global_opts(int argc, char **argv, const char **config_path)
 
     *config_path = DEFAULT_CONFIG_PATH;
 
-    while ((opt = getopt_long(argc, argv, "hvc:", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+hvc:", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(argv[0]);

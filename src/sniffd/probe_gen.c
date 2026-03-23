@@ -326,6 +326,8 @@ int jz_probe_gen_init(jz_probe_gen_t *pg, const jz_config_t *cfg, int ifindex)
 
     pg->bpf_map_fd = bpf_obj_get(BPF_PIN_PROBE_TARGETS);
     if (pg->bpf_map_fd < 0)
+        pg->bpf_map_fd = bpf_obj_get("/sys/fs/bpf/jz_probe_targets");
+    if (pg->bpf_map_fd < 0)
         jz_log_warn("Cannot open %s: %s", BPF_PIN_PROBE_TARGETS, strerror(errno));
 
     srand((unsigned int)(time(NULL) ^ (time_t)getpid() ^ (time_t)ifindex));

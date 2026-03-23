@@ -57,15 +57,26 @@ static uint64_t get_monotonic_ns(void)
     return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
 }
 
-/* open pinned map fd */
+/* open pinned map fd — try namespaced path, fall back to flat */
 static int open_bpf_map(const char *path)
 {
     int fd;
 
     fd = bpf_obj_get(path);
-    if (fd < 0)
-        jz_log_warn("Cannot open pinned map %s: %s", path, strerror(errno));
-    return fd;
+    if (fd >= 0)
+        return fd;
+
+    const char *name = strrchr(path, '/');
+    if (name) {
+        char flat[256];
+        snprintf(flat, sizeof(flat), "/sys/fs/bpf%s", name);
+        fd = bpf_obj_get(flat);
+        if (fd >= 0)
+            return fd;
+    }
+
+    jz_log_warn("Cannot open pinned map %s: %s", path, strerror(errno));
+    return -1;
 }
 
 /* network-order ipv4 to text */

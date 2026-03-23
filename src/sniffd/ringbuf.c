@@ -92,6 +92,14 @@ int jz_ringbuf_init(jz_ringbuf_t *rb,
     if (event_map_pin && event_handler) {
         rb->event_map_fd = bpf_obj_get(event_map_pin);
         if (rb->event_map_fd < 0) {
+            const char *name = strrchr(event_map_pin, '/');
+            if (name) {
+                char flat[256];
+                snprintf(flat, sizeof(flat), "/sys/fs/bpf%s", name);
+                rb->event_map_fd = bpf_obj_get(flat);
+            }
+        }
+        if (rb->event_map_fd < 0) {
             jz_log_error("Cannot open event ring buffer at %s: %s",
                           event_map_pin, strerror(errno));
             goto fail;
@@ -110,6 +118,14 @@ int jz_ringbuf_init(jz_ringbuf_t *rb,
     /* Open sample ring buffer */
     if (sample_map_pin && sample_handler) {
         rb->sample_map_fd = bpf_obj_get(sample_map_pin);
+        if (rb->sample_map_fd < 0) {
+            const char *name = strrchr(sample_map_pin, '/');
+            if (name) {
+                char flat[256];
+                snprintf(flat, sizeof(flat), "/sys/fs/bpf%s", name);
+                rb->sample_map_fd = bpf_obj_get(flat);
+            }
+        }
         if (rb->sample_map_fd < 0) {
             jz_log_error("Cannot open sample ring buffer at %s: %s",
                           sample_map_pin, strerror(errno));

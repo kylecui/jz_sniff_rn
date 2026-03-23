@@ -301,13 +301,13 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
     }
 
     /* Guard management commands */
-    if (strncmp(cmd, "guard_add:", 10) == 0) {
-        /* Format: guard_add:<ip>:<mac>:<type>:<vlan> */
+    if (strncmp(cmd, "guard_add|", 10) == 0) {
+        /* Format: guard_add|<ip>|<mac>|<type>|<vlan> */
         char ip_str[64], mac_str[32];
         int gtype = 0, vlan = 0;
-        if (sscanf(cmd + 10, "%63[^:]:%31[^:]:%d:%d",
+        if (sscanf(cmd + 10, "%63[^|]|%31[^|]|%d|%d",
                    ip_str, mac_str, &gtype, &vlan) < 2) {
-            const char *err = "error: usage guard_add:<ip>:<mac>[:<type>][:<vlan>]";
+            const char *err = "error: usage guard_add|<ip>|<mac>[|<type>][|<vlan>]";
             return jz_ipc_server_send(srv, client_fd, err,
                                       (uint32_t)strlen(err));
         }
@@ -339,8 +339,8 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
         return jz_ipc_server_send(srv, client_fd, reply, (uint32_t)rlen);
     }
 
-    if (strncmp(cmd, "guard_remove:", 13) == 0) {
-        /* Format: guard_remove:<ip> */
+    if (strncmp(cmd, "guard_remove|", 13) == 0) {
+        /* Format: guard_remove|<ip> */
         uint32_t ip;
         if (inet_pton(AF_INET, cmd + 13, &ip) != 1) {
             const char *err = "error: invalid IP address";
