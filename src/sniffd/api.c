@@ -917,7 +917,7 @@ static void handle_module_reload(struct mg_connection *c, struct mg_http_message
 
     (void) hm;
     if (!api || !api->loader) {
-        api_error_reply(c, 500, "loader not available");
+        api_error_reply(c, 500, "BPF loader not initialized (are BPF modules installed?)");
         return;
     }
 
@@ -933,13 +933,27 @@ static void handle_module_reload(struct mg_connection *c, struct mg_http_message
     }
 
     was_enabled = api->loader->modules[id].enabled;
-    if (jz_bpf_loader_unload(api->loader, (jz_mod_id_t) id) < 0 ||
-        jz_bpf_loader_load(api->loader, (jz_mod_id_t) id) < 0 ||
-        (was_enabled && jz_bpf_loader_enable(api->loader, (jz_mod_id_t) id, true) < 0)) {
-        api_error_reply(c, 500, "reload failed");
+    jz_log_info("api: reloading module '%s' (id=%d, was_enabled=%d)", name, id, was_enabled);
+
+    if (jz_bpf_loader_unload(api->loader, (jz_mod_id_t) id) < 0) {
+        jz_log_error("api: failed to unload module '%s'", name);
+        api_error_reply(c, 500, "reload failed: unload error");
         return;
     }
 
+    if (jz_bpf_loader_load(api->loader, (jz_mod_id_t) id) < 0) {
+        jz_log_error("api: failed to reload module '%s'", name);
+        api_error_reply(c, 500, "reload failed: load error");
+        return;
+    }
+
+    if (was_enabled && jz_bpf_loader_enable(api->loader, (jz_mod_id_t) id, true) < 0) {
+        jz_log_error("api: failed to re-enable module '%s' after reload", name);
+        api_error_reply(c, 500, "reload failed: re-enable error");
+        return;
+    }
+
+    jz_log_info("api: module '%s' reloaded successfully", name);
     root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "reloaded");
     cJSON_AddStringToObject(root, "module", name);
@@ -1277,7 +1291,7 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1355,7 +1369,7 @@ static void handle_logs_sniffers(struct mg_connection *c, struct mg_http_message
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1409,7 +1423,7 @@ static void handle_logs_background(struct mg_connection *c, struct mg_http_messa
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1463,7 +1477,7 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1516,7 +1530,7 @@ static void handle_logs_audit(struct mg_connection *c, struct mg_http_message *h
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1667,7 +1681,7 @@ static void handle_config_post(struct mg_connection *c, struct mg_http_message *
 
     if (api_configd_request(req, &reply) < 0) {
         free(req);
-        api_error_reply(c, 502, "configd request failed");
+        api_error_reply(c, 502, "configd unavailable (is configd running?)");
         return;
     }
 
@@ -1695,7 +1709,7 @@ static void handle_config_history(struct mg_connection *c, struct mg_http_messag
         offset = 0;
 
     if (api_db_open_readonly(api, &db) < 0) {
-        api_error_reply(c, 500, "cannot open db");
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
         return;
     }
 
@@ -1761,7 +1775,7 @@ static void handle_config_rollback(struct mg_connection *c, struct mg_http_messa
 
     (void) snprintf(req, sizeof(req), "config_rollback:%d", version);
     if (api_configd_request(req, &reply) < 0) {
-        api_error_reply(c, 502, "configd request failed");
+        api_error_reply(c, 502, "configd unavailable (is configd running?)");
         return;
     }
 

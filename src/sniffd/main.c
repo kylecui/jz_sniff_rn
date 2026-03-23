@@ -742,6 +742,10 @@ int main(int argc, char *argv[])
         g_ctx.api.guard_mgr = &g_ctx.guard_mgr;
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
+        /* Set DB path from config so API can query logs readonly */
+        if (g_ctx.config.collector.db_path[0])
+            (void) snprintf(g_ctx.db.path, sizeof(g_ctx.db.path),
+                            "%s", g_ctx.config.collector.db_path);
         if (jz_api_init(&g_ctx.api, g_ctx.api_port,
                         g_ctx.api_cert, g_ctx.api_key,
                         g_ctx.api_ca, g_ctx.api_token) < 0) {

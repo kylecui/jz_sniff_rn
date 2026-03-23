@@ -543,6 +543,25 @@ sudo jzlog tail                       # Follow new events (like tail -f)
 The REST API runs on **HTTPS port 8443** (configurable via `api.listen` in `base.yaml`).
 The self-signed TLS certificate uses ECC (required by mongoose's `MG_TLS_BUILTIN`).
 
+### Daemon Dependencies
+
+Not all API endpoints are self-contained in sniffd. Some require other daemons to be running:
+
+| API Group | Required Daemon(s) | What Happens If Missing |
+|---|---|---|
+| `/api/v1/health`, `/api/v1/status`, `/api/v1/modules` | sniffd only | Always works |
+| `/api/v1/guards/*`, `/api/v1/whitelist/*`, `/api/v1/stats/*` | sniffd only | Always works |
+| `/api/v1/logs/*` | sniffd + **collectord** | Returns `"database unavailable (is collectord running?)"` |
+| `/api/v1/config/history` | sniffd + **collectord** | Returns `"database unavailable (is collectord running?)"` |
+| `/api/v1/config` (POST), `/api/v1/config/rollback` | sniffd + **configd** | Returns `"configd unavailable (is configd running?)"` |
+| `/api/v1/modules/*/reload` | sniffd + BPF objects installed | Returns `"reload failed"` or no response if crash |
+
+**To enable all endpoints**, start the full daemon stack:
+
+```bash
+sudo systemctl start sniffd configd collectord
+```
+
 ### Authentication
 
 - **If `--api-token <token>` was passed to sniffd**: All endpoints (except `/api/v1/health`) require a `Bearer` token header.
@@ -695,7 +714,7 @@ curl -sk -X POST https://$HOST:8443/api/v1/config/rollback \
   -d '{"version":1}'
 
 # --- Module Reload ---
-curl -sk -X POST https://$HOST:8443/api/v1/modules/guard_classifier/reload
+curl -sk -X POST -d "" https://$HOST:8443/api/v1/modules/guard_classifier/reload
 ```
 
 ### Quick Smoke Test (copy-paste one-liner)
