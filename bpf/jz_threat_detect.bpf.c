@@ -68,16 +68,17 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_threat_stats SEC(".maps");
 
-/* Threat detect output consumed by next stage via extern map reference. */
+/* Threat detect output consumed by forensics stage via pinned map. */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
     __type(value, struct jz_threat_result);
     __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_threat_result_map SEC(".maps");
 
-/* Shared redirect config map owned by jz_traffic_weaver. */
-extern struct {
+/* Redirect config (shared with jz_traffic_weaver via LIBBPF_PIN_BY_NAME). */
+struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);
     __type(value, struct jz_redirect_config);

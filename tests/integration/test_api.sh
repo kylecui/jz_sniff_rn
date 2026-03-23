@@ -127,6 +127,8 @@ assert_status     "GET /modules returns 200"                   200  "$API/module
 assert_json_type  "GET /modules .modules is array"             ".modules" "array" "$API/modules"
 assert_json       "GET /modules[0] has .name"                  '.modules[0] | has("name")' "true" "$API/modules"
 assert_json       "GET /modules[0] has .loaded"                '.modules[0] | has("loaded")' "true" "$API/modules"
+assert_json       "GET /modules count == 8"                    '.modules | length' "8" "$API/modules"
+assert_json       "GET /modules all loaded==true"              '[.modules[] | .loaded] | all' "true" "$API/modules"
 
 section "3. Guards — Read"
 

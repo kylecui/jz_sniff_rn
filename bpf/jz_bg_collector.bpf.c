@@ -55,7 +55,7 @@ RS_DEPENDS_ON("jz_traffic_weaver");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);                              /* filter_id */
+    __type(key, __u32);                              /* bg_proto id */
     __type(value, struct jz_bg_filter_entry);
     __uint(max_entries, JZ_MAX_BG_FILTERS);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -68,6 +68,17 @@ struct {
     __uint(max_entries, 1);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_bg_stats SEC(".maps");
+
+/*
+ * Per-CPU scratch buffer for jz_event_bg (sizeof > 512 bytes).
+ * BPF stack limit is 512 bytes; this struct is ~580 bytes with payload[512].
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);
+    __type(value, struct jz_event_bg);
+    __uint(max_entries, 1);
+} jz_bg_scratch SEC(".maps");
 
 /* -- Helpers -- */
 
@@ -191,48 +202,28 @@ jz_update_bg_stats(__u8 bg_proto, __u64 pkt_bytes)
 }
 
 static __always_inline bool
-jz_bg_should_capture(__u16 ethertype,
-                     __u16 udp_dport,
+jz_bg_should_capture(__u8 bg_proto,
                      __u8 *out_include_payload)
 {
-    __u32 filter_id;
+    struct jz_bg_filter_entry *entry;
+    __u32 key = bg_proto;
+    __u8 sample_rate;
 
     *out_include_payload = 0;
 
-#pragma unroll
-    for (filter_id = 0; filter_id < 8; filter_id++) {
-        struct jz_bg_filter_entry *entry;
-        bool matched = false;
-        __u8 sample_rate;
+    entry = bpf_map_lookup_elem(&jz_bg_filter, &key);
+    if (!entry || !entry->capture)
+        return false;
 
-        entry = bpf_map_lookup_elem(&jz_bg_filter, &filter_id);
-        if (!entry)
-            continue;
+    sample_rate = entry->sample_rate;
+    if (sample_rate == 0)
+        sample_rate = 1;
 
-        if (!entry->capture)
-            continue;
+    if (sample_rate > 1 && ((__u32)bpf_ktime_get_ns() % sample_rate) != 0)
+        return false;
 
-        if (entry->ethertype != 0 && entry->ethertype == ethertype)
-            matched = true;
-
-        if (entry->udp_port != 0 && entry->udp_port == udp_dport)
-            matched = true;
-
-        if (!matched)
-            continue;
-
-        sample_rate = entry->sample_rate;
-        if (sample_rate == 0)
-            sample_rate = 1;
-
-        if (sample_rate > 1 && ((__u32)bpf_ktime_get_ns() % sample_rate) != 0)
-            return false;
-
-        *out_include_payload = entry->include_payload ? 1 : 0;
-        return true;
-    }
-
-    return false;
+    *out_include_payload = entry->include_payload ? 1 : 0;
+    return true;
 }
 
 /* -- Main XDP Program -- */
@@ -269,41 +260,42 @@ int jz_bg_collector_prog(struct xdp_md *xdp_ctx)
     bg_proto = jz_classify_bg_proto(eth, ctx, &ethertype, &udp_dport);
     jz_update_bg_stats(bg_proto, pkt_bytes);
 
-    if (jz_bg_should_capture(ethertype, udp_dport, &include_payload)) {
-        struct jz_event_bg evt;
+    if (jz_bg_should_capture(bg_proto, &include_payload)) {
+        struct jz_event_bg *evt;
+        __u32 scratch_key = 0;
         __u32 payload_len = 0;
 
-        __builtin_memset(&evt, 0, sizeof(evt));
+        evt = bpf_map_lookup_elem(&jz_bg_scratch, &scratch_key);
+        if (!evt)
+            return jz_tail_pass(xdp_ctx, ctx);
 
-        evt.hdr.type = JZ_EVENT_BG_CAPTURE;
-        evt.hdr.len = sizeof(evt);
-        evt.hdr.timestamp_ns = bpf_ktime_get_ns();
-        evt.hdr.ifindex = ctx->ifindex;
-        __builtin_memcpy(evt.hdr.src_mac, eth->h_source, 6);
-        __builtin_memcpy(evt.hdr.dst_mac, eth->h_dest, 6);
-        evt.hdr.src_ip = (__u32)ctx->layers.saddr;
-        evt.hdr.dst_ip = (__u32)ctx->layers.daddr;
-        evt.bg_proto = bg_proto;
+        __builtin_memset(evt, 0, sizeof(*evt));
+
+        evt->hdr.type = JZ_EVENT_BG_CAPTURE;
+        evt->hdr.len = sizeof(*evt);
+        evt->hdr.timestamp_ns = bpf_ktime_get_ns();
+        evt->hdr.ifindex = ctx->ifindex;
+        __builtin_memcpy(evt->hdr.src_mac, eth->h_source, 6);
+        __builtin_memcpy(evt->hdr.dst_mac, eth->h_dest, 6);
+        evt->hdr.src_ip = (__u32)ctx->layers.saddr;
+        evt->hdr.dst_ip = (__u32)ctx->layers.daddr;
+        evt->bg_proto = bg_proto;
 
         if (include_payload) {
             payload_len = (__u32)((__u8 *)data_end - (__u8 *)data);
-            if (payload_len > sizeof(evt.payload))
-                payload_len = sizeof(evt.payload);
+            if (payload_len > sizeof(evt->payload))
+                payload_len = sizeof(evt->payload);
 
-            /* BPF verifier requires constant-size memcpy.
-             * Use bpf_probe_read_kernel with mask to bound
-             * the variable length for the verifier.
-             */
             if (payload_len > 0 &&
                 (__u8 *)data + payload_len <= (__u8 *)data_end)
-                bpf_probe_read_kernel(evt.payload,
-                                      payload_len & 0x7F,
+                bpf_probe_read_kernel(evt->payload,
+                                      payload_len & 0x1FF,
                                       data);
 
-            evt.payload_len = payload_len;
+            evt->payload_len = payload_len;
         }
 
-        RS_EMIT_EVENT(&evt, sizeof(evt));
+        RS_EMIT_EVENT(evt, sizeof(*evt));
     }
 
     return jz_tail_pass(xdp_ctx, ctx);

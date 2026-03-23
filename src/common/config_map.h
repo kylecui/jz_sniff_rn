@@ -23,6 +23,15 @@
 #define JZ_ACTION_MIRROR          3
 #define JZ_ACTION_REDIRECT_MIRROR 4
 
+#define JZ_BG_PROTO_ARP           1
+#define JZ_BG_PROTO_DHCP          2
+#define JZ_BG_PROTO_MDNS          3
+#define JZ_BG_PROTO_SSDP          4
+#define JZ_BG_PROTO_LLDP          5
+#define JZ_BG_PROTO_CDP           6
+#define JZ_BG_PROTO_STP           7
+#define JZ_BG_PROTO_IGMP          8
+
 /*
  * These structs mirror bpf/include/jz_maps.h using standard C integer types.
  * They are kept in user-space to avoid pulling kernel/BPF headers into

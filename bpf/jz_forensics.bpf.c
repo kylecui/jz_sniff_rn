@@ -51,11 +51,12 @@ struct jz_threat_result {
     __u16 _pad;
 };
 
-extern struct {
+struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);
     __type(value, struct jz_threat_result);
     __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_threat_result_map SEC(".maps");
 
 /* Fixed-size forensic sample record for verifier-friendly ringbuf writes. */

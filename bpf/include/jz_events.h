@@ -46,13 +46,17 @@ struct jz_event_threat {
     char  description[32];
 };
 
-/* Background capture event */
+/* Background capture event.
+ * WARNING: sizeof(jz_event_bg) > 512 bytes — exceeds BPF stack limit.
+ * Must be allocated from a per-CPU array map scratch buffer, NOT on stack.
+ */
 struct jz_event_bg {
     struct jz_event_hdr hdr;    /* type = JZ_EVENT_BG_CAPTURE */
     __u8  bg_proto;             /* internal protocol classification */
     __u8  _pad[3];
     __u32 payload_len;          /* actual payload captured */
-    __u8  payload[128];         /* first 128 bytes of packet */
+    __u8  payload[512];
+
 };
 
 /* Forensic sample event (emitted to jz_sample_ringbuf, not rs_event_bus) */

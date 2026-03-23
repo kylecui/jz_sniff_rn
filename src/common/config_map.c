@@ -331,6 +331,7 @@ static int parse_pattern_id(const char *id, uint32_t *pattern_id)
 }
 
 static int add_bg_filter(jz_config_map_batch_t *batch,
+                         uint32_t bg_proto,
                          uint16_t ethertype,
                          uint16_t udp_port,
                          uint8_t capture,
@@ -356,7 +357,7 @@ static int add_bg_filter(jz_config_map_batch_t *batch,
     entry->sample_rate = sample_rate;
     entry->include_payload = include_payload;
 
-    batch->bg_filters.keys[idx] = (uint32_t)idx;
+    batch->bg_filters.keys[idx] = bg_proto;
     batch->bg_filters.count++;
 
     return 0;
@@ -636,42 +637,42 @@ static int translate_bg_filters(const jz_config_t *cfg, jz_config_map_batch_t *b
     include_payload = cfg->modules.forensics.common.enabled ? 1U : 0U;
 
     if (cfg->modules.bg_collector.protocols.arp) {
-        if (add_bg_filter(batch, JZ_ETH_P_ARP, 0, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_ARP, JZ_ETH_P_ARP, 0, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.dhcp) {
-        if (add_bg_filter(batch, 0, 67, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_DHCP, 0, 67, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.mdns) {
-        if (add_bg_filter(batch, 0, 5353, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_MDNS, 0, 5353, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.ssdp) {
-        if (add_bg_filter(batch, 0, 1900, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_SSDP, 0, 1900, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.lldp) {
-        if (add_bg_filter(batch, JZ_ETH_P_LLDP, 0, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_LLDP, JZ_ETH_P_LLDP, 0, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.cdp) {
-        if (add_bg_filter(batch, 0, 0, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_CDP, 0, 0, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.stp) {
-        if (add_bg_filter(batch, 0, 0, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_STP, 0, 0, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
     if (cfg->modules.bg_collector.protocols.igmp) {
-        if (add_bg_filter(batch, 0, 0, 1, sample_rate, include_payload) != 0)
+        if (add_bg_filter(batch, JZ_BG_PROTO_IGMP, 0, 0, 1, sample_rate, include_payload) != 0)
             return -1;
     }
 
