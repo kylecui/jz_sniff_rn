@@ -56,6 +56,12 @@ Thumbs.db
 *.sock
 *.log
 
+# Frontend build artifacts and auto-generated files
+frontend/dist/
+frontend/node_modules/
+frontend/src/auto-imports.d.ts
+frontend/src/components.d.ts
+
 # Third-party vendored source is tracked, but build artifacts are not
 third_party/**/*.o
 third_party/**/*.a

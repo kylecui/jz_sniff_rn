@@ -46,6 +46,10 @@
 
 #define JZ_API_VERSION "0.8.0"
 
+#ifndef JZ_WWW_ROOT
+#define JZ_WWW_ROOT "/usr/share/jz/www"
+#endif
+
 typedef struct {
     bool tls_ok;
 } jz_api_conn_state_t;
@@ -2547,7 +2551,18 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
     }
 
-    api_error_reply(c, 404, "not found");
+    if (mg_match(hm->uri, mg_str("/api/*"), NULL)) {
+        api_error_reply(c, 404, "not found");
+        return;
+    }
+
+    {
+        struct mg_http_serve_opts opts;
+        memset(&opts, 0, sizeof(opts));
+        opts.root_dir = JZ_WWW_ROOT;
+        opts.page404 = "/index.html";
+        mg_http_serve_dir(c, hm, &opts);
+    }
 }
 
 static void api_ev_handler(struct mg_connection *c, int ev, void *ev_data)

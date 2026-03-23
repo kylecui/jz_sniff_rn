@@ -10,7 +10,7 @@
 #   make clean     — Remove build artifacts
 #   make install   — Install to system paths
 
-.PHONY: all bpf user cli test clean install \
+.PHONY: all bpf user cli test clean install frontend frontend-install \
         test-unit test-bpf test-integration test-perf \
         coverage lint format help
 
@@ -42,6 +42,8 @@ SYSCONFDIR ?= /etc/jz
 DATADIR    ?= /var/lib/jz
 RUNDIR     ?= /var/run/jz
 UNITDIR    ?= /etc/systemd/system
+WWWDIR     ?= /usr/share/jz/www
+FRONTEND   := $(TOPDIR)/frontend
 
 # ── BPF Build Flags ───────────────────────────────────────────
 # Kernel headers (auto-detect or override with KERNEL_HEADERS=)
@@ -118,6 +120,17 @@ CLI_BINS  := $(foreach t,$(CLI_TOOLS),$(BUILD_DIR)/cli/$(t))
 
 all: bpf user cli
 	@echo "=== Build complete ==="
+
+# ── Frontend (Vue 3 SPA) ─────────────────────────────────────
+
+frontend:
+	cd $(FRONTEND) && bun run build
+	@echo "=== Frontend built ==="
+
+frontend-install: frontend
+	$(INSTALL) -d $(DESTDIR)$(WWWDIR)
+	cp -r $(FRONTEND)/dist/* $(DESTDIR)$(WWWDIR)/
+	@echo "=== Frontend installed to $(WWWDIR) ==="
 
 # ── BPF Modules ───────────────────────────────────────────────
 
@@ -297,6 +310,8 @@ help:
 	@echo "  install          Install to system paths"
 	@echo "  uninstall        Remove installed files"
 	@echo "  clean            Remove build artifacts"
+	@echo "  frontend         Build Vue 3 frontend SPA (requires bun)"
+	@echo "  frontend-install Build and install frontend to $(WWWDIR)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  CC=gcc           C compiler for user-space"
