@@ -95,6 +95,15 @@ policies: []
   #   redirect_port: 8               # Interface index
   #   mirror_port: 0
 
+policy_auto:
+  enabled: true
+  threshold: 5                        # Attack count before auto-policy
+  window_sec: 300                     # Time window for threshold
+  ttl_sec: 3600                       # Auto-policy expiry time
+  max_auto_policies: 256
+  default_action: "redirect"          # redirect, drop, mirror
+  escalation: true                    # Escalate repeat offenders
+
 threats:
   blacklist_file: "/etc/jz/blacklist.txt"  # One IP per line
   patterns: []

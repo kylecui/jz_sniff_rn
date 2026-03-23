@@ -208,21 +208,55 @@ assert_json       "GET /whitelist test entry removed"           \
 assert_status     "DELETE /whitelist (nonexistent → 404)"       404 \
     -X DELETE "$API/whitelist/10.99.99.254"
 
-section "6. Policies (501 Not Implemented)"
+section "6. Policies — CRUD Lifecycle"
 
 assert_status     "GET /policies returns 200"                   200  "$API/policies"
 assert_json_type  "GET /policies .policies is array"            ".policies" "array" "$API/policies"
+assert_json       "GET /policies has .total"                    '.total | type' "number" "$API/policies"
 
-assert_status     "POST /policies → 501"                        501 \
+assert_status     "POST /policies (add test policy)"            201 \
     -X POST -H "Content-Type: application/json" \
-    -d '{"name":"test"}' "$API/policies"
+    -d '{"name":"test-block","src_ip":"10.0.0.99","dst_ip":"0.0.0.0","src_port":0,"dst_port":22,"proto":"tcp","action":"drop","redirect_port":0,"mirror_port":0,"ttl_sec":3600}' \
+    "$API/policies"
 
-assert_status     "PUT /policies/{id} → 501"                    501 \
+POLICY_ID=$(curl "${CURL_OPTS[@]}" "$API/policies" | jq -r '.policies[-1].id // empty' 2>/dev/null) || POLICY_ID=""
+
+if [ -n "$POLICY_ID" ]; then
+    assert_json   "GET /policies contains test policy"          \
+        "[.policies[] | select(.name==\"test-block\")] | length > 0" "true" \
+        "$API/policies"
+
+    assert_status "PUT /policies/{id} (update test policy)"     200 \
+        -X PUT -H "Content-Type: application/json" \
+        -d '{"name":"test-block-updated","action":"redirect","redirect_port":8}' \
+        "$API/policies/$POLICY_ID"
+
+    assert_json   "GET /policies name was updated"              \
+        "[.policies[] | select(.id==$POLICY_ID)] | .[0].name" "test-block-updated" \
+        "$API/policies"
+
+    assert_status "DELETE /policies/{id} (remove test)"         200 \
+        -X DELETE "$API/policies/$POLICY_ID"
+
+    assert_json   "GET /policies test policy removed"           \
+        "[.policies[] | select(.id==$POLICY_ID)] | length" "0" \
+        "$API/policies"
+else
+    printf "${RED}  SKIP${RST}  Policy CRUD tests — could not retrieve policy ID\n"
+    FAIL=$((FAIL + 3))
+    TOTAL=$((TOTAL + 3))
+fi
+
+assert_status     "DELETE /policies/99999 (nonexistent → 404)"  404 \
+    -X DELETE "$API/policies/99999"
+
+assert_status     "PUT /policies/99999 (nonexistent → 404)"     404 \
     -X PUT -H "Content-Type: application/json" \
-    -d '{"name":"test"}' "$API/policies/1"
+    -d '{"name":"nope"}' "$API/policies/99999"
 
-assert_status     "DELETE /policies/{id} → 501"                 501 \
-    -X DELETE "$API/policies/1"
+assert_status     "POST /policies (no body → 400)"              400 \
+    -X POST -H "Content-Type: application/json" \
+    -d "" "$API/policies"
 
 section "7. Logs"
 

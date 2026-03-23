@@ -1537,6 +1537,65 @@ static int parse_collector(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_policy_auto(yaml_parser_t *parser, yaml_event_t *start,
+                             jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "policy_auto", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "policy_auto") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "policy_auto", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "policy_auto") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        if (!strcmp(key, "enabled")) {
+            if (scalar_to_bool(&val_ev, &cfg->policy_auto.enabled) != 0)
+                add_error(errors, event_line(&val_ev), "policy_auto.enabled", "must be bool");
+        } else if (!strcmp(key, "threshold") && scalar_to_int(&val_ev, &cfg->policy_auto.threshold) != 0)
+            add_error(errors, event_line(&val_ev), "policy_auto.threshold", "must be int");
+        else if (!strcmp(key, "window_sec") && scalar_to_int(&val_ev, &cfg->policy_auto.window_sec) != 0)
+            add_error(errors, event_line(&val_ev), "policy_auto.window_sec", "must be int");
+        else if (!strcmp(key, "ttl_sec") && scalar_to_int(&val_ev, &cfg->policy_auto.ttl_sec) != 0)
+            add_error(errors, event_line(&val_ev), "policy_auto.ttl_sec", "must be int");
+        else if (!strcmp(key, "max_auto_policies") && scalar_to_int(&val_ev, &cfg->policy_auto.max_auto_policies) != 0)
+            add_error(errors, event_line(&val_ev), "policy_auto.max_auto_policies", "must be int");
+        else if (!strcmp(key, "default_action"))
+            copy_scalar(cfg->policy_auto.default_action, sizeof(cfg->policy_auto.default_action), &val_ev);
+        else if (!strcmp(key, "escalation")) {
+            if (scalar_to_bool(&val_ev, &cfg->policy_auto.escalation) != 0)
+                add_error(errors, event_line(&val_ev), "policy_auto.escalation", "must be bool");
+        } else if (strcmp(key, "enabled") && strcmp(key, "threshold") &&
+                 strcmp(key, "window_sec") && strcmp(key, "ttl_sec") &&
+                 strcmp(key, "max_auto_policies") && strcmp(key, "default_action") &&
+                 strcmp(key, "escalation"))
+            add_error(errors, event_line(&key_ev), "policy_auto", "unknown key '%s'", key);
+
+        yaml_event_delete(&val_ev);
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
 static int parse_uploader(yaml_parser_t *parser, yaml_event_t *start,
                           jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -1782,6 +1841,11 @@ static int parse_root_mapping(yaml_parser_t *parser, yaml_event_t *start,
             }
         } else if (!strcmp(key, "policies")) {
             if (parse_policies(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "policy_auto")) {
+            if (parse_policy_auto(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
                 return -1;
             }
@@ -2175,6 +2239,14 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->fake_mac_pool.count = 64;
 
     snprintf(cfg->threats.blacklist_file, sizeof(cfg->threats.blacklist_file), "/etc/jz/blacklist.txt");
+
+    cfg->policy_auto.enabled = true;
+    cfg->policy_auto.threshold = 5;
+    cfg->policy_auto.window_sec = 300;
+    cfg->policy_auto.ttl_sec = 3600;
+    cfg->policy_auto.max_auto_policies = 256;
+    snprintf(cfg->policy_auto.default_action, sizeof(cfg->policy_auto.default_action), "redirect");
+    cfg->policy_auto.escalation = true;
 
     snprintf(cfg->collector.db_path, sizeof(cfg->collector.db_path), "/var/lib/jz/jz.db");
     cfg->collector.max_db_size_mb = 512;

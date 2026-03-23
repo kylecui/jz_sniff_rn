@@ -15,6 +15,8 @@
 #include "discovery.h"
 #include "guard_auto.h"
 #include "guard_mgr.h"
+#include "policy_mgr.h"
+#include "policy_auto.h"
 #include "probe_gen.h"
 #include "ringbuf.h"
 #include "config.h"
@@ -91,6 +93,8 @@ static struct {
     jz_guard_mgr_t    guard_mgr;
     jz_discovery_t    discovery;
     jz_guard_auto_t   guard_auto;
+    jz_policy_mgr_t   policy_mgr;
+    jz_policy_auto_t  policy_auto;
     jz_api_t          api;
     int               ifindex;
 } g_ctx;
@@ -447,6 +451,18 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
             jz_discovery_feed_event(&g_ctx.discovery, bg_proto, ev + 16, plen);
     }
 
+    if (g_ctx.policy_auto.initialized &&
+        (event_type == 1 || event_type == 2) && data_len >= 44) {
+        uint32_t attacker_ip;
+        uint32_t guarded_ip;
+        uint8_t protocol;
+        memcpy(&attacker_ip, (const uint8_t *)data + 24, 4);
+        memcpy(&guarded_ip, (const uint8_t *)data + 40, 4);
+        protocol = ((const uint8_t *)data)[33];
+        jz_policy_auto_feed_attack(&g_ctx.policy_auto, attacker_ip,
+                                   guarded_ip, protocol);
+    }
+
     return 0;
 }
 
@@ -513,6 +529,12 @@ static int do_reload(void)
 
     if (g_ctx.guard_auto.initialized)
         jz_guard_auto_update_config(&g_ctx.guard_auto, &g_ctx.config);
+
+    if (g_ctx.policy_mgr.initialized)
+        jz_policy_mgr_update_config(&g_ctx.policy_mgr, &g_ctx.config);
+
+    if (g_ctx.policy_auto.initialized)
+        jz_policy_auto_update_config(&g_ctx.policy_auto, &g_ctx.config);
 
     jz_log_info("Configuration reloaded successfully");
     return 0;
@@ -798,6 +820,16 @@ int main(int argc, char *argv[])
         jz_log_warn("Guard auto init failed — auto-deployment disabled");
     }
 
+    /* Initialize policy engine */
+    if (jz_policy_mgr_init(&g_ctx.policy_mgr, &g_ctx.config) < 0) {
+        jz_log_warn("Policy manager init failed — policy engine disabled");
+    }
+
+    if (jz_policy_auto_init(&g_ctx.policy_auto, &g_ctx.policy_mgr,
+                            &g_ctx.config) < 0) {
+        jz_log_warn("Policy auto init failed — auto-policy disabled");
+    }
+
     /* Initialize IPC server */
     if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_SNIFFD, 0660,
                            ipc_handler, &g_ctx.ipc) < 0) {
@@ -813,6 +845,7 @@ int main(int argc, char *argv[])
         g_ctx.api.guard_mgr = &g_ctx.guard_mgr;
         g_ctx.api.discovery = &g_ctx.discovery;
         g_ctx.api.guard_auto = &g_ctx.guard_auto;
+        g_ctx.api.policy_mgr = &g_ctx.policy_mgr;
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
         /* Set DB path from config so API can query logs readonly */
@@ -893,6 +926,12 @@ int main(int argc, char *argv[])
         if (g_ctx.guard_auto.initialized)
             jz_guard_auto_tick(&g_ctx.guard_auto);
 
+        if (g_ctx.policy_mgr.initialized)
+            jz_policy_mgr_tick(&g_ctx.policy_mgr);
+
+        if (g_ctx.policy_auto.initialized)
+            jz_policy_auto_tick(&g_ctx.policy_auto);
+
         if (g_ctx.api.enabled)
             jz_api_poll(&g_ctx.api, 0);
 
@@ -910,6 +949,8 @@ int main(int argc, char *argv[])
 
 cleanup:
     jz_api_destroy(&g_ctx.api);
+    jz_policy_auto_destroy(&g_ctx.policy_auto);
+    jz_policy_mgr_destroy(&g_ctx.policy_mgr);
     jz_guard_auto_destroy(&g_ctx.guard_auto);
     jz_discovery_destroy(&g_ctx.discovery);
     jz_probe_gen_destroy(&g_ctx.probe_gen);

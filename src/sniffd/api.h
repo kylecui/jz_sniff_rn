@@ -35,6 +35,10 @@ typedef struct jz_discovery jz_discovery_t;
 typedef struct jz_guard_auto jz_guard_auto_t;
 #endif
 
+#ifndef JZ_POLICY_MGR_H
+typedef struct jz_policy_mgr jz_policy_mgr_t;
+#endif
+
 typedef enum {
     JZ_API_ROLE_VIEWER = 0,
     JZ_API_ROLE_OPERATOR = 1,
@@ -59,6 +63,7 @@ typedef struct jz_api {
     jz_guard_mgr_t *guard_mgr;
     jz_discovery_t *discovery;
     jz_guard_auto_t *guard_auto;
+    jz_policy_mgr_t *policy_mgr;
     jz_config_t *config;
     jz_db_t *db;
 } jz_api_t;

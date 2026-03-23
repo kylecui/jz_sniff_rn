@@ -23,7 +23,9 @@
 #include "discovery.h"
 #include "guard_auto.h"
 #include "guard_mgr.h"
+#include "policy_mgr.h"
 #include "config.h"
+#include "config_map.h"
 #include "db.h"
 #include "log.h"
 #include "ipc.h"
@@ -1227,38 +1229,224 @@ static void handle_whitelist_del(struct mg_connection *c, struct mg_http_message
 
 static void handle_policies_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
-    cJSON *root;
+    char buf[8192];
     (void) hm;
-    (void) api;
 
-    root = cJSON_CreateObject();
-    cJSON_AddArrayToObject(root, "policies");
-    api_json_reply(c, 200, root);
+    if (!api->policy_mgr) {
+        api_error_reply(c, 503, "policy manager unavailable");
+        return;
+    }
+
+    if (jz_policy_mgr_list_json(api->policy_mgr, buf, sizeof(buf)) < 0) {
+        api_error_reply(c, 500, "failed to serialize policies");
+        return;
+    }
+
+    mg_http_reply(c, 200, "Content-Type: application/json\r\n", "%s", buf);
 }
 
 static void handle_policies_add(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
-    (void) hm;
-    (void) api;
-    api_error_reply(c, 501, "not implemented");
+    cJSON *body;
+    cJSON *j;
+    jz_policy_entry_user_t entry;
+    cJSON *root;
+    int id;
+
+    if (!api || !api->policy_mgr) {
+        api_error_reply(c, 503, "policy manager unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    memset(&entry, 0, sizeof(entry));
+    entry.enabled = true;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "name");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(entry.name, sizeof(entry.name), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        api_parse_ipv4(j->valuestring, &entry.src_ip);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        api_parse_ipv4(j->valuestring, &entry.dst_ip);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_port");
+    if (cJSON_IsNumber(j))
+        entry.src_port = (uint16_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_port");
+    if (cJSON_IsNumber(j))
+        entry.dst_port = (uint16_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "proto");
+    if (cJSON_IsString(j) && j->valuestring) {
+        if (strcasecmp(j->valuestring, "tcp") == 0) entry.proto = 6;
+        else if (strcasecmp(j->valuestring, "udp") == 0) entry.proto = 17;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "action");
+    if (cJSON_IsString(j) && j->valuestring) {
+        if (strcasecmp(j->valuestring, "drop") == 0) entry.action = JZ_ACTION_DROP;
+        else if (strcasecmp(j->valuestring, "redirect") == 0) entry.action = JZ_ACTION_REDIRECT;
+        else if (strcasecmp(j->valuestring, "mirror") == 0) entry.action = JZ_ACTION_MIRROR;
+        else if (strcasecmp(j->valuestring, "redirect_mirror") == 0) entry.action = JZ_ACTION_REDIRECT_MIRROR;
+        else entry.action = JZ_ACTION_PASS;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "redirect_port");
+    if (cJSON_IsNumber(j))
+        entry.redirect_port = (uint8_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "mirror_port");
+    if (cJSON_IsNumber(j))
+        entry.mirror_port = (uint8_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "ttl_sec");
+    if (cJSON_IsNumber(j))
+        entry.ttl_sec = (uint32_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "enabled");
+    if (cJSON_IsBool(j))
+        entry.enabled = cJSON_IsTrue(j);
+
+    cJSON_Delete(body);
+
+    id = jz_policy_mgr_add(api->policy_mgr, &entry);
+    if (id < 0) {
+        api_error_reply(c, 500, "failed to add policy");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "added");
+    cJSON_AddNumberToObject(root, "id", id);
+    api_json_reply(c, 201, root);
 }
 
 static void handle_policies_update(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
                                    struct mg_str id_cap)
 {
-    (void) hm;
-    (void) api;
-    (void) id_cap;
-    api_error_reply(c, 501, "not implemented");
+    cJSON *body;
+    cJSON *j;
+    jz_policy_entry_user_t entry;
+    const jz_policy_entry_user_t *existing;
+    char id_str[32];
+    uint32_t id;
+
+    if (!api || !api->policy_mgr) {
+        api_error_reply(c, 503, "policy manager unavailable");
+        return;
+    }
+
+    api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str));
+    id = (uint32_t)strtoul(id_str, NULL, 10);
+
+    existing = jz_policy_mgr_find(api->policy_mgr, id);
+    if (!existing) {
+        api_error_reply(c, 404, "policy not found");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    memcpy(&entry, existing, sizeof(entry));
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "name");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(entry.name, sizeof(entry.name), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        api_parse_ipv4(j->valuestring, &entry.src_ip);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        api_parse_ipv4(j->valuestring, &entry.dst_ip);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_port");
+    if (cJSON_IsNumber(j))
+        entry.src_port = (uint16_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_port");
+    if (cJSON_IsNumber(j))
+        entry.dst_port = (uint16_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "proto");
+    if (cJSON_IsString(j) && j->valuestring) {
+        if (strcasecmp(j->valuestring, "tcp") == 0) entry.proto = 6;
+        else if (strcasecmp(j->valuestring, "udp") == 0) entry.proto = 17;
+        else entry.proto = 0;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "action");
+    if (cJSON_IsString(j) && j->valuestring) {
+        if (strcasecmp(j->valuestring, "drop") == 0) entry.action = JZ_ACTION_DROP;
+        else if (strcasecmp(j->valuestring, "redirect") == 0) entry.action = JZ_ACTION_REDIRECT;
+        else if (strcasecmp(j->valuestring, "mirror") == 0) entry.action = JZ_ACTION_MIRROR;
+        else if (strcasecmp(j->valuestring, "redirect_mirror") == 0) entry.action = JZ_ACTION_REDIRECT_MIRROR;
+        else entry.action = JZ_ACTION_PASS;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "redirect_port");
+    if (cJSON_IsNumber(j))
+        entry.redirect_port = (uint8_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "mirror_port");
+    if (cJSON_IsNumber(j))
+        entry.mirror_port = (uint8_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "ttl_sec");
+    if (cJSON_IsNumber(j))
+        entry.ttl_sec = (uint32_t)j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "enabled");
+    if (cJSON_IsBool(j))
+        entry.enabled = cJSON_IsTrue(j);
+
+    cJSON_Delete(body);
+
+    if (jz_policy_mgr_update(api->policy_mgr, id, &entry) < 0) {
+        api_error_reply(c, 500, "failed to update policy");
+        return;
+    }
+
+    api_json_reply(c, 200, cJSON_CreateObject());
 }
 
 static void handle_policies_del(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
                                 struct mg_str id_cap)
 {
+    char id_str[32];
+    uint32_t id;
     (void) hm;
-    (void) api;
-    (void) id_cap;
-    api_error_reply(c, 501, "not implemented");
+
+    if (!api || !api->policy_mgr) {
+        api_error_reply(c, 503, "policy manager unavailable");
+        return;
+    }
+
+    api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str));
+    id = (uint32_t)strtoul(id_str, NULL, 10);
+
+    if (jz_policy_mgr_remove(api->policy_mgr, id) < 0) {
+        api_error_reply(c, 404, "policy not found");
+        return;
+    }
+
+    api_json_reply(c, 200, cJSON_CreateObject());
 }
 
 static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
@@ -2243,6 +2431,7 @@ int jz_api_init(jz_api_t *api, int port,
     jz_guard_mgr_t *guard_mgr;
     jz_discovery_t *discovery;
     jz_guard_auto_t *guard_auto;
+    jz_policy_mgr_t *policy_mgr;
     jz_config_t *config;
     jz_db_t *db;
     char *cert_pem = NULL;
@@ -2259,6 +2448,7 @@ int jz_api_init(jz_api_t *api, int port,
     guard_mgr = api->guard_mgr;
     discovery = api->discovery;
     guard_auto = api->guard_auto;
+    policy_mgr = api->policy_mgr;
     config = api->config;
     db = api->db;
 
@@ -2267,6 +2457,7 @@ int jz_api_init(jz_api_t *api, int port,
     api->guard_mgr = guard_mgr;
     api->discovery = discovery;
     api->guard_auto = guard_auto;
+    api->policy_mgr = policy_mgr;
     api->config = config;
     api->db = db;
 

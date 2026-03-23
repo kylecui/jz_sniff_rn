@@ -175,6 +175,16 @@ typedef struct jz_config_policy {
     int  mirror_port;
 } jz_config_policy_t;
 
+typedef struct jz_config_policy_auto {
+    bool enabled;
+    int  threshold;
+    int  window_sec;
+    int  ttl_sec;
+    int  max_auto_policies;
+    char default_action[JZ_CONFIG_STR_SHORT];
+    bool escalation;
+} jz_config_policy_auto_t;
+
 typedef struct jz_config_threat_pattern {
     char id[JZ_CONFIG_STR_SHORT];
     int  dst_port;
@@ -229,6 +239,7 @@ typedef struct jz_config {
     jz_config_mac_pool_t fake_mac_pool;
     jz_config_policy_t policies[JZ_CONFIG_MAX_POLICIES];
     int policy_count;
+    jz_config_policy_auto_t policy_auto;
     jz_config_threats_t threats;
     jz_config_collector_t collector;
     jz_config_uploader_t uploader;
