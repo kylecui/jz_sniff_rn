@@ -20,6 +20,8 @@
 #endif
 
 #include "bpf_loader.h"
+#include "discovery.h"
+#include "guard_auto.h"
 #include "guard_mgr.h"
 #include "config.h"
 #include "db.h"
@@ -1785,6 +1787,231 @@ static void handle_config_rollback(struct mg_connection *c, struct mg_http_messa
     api_json_reply(c, 200, root);
 }
 
+static void handle_discovery_devices(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    char *buf;
+    int len;
+
+    (void) hm;
+    if (!api || !api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    buf = (char *) malloc(65536);
+    if (!buf) {
+        api_error_reply(c, 500, "oom");
+        return;
+    }
+
+    len = jz_discovery_list_json(api->discovery, buf, 65536);
+    if (len <= 0) {
+        free(buf);
+        mg_http_reply(c, 200,
+                      "Content-Type: application/json\r\n",
+                      "{\"devices\":[],\"total\":0}\n");
+        return;
+    }
+
+    mg_http_reply(c, 200,
+                  "Content-Type: application/json\r\n",
+                  "%.*s\n", len, buf);
+    free(buf);
+}
+
+static void handle_discovery_device_by_mac(struct mg_connection *c, struct mg_http_message *hm,
+                                           jz_api_t *api, struct mg_str mac_cap)
+{
+    char mac_str[32];
+    uint8_t mac[6];
+    jz_discovery_device_t *dev;
+    cJSON *root;
+    char ipbuf[INET_ADDRSTRLEN];
+
+    (void) hm;
+    if (!api || !api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(mac_cap, mac_str, sizeof(mac_str)) < 0 ||
+        api_parse_mac(mac_str, mac) < 0) {
+        api_error_reply(c, 400, "invalid mac");
+        return;
+    }
+
+    dev = jz_discovery_lookup(api->discovery, mac);
+    if (!dev) {
+        api_error_reply(c, 404, "device not found");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    api_mac_to_text(dev->profile.mac, mac_str, sizeof(mac_str));
+    cJSON_AddStringToObject(root, "mac", mac_str);
+    api_ip_to_text(dev->profile.ip, ipbuf, sizeof(ipbuf));
+    cJSON_AddStringToObject(root, "ip", ipbuf);
+    cJSON_AddStringToObject(root, "vendor", dev->profile.vendor);
+    cJSON_AddStringToObject(root, "os_class", dev->profile.os_class);
+    cJSON_AddStringToObject(root, "device_class", dev->profile.device_class);
+    cJSON_AddStringToObject(root, "hostname", dev->profile.hostname);
+    cJSON_AddNumberToObject(root, "confidence", dev->profile.confidence);
+    cJSON_AddNumberToObject(root, "signals", dev->profile.signals);
+    cJSON_AddNumberToObject(root, "first_seen", (double) dev->profile.first_seen);
+    cJSON_AddNumberToObject(root, "last_seen", (double) dev->profile.last_seen);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_guards_frozen_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "frozen_ips");
+    for (i = 0; i < api->config->guards.frozen_ip_count; i++) {
+        cJSON *o = cJSON_CreateObject();
+        if (!o)
+            continue;
+        cJSON_AddStringToObject(o, "ip", api->config->guards.frozen_ips[i].ip);
+        cJSON_AddStringToObject(o, "reason", api->config->guards.frozen_ips[i].reason);
+        cJSON_AddItemToArray(arr, o);
+    }
+    cJSON_AddNumberToObject(root, "count", api->config->guards.frozen_ip_count);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *ip_j;
+    cJSON *reason_j;
+    uint32_t ip_val;
+    cJSON *root;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    ip_j = cJSON_GetObjectItemCaseSensitive(body, "ip");
+    reason_j = cJSON_GetObjectItemCaseSensitive(body, "reason");
+
+    if (!cJSON_IsString(ip_j) || !ip_j->valuestring ||
+        api_parse_ipv4(ip_j->valuestring, &ip_val) < 0) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "invalid ip");
+        return;
+    }
+
+    if (api->config->guards.frozen_ip_count >= JZ_CONFIG_MAX_FROZEN_IPS) {
+        cJSON_Delete(body);
+        api_error_reply(c, 409, "frozen ip list full");
+        return;
+    }
+
+    {
+        int idx = api->config->guards.frozen_ip_count;
+        (void) snprintf(api->config->guards.frozen_ips[idx].ip,
+                        sizeof(api->config->guards.frozen_ips[idx].ip),
+                        "%s", ip_j->valuestring);
+        if (cJSON_IsString(reason_j) && reason_j->valuestring)
+            (void) snprintf(api->config->guards.frozen_ips[idx].reason,
+                            sizeof(api->config->guards.frozen_ips[idx].reason),
+                            "%s", reason_j->valuestring);
+        else
+            api->config->guards.frozen_ips[idx].reason[0] = '\0';
+        api->config->guards.frozen_ip_count++;
+    }
+
+    cJSON_Delete(body);
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "added");
+    api_json_reply(c, 201, root);
+}
+
+static void handle_guards_frozen_del(struct mg_connection *c, struct mg_http_message *hm,
+                                     jz_api_t *api, struct mg_str ip_cap)
+{
+    char ip_str[64];
+    int i;
+    int found = -1;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(ip_cap, ip_str, sizeof(ip_str)) < 0) {
+        api_error_reply(c, 400, "invalid ip");
+        return;
+    }
+
+    for (i = 0; i < api->config->guards.frozen_ip_count; i++) {
+        if (strcmp(api->config->guards.frozen_ips[i].ip, ip_str) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0) {
+        api_error_reply(c, 404, "frozen ip not found");
+        return;
+    }
+
+    for (i = found; i < api->config->guards.frozen_ip_count - 1; i++)
+        api->config->guards.frozen_ips[i] = api->config->guards.frozen_ips[i + 1];
+    api->config->guards.frozen_ip_count--;
+
+    api_json_reply(c, 200, cJSON_CreateObject());
+}
+
+static void handle_guards_auto_status(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    char *buf;
+    int len;
+
+    (void) hm;
+    if (!api || !api->guard_auto) {
+        api_error_reply(c, 500, "guard auto unavailable");
+        return;
+    }
+
+    buf = (char *) malloc(4096);
+    if (!buf) {
+        api_error_reply(c, 500, "oom");
+        return;
+    }
+
+    len = jz_guard_auto_list_json(api->guard_auto, buf, 4096);
+    if (len <= 0) {
+        free(buf);
+        mg_http_reply(c, 200,
+                      "Content-Type: application/json\r\n",
+                      "{}\n");
+        return;
+    }
+
+    mg_http_reply(c, 200,
+                  "Content-Type: application/json\r\n",
+                  "%.*s\n", len, buf);
+    free(buf);
+}
+
 static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     struct mg_str caps[2];
@@ -1877,6 +2104,22 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_history(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/discovery/devices/*"), caps)) {
+            handle_discovery_device_by_mac(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/discovery/devices"), NULL)) {
+            handle_discovery_devices(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/frozen"), NULL)) {
+            handle_guards_frozen_list(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/status"), NULL)) {
+            handle_guards_auto_status(c, hm, api);
+            return;
+        }
     }
 
     if (mg_match(hm->method, mg_str("POST"), NULL)) {
@@ -1904,6 +2147,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_module_reload(c, hm, api, caps[0]);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/frozen"), NULL)) {
+            handle_guards_frozen_add(c, hm, api);
+            return;
+        }
     }
 
     if (mg_match(hm->method, mg_str("DELETE"), NULL)) {
@@ -1913,6 +2160,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/guards/dynamic/*"), caps)) {
             handle_guards_dynamic_del(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/frozen/*"), caps)) {
+            handle_guards_frozen_del(c, hm, api, caps[0]);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/whitelist/*"), caps)) {
@@ -1990,6 +2241,8 @@ int jz_api_init(jz_api_t *api, int port,
 {
     jz_bpf_loader_t *loader;
     jz_guard_mgr_t *guard_mgr;
+    jz_discovery_t *discovery;
+    jz_guard_auto_t *guard_auto;
     jz_config_t *config;
     jz_db_t *db;
     char *cert_pem = NULL;
@@ -2004,12 +2257,16 @@ int jz_api_init(jz_api_t *api, int port,
 
     loader = api->loader;
     guard_mgr = api->guard_mgr;
+    discovery = api->discovery;
+    guard_auto = api->guard_auto;
     config = api->config;
     db = api->db;
 
     memset(api, 0, sizeof(*api));
     api->loader = loader;
     api->guard_mgr = guard_mgr;
+    api->discovery = discovery;
+    api->guard_auto = guard_auto;
     api->config = config;
     api->db = db;
 

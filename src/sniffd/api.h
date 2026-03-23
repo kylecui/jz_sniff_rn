@@ -27,6 +27,14 @@ typedef struct jz_bpf_loader jz_bpf_loader_t;
 typedef struct jz_guard_mgr jz_guard_mgr_t;
 #endif
 
+#ifndef JZ_DISCOVERY_H
+typedef struct jz_discovery jz_discovery_t;
+#endif
+
+#ifndef JZ_GUARD_AUTO_H
+typedef struct jz_guard_auto jz_guard_auto_t;
+#endif
+
 typedef enum {
     JZ_API_ROLE_VIEWER = 0,
     JZ_API_ROLE_OPERATOR = 1,
@@ -49,6 +57,8 @@ typedef struct jz_api {
 
     jz_bpf_loader_t *loader;
     jz_guard_mgr_t *guard_mgr;
+    jz_discovery_t *discovery;
+    jz_guard_auto_t *guard_auto;
     jz_config_t *config;
     jz_db_t *db;
 } jz_api_t;

@@ -22,6 +22,8 @@
 #define JZ_CONFIG_MAX_POLICIES             512
 #define JZ_CONFIG_MAX_THREAT_PATTERNS      512
 #define JZ_CONFIG_MAX_AUTH_TOKENS          16
+#define JZ_CONFIG_MAX_INTERFACES           8
+#define JZ_CONFIG_MAX_FROZEN_IPS           256
 
 #define JZ_CONFIG_MAX_ERRORS               64
 
@@ -46,11 +48,20 @@ typedef struct jz_config_errors {
     int count;
 } jz_config_errors_t;
 
+typedef struct jz_config_interface {
+    char name[JZ_CONFIG_STR_SHORT];          /* e.g. "eth0", "ens33" */
+    char role[JZ_CONFIG_STR_SHORT];          /* "monitor", "manage", "mirror" */
+    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.0.1.0/24" */
+} jz_config_interface_t;
+
 typedef struct jz_config_system {
     char device_id[JZ_CONFIG_STR_SHORT];
     char log_level[JZ_CONFIG_STR_SHORT];
     char data_dir[JZ_CONFIG_STR_LONG];
     char run_dir[JZ_CONFIG_STR_LONG];
+
+    jz_config_interface_t interfaces[JZ_CONFIG_MAX_INTERFACES];
+    int interface_count;
 } jz_config_system_t;
 
 typedef struct jz_config_module {
@@ -128,6 +139,11 @@ typedef struct jz_config_whitelist {
     bool match_mac;
 } jz_config_whitelist_t;
 
+typedef struct jz_config_frozen_ip {
+    char ip[JZ_CONFIG_STR_SHORT];
+    char reason[JZ_CONFIG_STR_MEDIUM];
+} jz_config_frozen_ip_t;
+
 typedef struct jz_config_guards {
     jz_config_guard_static_t static_entries[JZ_CONFIG_MAX_STATIC_GUARDS];
     int static_count;
@@ -136,6 +152,11 @@ typedef struct jz_config_guards {
 
     jz_config_whitelist_t whitelist[JZ_CONFIG_MAX_WHITELIST];
     int whitelist_count;
+
+    jz_config_frozen_ip_t frozen_ips[JZ_CONFIG_MAX_FROZEN_IPS];
+    int frozen_ip_count;
+
+    int max_ratio;   /* max % of subnet IPs to use as dynamic guards (0-100) */
 } jz_config_guards_t;
 
 typedef struct jz_config_mac_pool {

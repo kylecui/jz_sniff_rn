@@ -12,6 +12,8 @@
 
 #include "api.h"
 #include "bpf_loader.h"
+#include "discovery.h"
+#include "guard_auto.h"
 #include "guard_mgr.h"
 #include "probe_gen.h"
 #include "ringbuf.h"
@@ -87,6 +89,8 @@ static struct {
     jz_db_t           db;
     jz_probe_gen_t    probe_gen;
     jz_guard_mgr_t    guard_mgr;
+    jz_discovery_t    discovery;
+    jz_guard_auto_t   guard_auto;
     jz_api_t          api;
     int               ifindex;
 } g_ctx;
@@ -268,15 +272,28 @@ static int ensure_run_dir(const char *path)
 /* Discover the rSwitch-managed interface index.
  * Reads the XDP link info from the first BPF module's ifindex,
  * or falls back to if_nametoindex("eth0"). */
-static int discover_ifindex(void)
+static int discover_ifindex(const jz_config_t *cfg)
 {
     unsigned int idx;
+
+    for (int i = 0; i < cfg->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        if (strcmp(cfg->system.interfaces[i].role, "monitor") == 0) {
+            idx = if_nametoindex(cfg->system.interfaces[i].name);
+            if (idx > 0) {
+                jz_log_info("Using configured monitor interface %s (ifindex %u)",
+                            cfg->system.interfaces[i].name, idx);
+                return (int)idx;
+            }
+            jz_log_warn("Configured interface %s not found",
+                        cfg->system.interfaces[i].name);
+        }
+    }
 
     static const char *candidates[] = { "eth0", "ens33", "enp0s3", NULL };
     for (int i = 0; candidates[i]; i++) {
         idx = if_nametoindex(candidates[i]);
         if (idx > 0) {
-            jz_log_info("Discovered interface %s (ifindex %u)",
+            jz_log_info("Auto-discovered interface %s (ifindex %u)",
                         candidates[i], idx);
             return (int)idx;
         }
@@ -416,13 +433,19 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
     if (data_len < 8)
         return 0;
 
-    /* First 4 bytes of jz_event_hdr is the event type (__u32) */
     uint32_t event_type;
     memcpy(&event_type, data, sizeof(event_type));
 
     jz_log_debug("Event received: type=%u len=%u", event_type, data_len);
 
-    /* TODO: Forward to collectord via IPC when collectord is ready */
+    if (g_ctx.discovery.initialized && data_len >= 16) {
+        const uint8_t *ev = (const uint8_t *)data;
+        uint8_t bg_proto = ev[8];
+        uint32_t plen;
+        memcpy(&plen, ev + 12, 4);
+        if (plen > 0 && data_len >= 16 + plen)
+            jz_discovery_feed_event(&g_ctx.discovery, bg_proto, ev + 16, plen);
+    }
 
     return 0;
 }
@@ -484,6 +507,12 @@ static int do_reload(void)
         jz_guard_mgr_update_config(&g_ctx.guard_mgr, &g_ctx.config);
         jz_guard_mgr_load_config(&g_ctx.guard_mgr, &g_ctx.config);
     }
+
+    if (g_ctx.discovery.initialized)
+        jz_discovery_update_config(&g_ctx.discovery, &g_ctx.config);
+
+    if (g_ctx.guard_auto.initialized)
+        jz_guard_auto_update_config(&g_ctx.guard_auto, &g_ctx.config);
 
     jz_log_info("Configuration reloaded successfully");
     return 0;
@@ -748,7 +777,7 @@ int main(int argc, char *argv[])
     }
 
     /* Initialize ARP probe generator */
-    g_ctx.ifindex = discover_ifindex();
+    g_ctx.ifindex = discover_ifindex(&g_ctx.config);
     if (g_ctx.ifindex > 0) {
         if (jz_probe_gen_init(&g_ctx.probe_gen, &g_ctx.config,
                               g_ctx.ifindex) < 0) {
@@ -756,6 +785,17 @@ int main(int argc, char *argv[])
         }
     } else {
         jz_log_warn("No interface for probe generator — sniffer detection disabled");
+    }
+
+    /* Initialize passive device discovery + ARP scanner */
+    if (jz_discovery_init(&g_ctx.discovery, &g_ctx.config) < 0) {
+        jz_log_warn("Discovery init failed — device fingerprinting disabled");
+    }
+
+    /* Initialize guard auto-deployment */
+    if (jz_guard_auto_init(&g_ctx.guard_auto, &g_ctx.guard_mgr,
+                           &g_ctx.config) < 0) {
+        jz_log_warn("Guard auto init failed — auto-deployment disabled");
     }
 
     /* Initialize IPC server */
@@ -771,6 +811,8 @@ int main(int argc, char *argv[])
     if (g_ctx.api_port > 0) {
         g_ctx.api.loader = &g_ctx.loader;
         g_ctx.api.guard_mgr = &g_ctx.guard_mgr;
+        g_ctx.api.discovery = &g_ctx.discovery;
+        g_ctx.api.guard_auto = &g_ctx.guard_auto;
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
         /* Set DB path from config so API can query logs readonly */
@@ -845,6 +887,12 @@ int main(int argc, char *argv[])
         if (g_ctx.guard_mgr.initialized)
             jz_guard_mgr_tick(&g_ctx.guard_mgr);
 
+        if (g_ctx.discovery.initialized)
+            jz_discovery_tick(&g_ctx.discovery);
+
+        if (g_ctx.guard_auto.initialized)
+            jz_guard_auto_tick(&g_ctx.guard_auto);
+
         if (g_ctx.api.enabled)
             jz_api_poll(&g_ctx.api, 0);
 
@@ -862,6 +910,8 @@ int main(int argc, char *argv[])
 
 cleanup:
     jz_api_destroy(&g_ctx.api);
+    jz_guard_auto_destroy(&g_ctx.guard_auto);
+    jz_discovery_destroy(&g_ctx.discovery);
     jz_probe_gen_destroy(&g_ctx.probe_gen);
     jz_guard_mgr_destroy(&g_ctx.guard_mgr);
     jz_ringbuf_destroy(&g_ctx.ringbuf);

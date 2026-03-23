@@ -7,6 +7,13 @@ system:
   log_level: "info"                  # debug, info, warn, error
   data_dir: "/var/lib/jz"
   run_dir: "/var/run/jz"
+  interfaces:
+    - name: "ens33"
+      role: "monitor"                # monitor, manage, mirror
+      subnet: "10.0.1.0/24"
+  #  - name: "ens34"
+  #    role: "manage"
+  #    subnet: "192.168.1.0/24"
 
 modules:
   guard_classifier:
@@ -63,11 +70,16 @@ guards:
     auto_discover: false
     max_entries: 16384
     ttl_hours: 24                    # Auto-expire after 24h
+    max_ratio: 30                    # Max % of subnet IPs as dynamic guards
 
   whitelist: []
   #  - ip: "10.0.1.1"
   #    mac: "00:11:22:33:44:55"
   #    match_mac: true
+
+  frozen_ips: []
+  #  - ip: "10.0.1.1"
+  #    reason: "gateway"
 
 fake_mac_pool:
   prefix: "aa:bb:cc"                # OUI prefix for fake MACs

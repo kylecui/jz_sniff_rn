@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # --------------------------------------------------------------------------
-# test_api.sh — REST API test suite for jz_sniff_rn (31 endpoints)
+# test_api.sh — REST API test suite for jz_sniff_rn (37 endpoints)
 #
 # Usage:
 #   ./test_api.sh                          # default: https://localhost:8443
@@ -304,7 +304,54 @@ done
 assert_status     "POST /modules/nonexistent/reload → 404"     404 \
     -X POST -d "" "$API/modules/nonexistent/reload"
 
-section "11. Error Handling"
+section "11. Discovery & Guard Automation (Phase 1)"
+
+assert_status     "GET /discovery/devices returns 200"           200  "$API/discovery/devices"
+assert_json_type  "GET /discovery/devices .devices is array"     ".devices" "array" "$API/discovery/devices"
+assert_json       "GET /discovery/devices has .total"            '.total | type' "number" "$API/discovery/devices"
+
+assert_status     "GET /discovery/devices/:mac (unknown → 404)"  404  "$API/discovery/devices/aa:bb:cc:dd:ee:ff"
+assert_json       "GET /discovery/devices/:mac error msg"        '.error' "device not found" "$API/discovery/devices/aa:bb:cc:dd:ee:ff"
+
+assert_status     "GET /guards/frozen returns 200"               200  "$API/guards/frozen"
+assert_json_type  "GET /guards/frozen .frozen_ips is array"      ".frozen_ips" "array" "$API/guards/frozen"
+assert_json       "GET /guards/frozen has .count"                '.count | type' "number" "$API/guards/frozen"
+
+TEST_FROZEN_IP="10.0.1.222"
+
+assert_status     "POST /guards/frozen (add test frozen)"        201 \
+    -X POST -H "Content-Type: application/json" \
+    -d "{\"ip\":\"$TEST_FROZEN_IP\",\"reason\":\"test-frozen\"}" \
+    "$API/guards/frozen"
+
+assert_json       "GET /guards/frozen contains test entry"       \
+    "[.frozen_ips[] | select(.ip==\"$TEST_FROZEN_IP\")] | length > 0" "true" \
+    "$API/guards/frozen"
+
+assert_status     "DELETE /guards/frozen/{ip} (remove test)"     200 \
+    -X DELETE "$API/guards/frozen/$TEST_FROZEN_IP"
+
+assert_json       "GET /guards/frozen test entry removed"        \
+    "[.frozen_ips[] | select(.ip==\"$TEST_FROZEN_IP\")] | length" "0" \
+    "$API/guards/frozen"
+
+assert_status     "DELETE /guards/frozen (nonexistent → 404)"    404 \
+    -X DELETE "$API/guards/frozen/10.254.254.254"
+
+assert_status     "POST /guards/frozen (no body → 400)"          400 \
+    -X POST -H "Content-Type: application/json" \
+    -d "" "$API/guards/frozen"
+
+assert_status     "POST /guards/frozen (bad json → 400)"         400 \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"bad":"json"}' "$API/guards/frozen"
+
+assert_status     "GET /guards/auto/status returns 200"          200  "$API/guards/auto/status"
+assert_json_type  "GET /guards/auto/status .max_ratio is num"    ".max_ratio" "number" "$API/guards/auto/status"
+assert_json_type  "GET /guards/auto/status .subnet_total is num" ".subnet_total" "number" "$API/guards/auto/status"
+assert_json_type  "GET /guards/auto/status .max_allowed is num"  ".max_allowed" "number" "$API/guards/auto/status"
+
+section "12. Error Handling"
 
 assert_status     "GET /nonexistent → 404"                      404  "$API/nonexistent"
 assert_status     "DELETE /health → 404 or 405"                 404  -X DELETE "$API/health"

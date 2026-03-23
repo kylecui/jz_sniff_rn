@@ -212,6 +212,155 @@ static int parse_module_common_map(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
+                            jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    if (start->type != YAML_SEQUENCE_START_EVENT) {
+        add_error(errors, event_line(start), "system.interfaces", "expected sequence");
+        return skip_node(parser, start, errors);
+    }
+    yaml_event_delete(start);
+    cfg->system.interface_count = 0;
+    for (;;) {
+        yaml_event_t item_ev;
+        if (next_event(parser, &item_ev, errors, "system.interfaces") != 0)
+            return -1;
+        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+            yaml_event_delete(&item_ev);
+            break;
+        }
+        if (item_ev.type != YAML_MAPPING_START_EVENT) {
+            add_error(errors, event_line(&item_ev), "system.interfaces", "entries must be mappings");
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        if (cfg->system.interface_count >= JZ_CONFIG_MAX_INTERFACES) {
+            add_error(errors, event_line(&item_ev), "system.interfaces", "too many entries (max %d)",
+                      JZ_CONFIG_MAX_INTERFACES);
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        yaml_event_delete(&item_ev);
+        for (;;) {
+            yaml_event_t k2, v2;
+            const char *k;
+            jz_config_interface_t *iface = &cfg->system.interfaces[cfg->system.interface_count];
+            if (next_event(parser, &k2, errors, "system.interfaces") != 0)
+                return -1;
+            if (k2.type == YAML_MAPPING_END_EVENT) {
+                yaml_event_delete(&k2);
+                cfg->system.interface_count++;
+                break;
+            }
+            if (k2.type != YAML_SCALAR_EVENT) {
+                add_error(errors, event_line(&k2), "system.interfaces", "expected scalar key");
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            k = (const char *)k2.data.scalar.value;
+            if (next_event(parser, &v2, errors, "system.interfaces") != 0) {
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            if (!strcmp(k, "name")) {
+                copy_scalar(iface->name, sizeof(iface->name), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "role")) {
+                copy_scalar(iface->role, sizeof(iface->role), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "subnet")) {
+                copy_scalar(iface->subnet, sizeof(iface->subnet), &v2);
+                yaml_event_delete(&v2);
+            } else {
+                add_error(errors, event_line(&k2), "system.interfaces", "unknown key '%s'", k);
+                if (skip_node(parser, &v2, errors) != 0) {
+                    yaml_event_delete(&k2);
+                    return -1;
+                }
+            }
+            yaml_event_delete(&k2);
+        }
+    }
+    return 0;
+}
+
+static int parse_frozen_ips(yaml_parser_t *parser, yaml_event_t *start,
+                            jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    if (start->type != YAML_SEQUENCE_START_EVENT) {
+        add_error(errors, event_line(start), "guards.frozen_ips", "expected sequence");
+        return skip_node(parser, start, errors);
+    }
+    yaml_event_delete(start);
+    cfg->guards.frozen_ip_count = 0;
+    for (;;) {
+        yaml_event_t item_ev;
+        if (next_event(parser, &item_ev, errors, "guards.frozen_ips") != 0)
+            return -1;
+        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+            yaml_event_delete(&item_ev);
+            break;
+        }
+        if (item_ev.type != YAML_MAPPING_START_EVENT) {
+            add_error(errors, event_line(&item_ev), "guards.frozen_ips", "entries must be mappings");
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        if (cfg->guards.frozen_ip_count >= JZ_CONFIG_MAX_FROZEN_IPS) {
+            add_error(errors, event_line(&item_ev), "guards.frozen_ips", "too many entries (max %d)",
+                      JZ_CONFIG_MAX_FROZEN_IPS);
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        yaml_event_delete(&item_ev);
+        for (;;) {
+            yaml_event_t k2, v2;
+            const char *k;
+            jz_config_frozen_ip_t *f = &cfg->guards.frozen_ips[cfg->guards.frozen_ip_count];
+            if (next_event(parser, &k2, errors, "guards.frozen_ips") != 0)
+                return -1;
+            if (k2.type == YAML_MAPPING_END_EVENT) {
+                yaml_event_delete(&k2);
+                cfg->guards.frozen_ip_count++;
+                break;
+            }
+            if (k2.type != YAML_SCALAR_EVENT) {
+                add_error(errors, event_line(&k2), "guards.frozen_ips", "expected scalar key");
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            k = (const char *)k2.data.scalar.value;
+            if (next_event(parser, &v2, errors, "guards.frozen_ips") != 0) {
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            if (!strcmp(k, "ip")) {
+                copy_scalar(f->ip, sizeof(f->ip), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "reason")) {
+                copy_scalar(f->reason, sizeof(f->reason), &v2);
+                yaml_event_delete(&v2);
+            } else {
+                add_error(errors, event_line(&k2), "guards.frozen_ips", "unknown key '%s'", k);
+                if (skip_node(parser, &v2, errors) != 0) {
+                    yaml_event_delete(&k2);
+                    return -1;
+                }
+            }
+            yaml_event_delete(&k2);
+        }
+    }
+    return 0;
+}
+
 static int parse_system(yaml_parser_t *parser, yaml_event_t *start,
                         jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -270,6 +419,11 @@ static int parse_system(yaml_parser_t *parser, yaml_event_t *start,
             else
                 copy_scalar(cfg->system.run_dir, sizeof(cfg->system.run_dir), &val_ev);
             yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "interfaces")) {
+            if (parse_interfaces(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
         } else {
             add_error(errors, event_line(&key_ev), "system", "unknown key '%s'", key);
             if (skip_node(parser, &val_ev, errors) != 0) {
@@ -939,6 +1093,10 @@ static int parse_guards(yaml_parser_t *parser, yaml_event_t *start,
                         if (scalar_to_int(&v2, &cfg->guards.dynamic.ttl_hours) != 0)
                             add_error(errors, event_line(&v2), "guards.dynamic.ttl_hours", "must be int");
                         yaml_event_delete(&v2);
+                    } else if (!strcmp(k, "max_ratio")) {
+                        if (scalar_to_int(&v2, &cfg->guards.max_ratio) != 0)
+                            add_error(errors, event_line(&v2), "guards.dynamic.max_ratio", "must be int");
+                        yaml_event_delete(&v2);
                     } else {
                         add_error(errors, event_line(&k2), "guards.dynamic", "unknown key '%s'", k);
                         if (skip_node(parser, &v2, errors) != 0) {
@@ -1038,6 +1196,16 @@ static int parse_guards(yaml_parser_t *parser, yaml_event_t *start,
                     yaml_event_delete(&k2);
                 }
             }
+        } else if (!strcmp(key, "frozen_ips")) {
+            if (parse_frozen_ips(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "max_ratio")) {
+            if (val_ev.type != YAML_SCALAR_EVENT ||
+                scalar_to_int(&val_ev, &cfg->guards.max_ratio) != 0)
+                add_error(errors, event_line(&val_ev), "guards.max_ratio", "must be int");
+            yaml_event_delete(&val_ev);
         } else {
             add_error(errors, event_line(&key_ev), "guards", "unknown key '%s'", key);
             if (skip_node(parser, &val_ev, errors) != 0) {
@@ -1748,6 +1916,33 @@ static bool is_valid_mac(const char *s)
     return true;
 }
 
+static bool is_valid_cidr(const char *s)
+{
+    char buf[64];
+    char *slash;
+    struct in_addr addr;
+    long prefix;
+    char *end;
+
+    if (!s || s[0] == '\0')
+        return false;
+
+    snprintf(buf, sizeof(buf), "%s", s);
+    slash = strchr(buf, '/');
+    if (!slash)
+        return false;
+
+    *slash = '\0';
+    if (inet_pton(AF_INET, buf, &addr) != 1)
+        return false;
+
+    prefix = strtol(slash + 1, &end, 10);
+    if (!end || *end != '\0' || prefix < 0 || prefix > 32)
+        return false;
+
+    return true;
+}
+
 static bool is_valid_stage(int stage)
 {
     return stage == JZ_STAGE_GUARD_CLASSIFIER ||
@@ -1779,6 +1974,7 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
     static const char *const threat_actions[] = {"log_only", "log_drop", "log_redirect", NULL};
     static const char *const threat_levels[] = {"low", "medium", "high", "critical", NULL};
     static const char *const protos[] = {"tcp", "udp", "icmp", "any", NULL};
+    static const char *const iface_roles[] = {"monitor", "manage", "mirror", NULL};
     int i;
     int start_count = errors ? errors->count : 0;
 
@@ -1798,6 +1994,16 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
         add_error(errors, 0, "system.run_dir", "must not be empty");
     if (!in_set(cfg->system.log_level, log_levels))
         add_error(errors, 0, "system.log_level", "must be debug/info/warn/error");
+
+    for (i = 0; i < cfg->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        const jz_config_interface_t *iface = &cfg->system.interfaces[i];
+        if (iface->name[0] == '\0')
+            add_error(errors, 0, "system.interfaces[].name", "must not be empty");
+        if (!in_set(iface->role, iface_roles))
+            add_error(errors, 0, "system.interfaces[].role", "must be monitor/manage/mirror");
+        if (iface->subnet[0] != '\0' && !is_valid_cidr(iface->subnet))
+            add_error(errors, 0, "system.interfaces[].subnet", "invalid CIDR '%s'", iface->subnet);
+    }
 
     if (!is_valid_stage(cfg->modules.guard_classifier.stage))
         add_error(errors, 0, "modules.guard_classifier.stage", "invalid stage");
@@ -1823,6 +2029,10 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
         add_error(errors, 0, "guards.static_count", "must be non-negative");
     if (cfg->guards.whitelist_count < 0)
         add_error(errors, 0, "guards.whitelist_count", "must be non-negative");
+    if (cfg->guards.frozen_ip_count < 0)
+        add_error(errors, 0, "guards.frozen_ip_count", "must be non-negative");
+    if (cfg->guards.max_ratio < 0 || cfg->guards.max_ratio > 100)
+        add_error(errors, 0, "guards.max_ratio", "must be 0-100");
     if (cfg->policy_count < 0)
         add_error(errors, 0, "policy_count", "must be non-negative");
     if (cfg->threats.pattern_count < 0)
@@ -1844,6 +2054,11 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
             add_error(errors, 0, "guards.whitelist[].ip", "invalid IPv4 '%s'", cfg->guards.whitelist[i].ip);
         if (!is_valid_mac(cfg->guards.whitelist[i].mac))
             add_error(errors, 0, "guards.whitelist[].mac", "invalid MAC '%s'", cfg->guards.whitelist[i].mac);
+    }
+
+    for (i = 0; i < cfg->guards.frozen_ip_count && i < JZ_CONFIG_MAX_FROZEN_IPS; i++) {
+        if (!is_valid_ipv4(cfg->guards.frozen_ips[i].ip))
+            add_error(errors, 0, "guards.frozen_ips[].ip", "invalid IPv4 '%s'", cfg->guards.frozen_ips[i].ip);
     }
 
     for (i = 0; i < cfg->policy_count && i < JZ_CONFIG_MAX_POLICIES; i++) {
@@ -1954,6 +2169,7 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->guards.dynamic.auto_discover = false;
     cfg->guards.dynamic.max_entries = 16384;
     cfg->guards.dynamic.ttl_hours = 24;
+    cfg->guards.max_ratio = 30;
 
     snprintf(cfg->fake_mac_pool.prefix, sizeof(cfg->fake_mac_pool.prefix), "aa:bb:cc");
     cfg->fake_mac_pool.count = 64;
@@ -2100,6 +2316,27 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    "  log_level: %s\n"
                    "  data_dir: %s\n"
                    "  run_dir: %s\n"
+                   "  interfaces:\n",
+                   cfg->version,
+                   cfg->system.device_id,
+                   cfg->system.log_level,
+                   cfg->system.data_dir,
+                   cfg->system.run_dir) != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->system.interface_count; i++) {
+        if (sb_appendf(&sb, "    - { name: %s, role: %s, subnet: %s }\n",
+                       cfg->system.interfaces[i].name,
+                       cfg->system.interfaces[i].role,
+                       cfg->system.interfaces[i].subnet) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb,
                    "modules:\n"
                    "  guard_classifier: { enabled: %s, stage: %d }\n"
                    "  arp_honeypot: { enabled: %s, stage: %d, rate_limit_pps: %d, log_all: %s }\n"
@@ -2115,11 +2352,6 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    "  forensics: { enabled: %s, stage: %d, max_payload_bytes: %d, sample_rate: %d }\n"
                    "guards:\n"
                    "  static:\n",
-                   cfg->version,
-                   cfg->system.device_id,
-                   cfg->system.log_level,
-                   cfg->system.data_dir,
-                   cfg->system.run_dir,
                    cfg->modules.guard_classifier.enabled ? "true" : "false",
                    cfg->modules.guard_classifier.stage,
                    cfg->modules.arp_honeypot.common.enabled ? "true" : "false",
@@ -2169,11 +2401,12 @@ char *jz_config_serialize(const jz_config_t *cfg)
     }
 
     if (sb_appendf(&sb,
-                   "  dynamic: { auto_discover: %s, max_entries: %d, ttl_hours: %d }\n"
+                   "  dynamic: { auto_discover: %s, max_entries: %d, ttl_hours: %d, max_ratio: %d }\n"
                    "  whitelist:\n",
                    cfg->guards.dynamic.auto_discover ? "true" : "false",
                    cfg->guards.dynamic.max_entries,
-                   cfg->guards.dynamic.ttl_hours) != 0) {
+                   cfg->guards.dynamic.ttl_hours,
+                   cfg->guards.max_ratio) != 0) {
         free(sb.data);
         return NULL;
     }
@@ -2183,6 +2416,20 @@ char *jz_config_serialize(const jz_config_t *cfg)
                        cfg->guards.whitelist[i].ip,
                        cfg->guards.whitelist[i].mac,
                        cfg->guards.whitelist[i].match_mac ? "true" : "false") != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb, "  frozen_ips:\n") != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->guards.frozen_ip_count; i++) {
+        if (sb_appendf(&sb, "    - { ip: %s, reason: %s }\n",
+                       cfg->guards.frozen_ips[i].ip,
+                       cfg->guards.frozen_ips[i].reason) != 0) {
             free(sb.data);
             return NULL;
         }
