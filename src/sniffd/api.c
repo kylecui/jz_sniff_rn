@@ -2185,7 +2185,7 @@ static void handle_guards_frozen_del(struct mg_connection *c, struct mg_http_mes
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
-static void handle_guards_auto_status(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+static void handle_guards_auto_config_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     char *buf;
     int len;
@@ -2215,6 +2215,44 @@ static void handle_guards_auto_status(struct mg_connection *c, struct mg_http_me
                   "Content-Type: application/json\r\n",
                   "%.*s\n", len, buf);
     free(buf);
+}
+
+static void handle_guards_auto_config_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *item;
+
+    if (!api || !api->guard_auto || !api->config) {
+        api_error_reply(c, 500, "guard auto unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    item = cJSON_GetObjectItem(body, "max_ratio");
+    if (item && cJSON_IsNumber(item)) {
+        int ratio = item->valueint;
+        if (ratio < 0) ratio = 0;
+        if (ratio > 100) ratio = 100;
+        api->config->guards.max_ratio = ratio;
+    }
+
+    item = cJSON_GetObjectItem(body, "enabled");
+    if (item && cJSON_IsBool(item))
+        api->config->guards.dynamic.auto_discover = cJSON_IsTrue(item);
+
+    item = cJSON_GetObjectItem(body, "scan_interval");
+    if (item && cJSON_IsNumber(item) && item->valueint > 0)
+        api->config->guards.dynamic.ttl_hours = item->valueint;
+
+    jz_guard_auto_update_config(api->guard_auto, api->config);
+
+    handle_guards_auto_config_get(c, hm, api);
+    cJSON_Delete(body);
 }
 
 static void handle_config_staged_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
@@ -2468,8 +2506,8 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_guards_frozen_list(c, hm, api);
             return;
         }
-        if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/status"), NULL)) {
-            handle_guards_auto_status(c, hm, api);
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/config"), NULL)) {
+            handle_guards_auto_config_get(c, hm, api);
             return;
         }
     }
@@ -2545,6 +2583,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
     }
 
     if (mg_match(hm->method, mg_str("PUT"), NULL)) {
+        if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/config"), NULL)) {
+            handle_guards_auto_config_put(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {
             handle_policies_update(c, hm, api, caps[0]);
             return;

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "discovery.h"
+#include "guard_auto.h"
 #include "log.h"
 
 #include <errno.h>
@@ -334,6 +335,28 @@ static bool extract_src_ip(uint8_t proto, const uint8_t *payload, uint32_t paylo
     return *src_ip != 0;
 }
 
+static bool extract_arp_reply_sender(const uint8_t *payload, uint32_t payload_len,
+                                     uint32_t *sender_ip, uint8_t sender_mac[6])
+{
+    uint16_t ethertype;
+    uint16_t arp_op;
+
+    if (!payload || payload_len < 42 || !sender_ip || !sender_mac)
+        return false;
+
+    ethertype = ((uint16_t)payload[12] << 8) | payload[13];
+    if (ethertype != ETH_P_ARP)
+        return false;
+
+    arp_op = ((uint16_t)payload[20] << 8) | payload[21];
+    if (arp_op != ARPOP_REPLY)
+        return false;
+
+    memcpy(sender_mac, payload + 22, 6);
+    memcpy(sender_ip, payload + 28, sizeof(*sender_ip));
+    return true;
+}
+
 static int buf_append(char *buf, size_t buf_size, int *off, const char *fmt, ...)
 {
     va_list ap;
@@ -544,6 +567,18 @@ int jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
 
     if (fp_update_profile(&device->profile, proto, payload, payload_len) < 0)
         return 0;
+
+    if (proto == FP_PROTO_ARP && disc->guard_auto) {
+        uint32_t arp_sender_ip;
+        uint8_t arp_sender_mac[6];
+
+        if (extract_arp_reply_sender(payload, payload_len,
+                                     &arp_sender_ip, arp_sender_mac))
+            (void)jz_guard_auto_check_conflict(disc->guard_auto,
+                                               arp_sender_ip,
+                                               arp_sender_mac);
+    }
+
     return 0;
 }
 

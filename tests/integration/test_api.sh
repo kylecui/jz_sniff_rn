@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # --------------------------------------------------------------------------
-# test_api.sh — REST API test suite for jz_sniff_rn (37 endpoints)
+# test_api.sh — REST API test suite for jz_sniff_rn (42 endpoints)
 #
 # Usage:
 #   ./test_api.sh                          # default: https://localhost:8443
@@ -380,12 +380,51 @@ assert_status     "POST /guards/frozen (bad json → 400)"         400 \
     -X POST -H "Content-Type: application/json" \
     -d '{"bad":"json"}' "$API/guards/frozen"
 
-assert_status     "GET /guards/auto/status returns 200"          200  "$API/guards/auto/status"
-assert_json_type  "GET /guards/auto/status .max_ratio is num"    ".max_ratio" "number" "$API/guards/auto/status"
-assert_json_type  "GET /guards/auto/status .subnet_total is num" ".subnet_total" "number" "$API/guards/auto/status"
-assert_json_type  "GET /guards/auto/status .max_allowed is num"  ".max_allowed" "number" "$API/guards/auto/status"
+assert_status     "GET /guards/auto/config returns 200"          200  "$API/guards/auto/config"
+assert_json_type  "GET /guards/auto/config .max_ratio is num"    ".max_ratio" "number" "$API/guards/auto/config"
+assert_json_type  "GET /guards/auto/config .subnet_total is num" ".subnet_total" "number" "$API/guards/auto/config"
+assert_json_type  "GET /guards/auto/config .max_allowed is num"  ".max_allowed" "number" "$API/guards/auto/config"
 
-section "12. Error Handling"
+assert_status     "PUT /guards/auto/config (update ratio)"       200 \
+    -X PUT -H "Content-Type: application/json" \
+    -d '{"max_ratio":50}' \
+    "$API/guards/auto/config"
+
+assert_json       "PUT /guards/auto/config ratio applied"        ".max_ratio" "50" \
+    -X PUT -H "Content-Type: application/json" \
+    -d '{"max_ratio":50}' \
+    "$API/guards/auto/config"
+
+section "12. Staged Config (Phase 4)"
+
+assert_status     "POST /config/stage (stage a change)"          200 \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"network":{"interface":"ens33"}}' \
+    "$API/config/stage"
+
+assert_status     "GET /config/staged returns 200"               200  "$API/config/staged"
+assert_json_type  "GET /config/staged is object"                 "." "object" "$API/config/staged"
+
+assert_status     "POST /config/discard returns 200"             200 \
+    -X POST -d "" "$API/config/discard"
+
+assert_status     "POST /config/stage (re-stage for commit)"     200 \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"network":{"interface":"ens33"}}' \
+    "$API/config/stage"
+
+assert_status     "POST /config/commit returns 200"              200 \
+    -X POST -d "" "$API/config/commit"
+
+section "13. System Restart (Phase 5)"
+
+assert_status     "POST /system/restart/sniffd returns 200"      200 \
+    -X POST -d "" "$API/system/restart/sniffd"
+
+assert_status     "POST /system/restart/nonexistent → 404"       404 \
+    -X POST -d "" "$API/system/restart/nonexistent"
+
+section "14. Error Handling"
 
 assert_status     "GET /nonexistent → 404"                      404  "$API/nonexistent"
 assert_status     "DELETE /health → 404 or 405"                 404  -X DELETE "$API/health"

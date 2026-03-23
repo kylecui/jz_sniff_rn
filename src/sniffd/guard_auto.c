@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "guard_auto.h"
+#include "guard_mgr.h"
 
 #if __has_include("log.h")
 #include "log.h"
@@ -18,10 +19,6 @@
 #ifndef JZ_GUARD_DYNAMIC
 #define JZ_GUARD_DYNAMIC 2
 #endif
-
-int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
-                     uint8_t guard_type, uint16_t vlan_id,
-                     char *reply, size_t reply_size);
 
 static uint64_t get_monotonic_ns(void)
 {
@@ -54,6 +51,16 @@ static int max_allowed_dynamic(const jz_guard_auto_t *ga)
     if (value > INT_MAX)
         return INT_MAX;
     return (int)value;
+}
+
+static void mac_to_text(const uint8_t mac[6], char *buf, size_t buf_size)
+{
+    if (!mac || !buf || buf_size == 0)
+        return;
+
+    (void)snprintf(buf, buf_size,
+                   "%02x:%02x:%02x:%02x:%02x:%02x",
+                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 static int parse_monitor_subnet(jz_guard_auto_t *ga, const jz_config_t *cfg)
@@ -228,6 +235,55 @@ int jz_guard_auto_deploy(jz_guard_auto_t *ga, uint32_t ip)
         return -1;
 
     ga->current_dynamic++;
+    return 0;
+}
+
+int jz_guard_auto_check_conflict(jz_guard_auto_t *ga, uint32_t ip, const uint8_t mac[6])
+{
+    int i;
+    char reply[256];
+
+    if (!ga || !ga->initialized || !ga->guard_mgr || !mac)
+        return -1;
+
+    for (i = 0; i < JZ_GUARD_MGR_MAX_DYNAMIC; i++) {
+        const jz_guard_entry_user_t *entry;
+
+        entry = &ga->guard_mgr->dynamic_entries[i];
+        if (!entry->enabled)
+            continue;
+        if (entry->guard_type != JZ_GUARD_DYNAMIC)
+            continue;
+        if (entry->ip != ip)
+            continue;
+
+        if (memcmp(entry->mac, mac, 6) == 0)
+            return 0;
+
+        if (jz_guard_mgr_remove(ga->guard_mgr, ip, reply, sizeof(reply)) < 0)
+            return -1;
+        if (strncmp(reply, "guard_remove:ok", strlen("guard_remove:ok")) != 0)
+            return -1;
+
+        if (ga->current_dynamic > 0)
+            ga->current_dynamic--;
+
+        {
+            struct in_addr addr;
+            char ipbuf[INET_ADDRSTRLEN] = "0.0.0.0";
+            char real_mac[18] = "00:00:00:00:00:00";
+
+            addr.s_addr = ip;
+            if (!inet_ntop(AF_INET, &addr, ipbuf, sizeof(ipbuf)))
+                snprintf(ipbuf, sizeof(ipbuf), "0.0.0.0");
+            mac_to_text(mac, real_mac, sizeof(real_mac));
+            jz_log_info("guard_auto: conflict detected ip=%s real_mac=%s — removing dynamic guard",
+                        ipbuf, real_mac);
+        }
+
+        return 1;
+    }
+
     return 0;
 }
 

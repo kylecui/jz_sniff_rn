@@ -10,6 +10,8 @@
 #include "config.h"
 #include "fingerprint.h"
 
+typedef struct jz_guard_auto jz_guard_auto_t;
+
 #define JZ_DISCOVERY_MAX_DEVICES    4096
 #define JZ_DISCOVERY_ARP_INTERVAL   300   /* 300 seconds = 5 minutes */
 #define JZ_DISCOVERY_HASH_BUCKETS   256
@@ -34,6 +36,7 @@ typedef struct jz_discovery {
     uint32_t               scan_next_ip;       /* next IP to probe */
     uint64_t               last_arp_scan_ns;   /* monotonic timestamp */
     int                    arp_interval_sec;
+    jz_guard_auto_t       *guard_auto;
 
     bool                   initialized;
 } jz_discovery_t;

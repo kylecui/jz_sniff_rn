@@ -938,6 +938,9 @@ int main(int argc, char *argv[])
     if (jz_guard_auto_init(&g_ctx.guard_auto, &g_ctx.guard_mgr,
                            &g_ctx.config) < 0) {
         jz_log_warn("Guard auto init failed — auto-deployment disabled");
+        g_ctx.discovery.guard_auto = NULL;
+    } else {
+        g_ctx.discovery.guard_auto = &g_ctx.guard_auto;
     }
 
     /* Initialize policy engine */
