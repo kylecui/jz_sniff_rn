@@ -7,8 +7,7 @@
 Description=jz_sniff_rn Sniff Daemon
 Documentation=file:/usr/share/doc/jz_sniff_rn/design.md
 After=network-online.target rswitch.service
-Wants=network-online.target
-Requires=rswitch.service
+Wants=network-online.target rswitch.service
 
 [Service]
 Type=forking
@@ -36,10 +35,6 @@ PrivateTmp=yes
 RuntimeDirectory=jz
 RuntimeDirectoryPreserve=yes
 
-# Watchdog: sniffd must notify within this interval or systemd restarts it
-WatchdogSec=60
-
-# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=sniffd
