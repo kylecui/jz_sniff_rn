@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <linux/if_link.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 
@@ -380,10 +381,80 @@ int jz_bpf_loader_find(const jz_bpf_loader_t *loader, const char *name)
     return -1;
 }
 
+int jz_bpf_loader_attach_xdp(jz_bpf_loader_t *loader, const int *ifindexes,
+                             const char names[][32], int count)
+{
+    if (!loader || !loader->initialized || !ifindexes || !names)
+        return -1;
+    if (count < 0 || count > JZ_MAX_BUSINESS_IFACES)
+        return -1;
+    if (count == 0) {
+        loader->xdp_iface_count = 0;
+        return 0;
+    }
+
+    int prog_fd = loader->modules[0].prog_fd;
+    if (prog_fd < 0) {
+        jz_log_error("Cannot attach XDP: guard_classifier not loaded");
+        return -1;
+    }
+
+    loader->xdp_iface_count = 0;
+    for (int i = 0; i < count; i++) {
+        if (ifindexes[i] <= 0)
+            continue;
+
+        if (bpf_xdp_attach(ifindexes[i], prog_fd, XDP_FLAGS_SKB_MODE, NULL) < 0) {
+            jz_log_error("Failed to attach XDP to %s (ifindex %d): %s",
+                         names[i], ifindexes[i], strerror(errno));
+            jz_bpf_loader_detach_xdp(loader);
+            return -1;
+        }
+
+        int pos = loader->xdp_iface_count;
+        loader->xdp_ifindexes[pos] = ifindexes[i];
+        snprintf(loader->xdp_iface_names[pos],
+                 sizeof(loader->xdp_iface_names[pos]), "%s", names[i]);
+        loader->xdp_iface_count++;
+
+        jz_log_info("Attached XDP entry program to %s (ifindex %d)",
+                    loader->xdp_iface_names[pos], ifindexes[i]);
+    }
+
+    return 0;
+}
+
+void jz_bpf_loader_detach_xdp(jz_bpf_loader_t *loader)
+{
+    if (!loader)
+        return;
+
+    for (int i = 0; i < loader->xdp_iface_count; i++) {
+        if (loader->xdp_ifindexes[i] <= 0)
+            continue;
+
+        if (bpf_xdp_detach(loader->xdp_ifindexes[i], XDP_FLAGS_SKB_MODE, NULL) < 0) {
+            jz_log_warn("Failed to detach XDP from %s (ifindex %d): %s",
+                        loader->xdp_iface_names[i], loader->xdp_ifindexes[i],
+                        strerror(errno));
+        } else {
+            jz_log_info("Detached XDP from %s (ifindex %d)",
+                        loader->xdp_iface_names[i], loader->xdp_ifindexes[i]);
+        }
+
+        loader->xdp_ifindexes[i] = 0;
+        loader->xdp_iface_names[i][0] = '\0';
+    }
+
+    loader->xdp_iface_count = 0;
+}
+
 void jz_bpf_loader_destroy(jz_bpf_loader_t *loader)
 {
     if (!loader)
         return;
+
+    jz_bpf_loader_detach_xdp(loader);
 
     for (int i = 0; i < JZ_MOD_COUNT; i++) {
         if (loader->modules[i].loaded)

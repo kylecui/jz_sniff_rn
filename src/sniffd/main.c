@@ -42,8 +42,12 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <linux/capability.h>
+#include <linux/types.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <bpf/bpf.h>
+
+#include "../../bpf/include/jz_maps.h"
 
 /* ── Version ──────────────────────────────────────────────────── */
 
@@ -274,6 +278,96 @@ static int ensure_run_dir(const char *path)
         return -1;
     }
     return 0;
+}
+
+static int discover_business_ifaces(const jz_config_t *cfg, int *ifindexes,
+                                    char names[][32], int max_count)
+{
+    int count = 0;
+
+    for (int i = 0; i < cfg->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        const jz_config_interface_t *iface = &cfg->system.interfaces[i];
+        if (strcmp(iface->role, "manage") == 0)
+            continue;
+
+        unsigned int idx = if_nametoindex(iface->name);
+        if (idx == 0) {
+            jz_log_warn("Configured interface %s not found", iface->name);
+            continue;
+        }
+
+        if (count >= max_count)
+            break;
+
+        ifindexes[count] = (int)idx;
+        (void) snprintf(names[count], 32, "%s", iface->name);
+        count++;
+    }
+
+    if (cfg->system.interface_count == 0) {
+        static const char *candidates[] = { "eth0", "ens33", "enp0s3", NULL };
+        for (int i = 0; candidates[i] != NULL && count < max_count; i++) {
+            unsigned int idx = if_nametoindex(candidates[i]);
+            if (idx == 0)
+                continue;
+
+            ifindexes[count] = (int)idx;
+            (void) snprintf(names[count], 32, "%s", candidates[i]);
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static void resolve_redirect_config(const jz_config_t *cfg)
+{
+    __u32 honeypot_ifindex = 0;
+    __u32 mirror_ifindex = 0;
+
+    for (int i = 0; i < cfg->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        const jz_config_interface_t *iface = &cfg->system.interfaces[i];
+
+        if (strcmp(iface->role, "honeypot") == 0) {
+            unsigned int idx = if_nametoindex(iface->name);
+            if (idx > 0)
+                honeypot_ifindex = idx;
+            else
+                jz_log_warn("Configured honeypot interface %s not found", iface->name);
+        }
+
+        if (strcmp(iface->role, "mirror") == 0) {
+            unsigned int idx = if_nametoindex(iface->name);
+            if (idx > 0)
+                mirror_ifindex = idx;
+            else
+                jz_log_warn("Configured mirror interface %s not found", iface->name);
+        }
+    }
+
+    int map_fd = bpf_obj_get("/sys/fs/bpf/jz/jz_redirect_config");
+    if (map_fd < 0) {
+        jz_log_warn("Cannot open jz_redirect_config map: %s", strerror(errno));
+        return;
+    }
+
+    __u32 key = 0;
+    struct jz_redirect_config val = {
+        .honeypot_ifindex = honeypot_ifindex,
+        .mirror_ifindex = mirror_ifindex,
+        .enabled = 1,
+        ._pad = {0, 0, 0}
+    };
+
+    if (bpf_map_update_elem(map_fd, &key, &val, BPF_ANY) < 0) {
+        jz_log_warn("Failed to update jz_redirect_config map: %s", strerror(errno));
+        close(map_fd);
+        return;
+    }
+
+    close(map_fd);
+    jz_log_info("Resolved redirect config: honeypot_ifindex=%u mirror_ifindex=%u enabled=1",
+                honeypot_ifindex, mirror_ifindex);
 }
 
 /* Discover the rSwitch-managed interface index.
@@ -789,6 +883,26 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (strcmp(g_ctx.config.system.mode, "inline") == 0)
+        jz_log_warn("inline mode not yet implemented, running as bypass");
+
+    int xdp_ifindexes[JZ_MAX_BUSINESS_IFACES] = {0};
+    char xdp_names[JZ_MAX_BUSINESS_IFACES][32] = {{0}};
+    int xdp_iface_count = discover_business_ifaces(&g_ctx.config,
+                                                   xdp_ifindexes,
+                                                   xdp_names,
+                                                   JZ_MAX_BUSINESS_IFACES);
+    if (xdp_iface_count <= 0) {
+        jz_log_warn("No business interfaces discovered for XDP attach");
+    } else if (jz_bpf_loader_attach_xdp(&g_ctx.loader, xdp_ifindexes,
+                                        xdp_names, xdp_iface_count) < 0) {
+        jz_log_fatal("Failed to attach XDP on business interfaces");
+        exit_code = 1;
+        goto cleanup;
+    }
+
+    resolve_redirect_config(&g_ctx.config);
+
     /* Initialize ring buffer consumer */
     if (jz_ringbuf_init(&g_ctx.ringbuf,
                          EVENT_MAP_PIN, SAMPLE_MAP_PIN,
@@ -996,6 +1110,7 @@ cleanup:
     jz_guard_mgr_destroy(&g_ctx.guard_mgr);
     jz_ringbuf_destroy(&g_ctx.ringbuf);
     jz_ipc_server_destroy(&g_ctx.ipc);
+    jz_bpf_loader_detach_xdp(&g_ctx.loader);
     jz_bpf_loader_destroy(&g_ctx.loader);
     jz_config_free(&g_ctx.config);
     remove_pid_file(g_ctx.pid_file);

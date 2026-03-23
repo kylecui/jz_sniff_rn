@@ -5,6 +5,7 @@ version: 1
 system:
   device_id: "jz-sniff-001"
   log_level: "info"                  # debug, info, warn, error
+  mode: "bypass"                     # bypass, inline
   data_dir: "/var/lib/jz"
   run_dir: "/var/run/jz"
   interfaces:
@@ -14,6 +15,9 @@ system:
   #  - name: "ens34"
   #    role: "manage"
   #    subnet: "192.168.1.0/24"
+  #  - name: "ens35"
+  #    role: "mirror"
+  #    subnet: ""
 
 modules:
   guard_classifier:

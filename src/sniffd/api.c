@@ -41,6 +41,8 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #define JZ_API_VERSION "0.8.0"
 
@@ -908,6 +910,17 @@ static void handle_modules(struct mg_connection *c, struct mg_http_message *hm, 
         cJSON_AddBoolToObject(o, "enabled", m->enabled ? 1 : 0);
         cJSON_AddItemToArray(arr, o);
     }
+
+    {
+        cJSON *ifaces = cJSON_AddArrayToObject(root, "interfaces");
+        for (i = 0; i < api->loader->xdp_iface_count; i++) {
+            cJSON *entry = cJSON_CreateObject();
+            cJSON_AddStringToObject(entry, "name", api->loader->xdp_iface_names[i]);
+            cJSON_AddNumberToObject(entry, "ifindex", api->loader->xdp_ifindexes[i]);
+            cJSON_AddItemToArray(ifaces, entry);
+        }
+    }
+
     api_json_reply(c, 200, root);
 }
 
@@ -2305,6 +2318,44 @@ static void handle_config_discard_post(struct mg_connection *c, struct mg_http_m
     api_json_reply(c, 200, root);
 }
 
+static void handle_system_restart(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                  struct mg_str daemon_name)
+{
+    char daemon[32];
+    pid_t pid;
+    cJSON *root;
+
+    (void) hm;
+    (void) api;
+
+    if (api_mg_str_to_cstr(daemon_name, daemon, sizeof(daemon)) < 0) {
+        api_error_reply(c, 400, "invalid daemon name");
+        return;
+    }
+
+    if (strcmp(daemon, "sniffd") != 0 && strcmp(daemon, "configd") != 0 &&
+        strcmp(daemon, "collectord") != 0 && strcmp(daemon, "uploadd") != 0) {
+        api_error_reply(c, 400, "invalid daemon name");
+        return;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        api_error_reply(c, 500, "restart failed");
+        return;
+    }
+
+    if (pid == 0) {
+        (void) execl("/bin/systemctl", "systemctl", "restart", daemon, (char *) NULL);
+        _exit(127);
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "restarting");
+    cJSON_AddStringToObject(root, "daemon", daemon);
+    api_json_reply(c, 200, root);
+}
+
 static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     struct mg_str caps[2];
@@ -2450,6 +2501,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config/discard"), NULL)) {
             handle_config_discard_post(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/system/restart/*"), caps)) {
+            handle_system_restart(c, hm, api, caps[0]);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/modules/*/reload"), caps)) {

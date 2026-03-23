@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define JZ_MAX_BUSINESS_IFACES 8
+
 /* ── BPF Module Identifiers ── */
 typedef enum {
     JZ_MOD_GUARD_CLASSIFIER = 0,
@@ -44,6 +46,9 @@ typedef struct jz_bpf_loader {
     char    pin_path[256];    /* /sys/fs/bpf/jz/ */
     bool    initialized;
     int     loaded_count;
+    int     xdp_ifindexes[JZ_MAX_BUSINESS_IFACES];
+    int     xdp_iface_count;
+    char    xdp_iface_names[JZ_MAX_BUSINESS_IFACES][32];
 } jz_bpf_loader_t;
 
 /* Initialize loader context. bpf_dir is the directory containing
@@ -72,6 +77,10 @@ const jz_bpf_module_t *jz_bpf_loader_get_module(const jz_bpf_loader_t *loader,
 
 /* Get module ID by name. Returns -1 if not found. */
 int jz_bpf_loader_find(const jz_bpf_loader_t *loader, const char *name);
+
+int jz_bpf_loader_attach_xdp(jz_bpf_loader_t *loader, const int *ifindexes,
+                             const char names[][32], int count);
+void jz_bpf_loader_detach_xdp(jz_bpf_loader_t *loader);
 
 /* Unload all modules and clean up. */
 void jz_bpf_loader_destroy(jz_bpf_loader_t *loader);

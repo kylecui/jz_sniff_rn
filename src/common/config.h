@@ -61,6 +61,7 @@ typedef struct jz_config_system {
     char log_level[JZ_CONFIG_STR_SHORT];
     char data_dir[JZ_CONFIG_STR_LONG];
     char run_dir[JZ_CONFIG_STR_LONG];
+    char mode[JZ_CONFIG_STR_SHORT];              /* "bypass" (default) or "inline" */
 
     jz_config_interface_t interfaces[JZ_CONFIG_MAX_INTERFACES];
     int interface_count;

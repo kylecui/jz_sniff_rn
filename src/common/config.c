@@ -419,6 +419,12 @@ static int parse_system(yaml_parser_t *parser, yaml_event_t *start,
             else
                 copy_scalar(cfg->system.run_dir, sizeof(cfg->system.run_dir), &val_ev);
             yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "mode")) {
+            if (val_ev.type != YAML_SCALAR_EVENT)
+                add_error(errors, event_line(&val_ev), "system.mode", "must be string");
+            else
+                copy_scalar(cfg->system.mode, sizeof(cfg->system.mode), &val_ev);
+            yaml_event_delete(&val_ev);
         } else if (!strcmp(key, "interfaces")) {
             if (parse_interfaces(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
@@ -2282,6 +2288,7 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
     static const char *const threat_levels[] = {"low", "medium", "high", "critical", NULL};
     static const char *const protos[] = {"tcp", "udp", "icmp", "any", NULL};
     static const char *const iface_roles[] = {"monitor", "manage", "mirror", NULL};
+    static const char *const deploy_modes[] = {"bypass", "inline", NULL};
     int i;
     int start_count = errors ? errors->count : 0;
 
@@ -2301,6 +2308,8 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
         add_error(errors, 0, "system.run_dir", "must not be empty");
     if (!in_set(cfg->system.log_level, log_levels))
         add_error(errors, 0, "system.log_level", "must be debug/info/warn/error");
+    if (cfg->system.mode[0] != '\0' && !in_set(cfg->system.mode, deploy_modes))
+        add_error(errors, 0, "system.mode", "must be bypass/inline");
 
     for (i = 0; i < cfg->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
         const jz_config_interface_t *iface = &cfg->system.interfaces[i];
@@ -2429,6 +2438,7 @@ void jz_config_defaults(jz_config_t *cfg)
     snprintf(cfg->system.log_level, sizeof(cfg->system.log_level), "info");
     snprintf(cfg->system.data_dir, sizeof(cfg->system.data_dir), "/var/lib/jz");
     snprintf(cfg->system.run_dir, sizeof(cfg->system.run_dir), "/var/run/jz");
+    snprintf(cfg->system.mode, sizeof(cfg->system.mode), "bypass");
 
     cfg->modules.guard_classifier.enabled = true;
     cfg->modules.guard_classifier.stage = JZ_STAGE_GUARD_CLASSIFIER;
@@ -2649,12 +2659,14 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    "system:\n"
                    "  device_id: %s\n"
                    "  log_level: %s\n"
+                   "  mode: %s\n"
                    "  data_dir: %s\n"
                    "  run_dir: %s\n"
                    "  interfaces:\n",
                    cfg->version,
                    cfg->system.device_id,
                    cfg->system.log_level,
+                   cfg->system.mode[0] ? cfg->system.mode : "bypass",
                    cfg->system.data_dir,
                    cfg->system.run_dir) != 0) {
         free(sb.data);
