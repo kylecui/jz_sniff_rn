@@ -11,7 +11,7 @@
 #   make install   — Install to system paths
 
 .PHONY: all bpf user cli test clean install \
-        test-unit test-bpf test-integration \
+        test-unit test-bpf test-integration test-perf \
         coverage lint format help
 
 # ── Toolchain ──────────────────────────────────────────────────
@@ -191,7 +191,17 @@ test-integration: bpf | $(BUILD_DIR)/tests/integration
 		$(BUILD_DIR)/tests/integration/$$name || exit 1; \
 	done
 
-$(BUILD_DIR)/tests/unit $(BUILD_DIR)/tests/bpf $(BUILD_DIR)/tests/integration:
+test-perf: bpf | $(BUILD_DIR)/tests/perf
+	@echo "--- Running performance benchmarks (requires root, libbpf 1.7) ---"
+	@for src in $(wildcard $(TEST_DIR)/perf/test_*.c); do \
+		name=$$(basename $$src .c); \
+		$(CC) $(USER_CFLAGS) -I$(LIBBPF17_INC) \
+			-o $(BUILD_DIR)/tests/perf/$$name \
+			$$src $(LIBBPF17_LIB) -lelf -lz; \
+		$(BUILD_DIR)/tests/perf/$$name || exit 1; \
+	done
+
+$(BUILD_DIR)/tests/unit $(BUILD_DIR)/tests/bpf $(BUILD_DIR)/tests/integration $(BUILD_DIR)/tests/perf:
 	mkdir -p $@
 
 # ── Coverage ──────────────────────────────────────────────────
@@ -264,6 +274,7 @@ help:
 	@echo "  test-unit        Run C unit tests (cmocka)"
 	@echo "  test-bpf         Run BPF tests (prog_test_run)"
 	@echo "  test-integration Run BPF pipeline integration tests (requires root)"
+	@echo "  test-perf        Run BPF performance benchmarks (requires root)"
 	@echo "  coverage         Generate test coverage report"
 	@echo "  lint             Run static analysis (cppcheck)"
 	@echo "  format           Auto-format source code (clang-format)"

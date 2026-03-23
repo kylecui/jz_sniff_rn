@@ -57,6 +57,7 @@ make bpf          # BPF modules only
 make user         # User-space daemons only
 make cli          # CLI tools only
 make test         # Run all tests
+make test-perf    # Run BPF performance benchmarks (requires root)
 make coverage     # Generate test coverage report
 make lint         # Static analysis (cppcheck)
 make format       # Auto-format (clang-format)
@@ -86,7 +87,7 @@ See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.
 
 ## Current Status
 
-**Overall: ~95% complete** — 24,287 lines of C across 66 source files (plus 33,781 lines vendored).
+**Overall: ~98% complete** — 25,200+ lines of C across 67 source files (plus 33,781 lines vendored).
 
 ### What's Done
 
@@ -98,7 +99,7 @@ See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.
 | configd (main loop, inotify watcher, reload, BPF map push, remote TLS endpoint) | 3 | 1,313 | ✅ Complete (incl. mTLS HTTPS config push) |
 | collectord (main loop, dedup, rate limiter, SQLite batch, JSON export, DB auto-pruning) | 1 | 1,021 | ✅ Complete |
 | uploadd (main loop, batch assembly, gzip, native HTTPS via mongoose) | 1 | 1,102 | ✅ Complete (incl. mTLS HTTPS upload) |
-| Tests (8 BPF + 7 unit + test_helpers) | 16 | 3,698 | ✅ Complete for implemented modules |
+| Tests (8 BPF + 7 unit + 15 integration + perf benchmarks) | 17 | 4,600+ | ✅ Complete |
 | CLI tools (jzctl, jzguard, jzlog) | 3 | 2,157 | ✅ Complete |
 | REST API (31 endpoints, bearer auth, HTTPS/TLS) | 2 | 2,153 | ✅ Complete |
 | Systemd services (sniffd, configd, collectord, uploadd) | 4 | 167 | ✅ Complete |
@@ -108,7 +109,7 @@ See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.
 
 ### What's Remaining
 
-- **Phase 10: Integration & Validation** — End-to-end tests with rSwitch pipeline, performance benchmarks (PPS/latency), final deployment guide.
+- **Final step**: Push to origin/master. All integration tests (15/15), performance benchmarks (20 tests, ~7 MPPS single-module, ~3.5 MPPS full pipeline), and deployment guide are complete.
 
 ### Known Issues
 
