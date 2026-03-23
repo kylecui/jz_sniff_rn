@@ -538,37 +538,173 @@ sudo jzlog tail                       # Follow new events (like tail -f)
 
 ---
 
-## 11. REST API Usage
+## 11. REST API — Manual Testing Quick Reference
 
-The REST API runs on HTTPS port 8443 (configurable). All endpoints require Bearer token authentication.
+The REST API runs on **HTTPS port 8443** (configurable via `api.listen` in `base.yaml`).
+The self-signed TLS certificate uses ECC (required by mongoose's `MG_TLS_BUILTIN`).
 
 ### Authentication
+
+- **If `--api-token <token>` was passed to sniffd**: All endpoints (except `/api/v1/health`) require a `Bearer` token header.
+- **If `--api-token` was NOT passed** (current production default): Authentication is **disabled** — all requests pass through without a token.
+- `/api/v1/health` **always** bypasses authentication regardless of configuration.
+
+When auth is enabled, add this header to every request:
 
 ```
 Authorization: Bearer <token>
 ```
 
-The token is configured in `base.yaml` under `api.auth_tokens[].token`.
+### Base URL
 
-### Endpoints Overview
+```
+https://<host>:8443
+```
+
+> **Note**: The root path `/` returns `{"error":"not found"}` — this is expected. All endpoints live under `/api/v1/`.
+
+### Endpoints (31 total)
+
+#### Health & Status
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Health check |
-| GET | `/api/v1/status` | System status |
-| GET | `/api/v1/modules` | List BPF modules |
-| POST | `/api/v1/modules/{name}/enable` | Enable module |
-| POST | `/api/v1/modules/{name}/disable` | Disable module |
-| GET | `/api/v1/guards` | List guard entries |
-| POST | `/api/v1/guards` | Add guard entry |
-| DELETE | `/api/v1/guards/{ip}` | Delete guard entry |
-| GET | `/api/v1/guards/whitelist` | List whitelist |
-| POST | `/api/v1/guards/whitelist` | Add whitelist entry |
-| DELETE | `/api/v1/guards/whitelist/{ip}` | Delete whitelist entry |
-| GET | `/api/v1/config` | Get current config |
-| POST | `/api/v1/config/reload` | Reload config |
-| GET | `/api/v1/events` | Query events |
-| GET | `/api/v1/stats` | Collector stats |
+| GET | `/api/v1/health` | Health check (always no-auth) |
+| GET | `/api/v1/status` | System status overview |
+| GET | `/api/v1/modules` | List loaded BPF modules |
+| POST | `/api/v1/modules/{name}/reload` | Reload a specific BPF module |
+
+#### Guard Management
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/guards` | List all guard entries (static + dynamic) |
+| GET | `/api/v1/guards/static` | List static guard entries |
+| GET | `/api/v1/guards/dynamic` | List dynamic (auto-discovered) guard entries |
+| POST | `/api/v1/guards/static` | Add a static guard entry |
+| DELETE | `/api/v1/guards/static/{ip}` | Delete a static guard entry |
+| DELETE | `/api/v1/guards/dynamic/{ip}` | Delete a dynamic guard entry |
+
+#### Whitelist
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/whitelist` | List whitelist entries |
+| POST | `/api/v1/whitelist` | Add a whitelist entry |
+| DELETE | `/api/v1/whitelist/{ip}` | Delete a whitelist entry |
+
+#### Policies (returns 501 — policy manager not yet implemented)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/policies` | List traffic policies |
+| POST | `/api/v1/policies` | Add a traffic policy |
+| PUT | `/api/v1/policies/{id}` | Update a traffic policy |
+| DELETE | `/api/v1/policies/{id}` | Delete a traffic policy |
+
+#### Logs
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/logs/attacks` | Query attack logs |
+| GET | `/api/v1/logs/sniffers` | Query sniffer detection logs |
+| GET | `/api/v1/logs/background` | Query background collector logs |
+| GET | `/api/v1/logs/threats` | Query threat detection logs |
+| GET | `/api/v1/logs/audit` | Query configuration audit trail |
+
+#### Statistics
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/stats` | Aggregate statistics |
+| GET | `/api/v1/stats/guards` | Guard-specific statistics |
+| GET | `/api/v1/stats/traffic` | Traffic statistics |
+| GET | `/api/v1/stats/threats` | Threat detection statistics |
+| GET | `/api/v1/stats/background` | Background collector statistics |
+
+#### Configuration
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/config` | Get current running config |
+| GET | `/api/v1/config/history` | Get config change history |
+| POST | `/api/v1/config` | Push new configuration |
+| POST | `/api/v1/config/rollback` | Rollback to a previous config version |
+
+### curl Examples
+
+All examples use `-k` to skip TLS certificate verification (self-signed cert).
+If auth is enabled, add `-H "Authorization: Bearer <token>"` to each command.
+
+```bash
+HOST=10.174.254.136
+
+# --- Health & Status ---
+curl -sk https://$HOST:8443/api/v1/health
+curl -sk https://$HOST:8443/api/v1/status
+curl -sk https://$HOST:8443/api/v1/modules
+
+# --- Guards ---
+curl -sk https://$HOST:8443/api/v1/guards
+curl -sk https://$HOST:8443/api/v1/guards/static
+curl -sk https://$HOST:8443/api/v1/guards/dynamic
+
+# Add a static guard
+curl -sk -X POST https://$HOST:8443/api/v1/guards/static \
+  -H "Content-Type: application/json" \
+  -d '{"ip":"10.0.1.50","mac":"aa:bb:cc:dd:ee:01"}'
+
+# Delete a static guard
+curl -sk -X DELETE https://$HOST:8443/api/v1/guards/static/10.0.1.50
+
+# --- Whitelist ---
+curl -sk https://$HOST:8443/api/v1/whitelist
+
+curl -sk -X POST https://$HOST:8443/api/v1/whitelist \
+  -H "Content-Type: application/json" \
+  -d '{"ip":"10.0.1.100"}'
+
+curl -sk -X DELETE https://$HOST:8443/api/v1/whitelist/10.0.1.100
+
+# --- Logs ---
+curl -sk https://$HOST:8443/api/v1/logs/attacks
+curl -sk https://$HOST:8443/api/v1/logs/sniffers
+curl -sk https://$HOST:8443/api/v1/logs/background
+curl -sk https://$HOST:8443/api/v1/logs/threats
+curl -sk https://$HOST:8443/api/v1/logs/audit
+
+# --- Statistics ---
+curl -sk https://$HOST:8443/api/v1/stats
+curl -sk https://$HOST:8443/api/v1/stats/guards
+curl -sk https://$HOST:8443/api/v1/stats/traffic
+curl -sk https://$HOST:8443/api/v1/stats/threats
+curl -sk https://$HOST:8443/api/v1/stats/background
+
+# --- Configuration ---
+curl -sk https://$HOST:8443/api/v1/config
+curl -sk https://$HOST:8443/api/v1/config/history
+
+# Push new config (JSON body with config fields)
+curl -sk -X POST https://$HOST:8443/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{"guard":{"probe_interval":30}}'
+
+# Rollback to a previous version
+curl -sk -X POST https://$HOST:8443/api/v1/config/rollback \
+  -H "Content-Type: application/json" \
+  -d '{"version":1}'
+
+# --- Module Reload ---
+curl -sk -X POST https://$HOST:8443/api/v1/modules/guard_classifier/reload
+```
+
+### Quick Smoke Test (copy-paste one-liner)
+
+```bash
+curl -sk https://10.174.254.136:8443/api/v1/health && echo " OK"
+```
+
+If you see `{"status":"ok"...}` followed by `OK`, the API is running.
 
 ---
 
