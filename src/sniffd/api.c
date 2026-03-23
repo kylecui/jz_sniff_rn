@@ -2200,6 +2200,111 @@ static void handle_guards_auto_status(struct mg_connection *c, struct mg_http_me
     free(buf);
 }
 
+static void handle_config_staged_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    jz_ipc_msg_t reply;
+    cJSON *root;
+    (void) hm;
+    (void) api;
+
+    if (api_configd_request("config_staged", &reply) < 0) {
+        api_error_reply(c, 502, "configd unavailable");
+        return;
+    }
+
+    root = cJSON_Parse(reply.payload);
+    if (!root) {
+        root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "raw", reply.payload);
+    }
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_stage_post(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    char *req = NULL;
+    size_t req_len;
+    jz_ipc_msg_t reply;
+    cJSON *root;
+    (void) api;
+
+    if (!hm || hm->body.len == 0) {
+        api_error_reply(c, 400, "missing body");
+        return;
+    }
+
+    req_len = strlen("config_stage:") + hm->body.len + 1;
+    req = (char *) malloc(req_len);
+    if (!req) {
+        api_error_reply(c, 500, "oom");
+        return;
+    }
+    (void) snprintf(req, req_len, "config_stage:%.*s", (int) hm->body.len, hm->body.buf);
+
+    if (api_configd_request(req, &reply) < 0) {
+        free(req);
+        api_error_reply(c, 502, "configd unavailable");
+        return;
+    }
+
+    free(req);
+
+    if (strncmp(reply.payload, "error:", 6) == 0) {
+        root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "error", reply.payload + 6);
+        api_json_reply(c, 400, root);
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "staged");
+    cJSON_AddStringToObject(root, "reply", reply.payload);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_commit_post(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    jz_ipc_msg_t reply;
+    cJSON *root;
+    (void) hm;
+    (void) api;
+
+    if (api_configd_request("config_commit", &reply) < 0) {
+        api_error_reply(c, 502, "configd unavailable");
+        return;
+    }
+
+    if (strncmp(reply.payload, "error:", 6) == 0) {
+        root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "error", reply.payload + 6);
+        api_json_reply(c, 409, root);
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "committed");
+    cJSON_AddStringToObject(root, "reply", reply.payload);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_discard_post(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    jz_ipc_msg_t reply;
+    cJSON *root;
+    (void) hm;
+    (void) api;
+
+    if (api_configd_request("config_discard", &reply) < 0) {
+        api_error_reply(c, 502, "configd unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "discarded");
+    cJSON_AddStringToObject(root, "reply", reply.payload);
+    api_json_reply(c, 200, root);
+}
+
 static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     struct mg_str caps[2];
@@ -2292,6 +2397,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_history(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/staged"), NULL)) {
+            handle_config_staged_get(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/discovery/devices/*"), caps)) {
             handle_discovery_device_by_mac(c, hm, api, caps[0]);
             return;
@@ -2329,6 +2438,18 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config/rollback"), NULL)) {
             handle_config_rollback(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/stage"), NULL)) {
+            handle_config_stage_post(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/commit"), NULL)) {
+            handle_config_commit_post(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/discard"), NULL)) {
+            handle_config_discard_post(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/modules/*/reload"), caps)) {

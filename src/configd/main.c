@@ -19,7 +19,9 @@
 #include "ipc.h"
 #include "log.h"
 #include "remote.h"
+#include "staged.h"
 
+#include <cJSON.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -70,6 +72,8 @@ static struct {
     char              tls_key[256];
     char              tls_ca[256];
     char              listen_addr[64];
+
+    jz_staged_t       staged;
 } g_ctx;
 
 /* ── Signal Handlers ──────────────────────────────────────────── */
@@ -570,6 +574,12 @@ static int remote_config_handler(const char *json, int len, int version, void *d
     if (version <= g_ctx.config_version)
         return -1;
 
+    if (jz_staged_count(&g_ctx.staged) > 0) {
+        jz_log_info("Remote push overrides %d staged changes",
+                     jz_staged_count(&g_ctx.staged));
+        jz_staged_discard(&g_ctx.staged);
+    }
+
     return apply_config_body(json, (size_t) len, "remote:platform");
 }
 
@@ -619,6 +629,77 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
                        "configd v%s config_version:%d config:%s",
                        CONFIGD_VERSION, g_ctx.config_version,
                        g_ctx.config_path);
+    }
+    else if (strncmp(cmd, "config_stage:", 13) == 0) {
+        const char *body = cmd + 13;
+        if (strlen(body) == 0) {
+            len = snprintf(reply, sizeof(reply), "error:empty stage body");
+        } else {
+            /* Parse body JSON to extract section-level changes.
+             * Expected format: {"section_name": {...}, ...} */
+            cJSON *root = cJSON_Parse(body);
+            if (!root) {
+                len = snprintf(reply, sizeof(reply), "error:invalid JSON");
+            } else {
+                int staged_count = 0;
+                cJSON *item;
+                cJSON_ArrayForEach(item, root) {
+                    char *val = cJSON_PrintUnformatted(item);
+                    if (val) {
+                        if (jz_staged_add(&g_ctx.staged, item->string, val) == 0)
+                            staged_count++;
+                        free(val);
+                    }
+                }
+                cJSON_Delete(root);
+                if (staged_count > 0)
+                    len = snprintf(reply, sizeof(reply),
+                                   "staged:%d sections (total %d pending)",
+                                   staged_count, jz_staged_count(&g_ctx.staged));
+                else
+                    len = snprintf(reply, sizeof(reply),
+                                   "error:no valid sections in body");
+            }
+        }
+    }
+    else if (strncmp(cmd, "config_staged", 13) == 0) {
+        char *json = jz_staged_serialize(&g_ctx.staged);
+        if (json) {
+            len = snprintf(reply, sizeof(reply), "%s", json);
+            free(json);
+        } else {
+            len = snprintf(reply, sizeof(reply),
+                           "{\"count\":0,\"changes\":[]}");
+        }
+    }
+    else if (strncmp(cmd, "config_commit", 13) == 0) {
+        if (jz_staged_count(&g_ctx.staged) == 0) {
+            len = snprintf(reply, sizeof(reply), "error:nothing staged");
+        } else {
+            char *merged = jz_staged_merge(&g_ctx.staged, &g_ctx.config);
+            if (!merged) {
+                len = snprintf(reply, sizeof(reply),
+                               "error:failed to merge staged changes");
+            } else {
+                int rc = apply_config_body(merged, strlen(merged),
+                                           "staged:commit");
+                free(merged);
+                if (rc == 0) {
+                    jz_staged_discard(&g_ctx.staged);
+                    len = snprintf(reply, sizeof(reply),
+                                   "commit:ok version:%d",
+                                   g_ctx.config_version);
+                } else {
+                    len = snprintf(reply, sizeof(reply),
+                                   "error:commit failed (rc=%d)", rc);
+                }
+            }
+        }
+    }
+    else if (strncmp(cmd, "config_discard", 14) == 0) {
+        int n = jz_staged_count(&g_ctx.staged);
+        jz_staged_discard(&g_ctx.staged);
+        len = snprintf(reply, sizeof(reply), "discard:ok (%d changes cleared)", n);
     }
     else if (strncmp(cmd, "config_push:", 12) == 0) {
         const char *body = cmd + 12;
@@ -871,6 +952,8 @@ int main(int argc, char *argv[])
         }
     }
 
+    jz_staged_init(&g_ctx.staged, 0);
+
     jz_log_info("configd ready — config v%d loaded", g_ctx.config_version);
 
     /* ── Main Loop ── */
@@ -893,11 +976,16 @@ int main(int argc, char *argv[])
             g_reload = 0;
             do_reload();
         }
+
+        if (jz_staged_check_expiry(&g_ctx.staged))
+            jz_config_audit_log(&g_ctx.db, "staged_expired", "auto",
+                                NULL, "discarded");
     }
 
     jz_log_info("configd shutting down...");
 
 cleanup:
+    jz_staged_destroy(&g_ctx.staged);
     if (g_ctx.inotify_fd >= 0)
         close(g_ctx.inotify_fd);
     jz_remote_shutdown(&g_ctx.remote);
