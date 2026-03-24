@@ -332,10 +332,13 @@ int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_siz
     n = snprintf(buf, buf_size,
                  "{\"max_ratio\":%d,\"subnet_total\":%d,\"max_allowed\":%d,"
                  "\"current_dynamic\":%d,\"frozen_count\":%d,"
-                 "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d}",
+                 "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d,"
+                 "\"enabled\":%s,\"scan_interval\":%d}",
                  ga->max_ratio, ga->subnet_total, max_allowed,
                  ga->current_dynamic, frozen_count,
-                 static_count, online_devices, free);
+                 static_count, online_devices, free,
+                 (ga->config && ga->config->guards.dynamic.auto_discover) ? "true" : "false",
+                 ga->config ? ga->config->guards.dynamic.ttl_hours : 24);
     if (n < 0)
         return -1;
     if ((size_t)n >= buf_size)

@@ -70,7 +70,13 @@
     "maxRatio": "子网占比上限",
     "maxAllowed": "最大允许数",
     "currentDynamic": "当前动态哨兵",
-    "frozenCount": "冻结 IP 数"
+    "frozenCount": "冻结 IP 数",
+    "autoEnabled": "启用自动部署",
+    "scanInterval": "哨兵存活时间",
+    "hours": "小时",
+    "staticCount": "静态哨兵数",
+    "onlineDevices": "在线设备数",
+    "freeIps": "可用 IP 数"
   },
   "whitelist": {
     "title": "白名单管理",

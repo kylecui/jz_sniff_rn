@@ -1,4 +1,4 @@
-import { get, post, del } from './request'
+import { get, post, del, put } from './request'
 
 export interface Guard {
   ip: string
@@ -19,6 +19,11 @@ export interface AutoGuardStatus {
   max_allowed: number
   current_dynamic: number
   frozen_count: number
+  static_count: number
+  online_devices: number
+  free_ips: number
+  enabled: boolean
+  scan_interval: number
 }
 
 export const getGuards = () => get<{ guards: Guard[] }>('/guards')
@@ -42,3 +47,12 @@ export const deleteFrozenGuard = (ip: string) =>
 
 export const getAutoGuardStatus = () =>
   get<AutoGuardStatus>('/guards/auto/config')
+
+export interface AutoGuardConfig {
+  max_ratio?: number
+  enabled?: boolean
+  scan_interval?: number
+}
+
+export const updateAutoGuardConfig = (data: AutoGuardConfig) =>
+  put<AutoGuardStatus>('/guards/auto/config', data)

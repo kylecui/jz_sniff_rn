@@ -70,7 +70,13 @@
     "maxRatio": "Subnet ratio limit",
     "maxAllowed": "Max allowed",
     "currentDynamic": "Current dynamic guards",
-    "frozenCount": "Frozen IPs"
+    "frozenCount": "Frozen IPs",
+    "autoEnabled": "Auto-deploy enabled",
+    "scanInterval": "Guard TTL",
+    "hours": "hours",
+    "staticCount": "Static guards",
+    "onlineDevices": "Online devices",
+    "freeIps": "Available IPs"
   },
   "whitelist": {
     "title": "Whitelist Management",

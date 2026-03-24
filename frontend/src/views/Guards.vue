@@ -10,6 +10,7 @@ import {
   deleteDynamicGuard,
   addFrozenGuard,
   deleteFrozenGuard,
+  updateAutoGuardConfig,
 } from '@/api/guards'
 import type { Guard, FrozenGuard, AutoGuardStatus } from '@/api/guards'
 
@@ -21,7 +22,11 @@ const loading = ref(true)
 const staticGuards = ref<Guard[]>([])
 const dynamicGuards = ref<Guard[]>([])
 const frozenGuards = ref<FrozenGuard[]>([])
-const autoStatus = ref<AutoGuardStatus>({ max_ratio: 0, subnet_total: 0, max_allowed: 0, current_dynamic: 0, frozen_count: 0 })
+const autoStatus = ref<AutoGuardStatus>({
+  max_ratio: 0, subnet_total: 0, max_allowed: 0, current_dynamic: 0,
+  frozen_count: 0, static_count: 0, online_devices: 0, free_ips: 0,
+  enabled: false, scan_interval: 24,
+})
 
 // Add static dialog
 const showStaticDialog = ref(false)
@@ -49,6 +54,20 @@ function resetStaticForm() {
 const showFrozenDialog = ref(false)
 const frozenForm = reactive({ ip: '' })
 
+// Auto config form
+const autoConfigForm = reactive({
+  enabled: false,
+  max_ratio: 0,
+  scan_interval: 24,
+})
+const savingConfig = ref(false)
+
+function syncAutoConfigForm() {
+  autoConfigForm.enabled = autoStatus.value.enabled
+  autoConfigForm.max_ratio = autoStatus.value.max_ratio
+  autoConfigForm.scan_interval = autoStatus.value.scan_interval
+}
+
 async function fetchAll() {
   loading.value = true
   try {
@@ -62,6 +81,7 @@ async function fetchAll() {
     dynamicGuards.value = d.guards
     frozenGuards.value = f.frozen_ips
     autoStatus.value = a
+    syncAutoConfigForm()
   } catch {
     // keep defaults
   } finally {
@@ -123,6 +143,24 @@ async function handleDeleteFrozen(ip: string) {
     await fetchAll()
   } catch {
     // cancelled or error
+  }
+}
+
+async function handleSaveAutoConfig() {
+  savingConfig.value = true
+  try {
+    const result = await updateAutoGuardConfig({
+      enabled: autoConfigForm.enabled,
+      max_ratio: autoConfigForm.max_ratio,
+      scan_interval: autoConfigForm.scan_interval,
+    })
+    autoStatus.value = result
+    syncAutoConfigForm()
+    ElMessage.success(t('common.success'))
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    savingConfig.value = false
   }
 }
 
@@ -193,15 +231,47 @@ onMounted(fetchAll)
           </el-tab-pane>
         </el-tabs>
 
-        <!-- Auto-deploy status -->
+        <!-- Auto-deploy config & status -->
         <el-card class="auto-card">
           <template #header>{{ t('guards.autoStatus') }}</template>
-          <p>
-            {{ t('guards.maxRatio') }}: {{ autoStatus.max_ratio }}%
-            （{{ t('guards.maxAllowed') }}: {{ autoStatus.max_allowed }} / {{ autoStatus.subnet_total }}）
-          </p>
-          <p>{{ t('guards.currentDynamic') }}: {{ autoStatus.current_dynamic }}</p>
-          <p>{{ t('guards.frozenCount') }}: {{ autoStatus.frozen_count }}</p>
+          <el-form label-width="140px" @submit.prevent="handleSaveAutoConfig">
+            <el-form-item :label="t('guards.autoEnabled')">
+              <el-switch v-model="autoConfigForm.enabled" />
+            </el-form-item>
+            <el-form-item :label="t('guards.maxRatio')">
+              <el-slider v-model="autoConfigForm.max_ratio" :min="0" :max="100" :step="5" show-input />
+            </el-form-item>
+            <el-form-item :label="t('guards.scanInterval')">
+              <el-input-number v-model="autoConfigForm.scan_interval" :min="1" :max="720" />
+              <span class="unit-label">{{ t('guards.hours') }}</span>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingConfig" @click="handleSaveAutoConfig">
+                {{ t('common.save') }}
+              </el-button>
+            </el-form-item>
+          </el-form>
+          <el-divider />
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item :label="t('guards.maxAllowed')">
+              {{ autoStatus.max_allowed }} / {{ autoStatus.subnet_total }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('guards.currentDynamic')">
+              {{ autoStatus.current_dynamic }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('guards.staticCount')">
+              {{ autoStatus.static_count }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('guards.frozenCount')">
+              {{ autoStatus.frozen_count }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('guards.onlineDevices')">
+              {{ autoStatus.online_devices }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('guards.freeIps')">
+              {{ autoStatus.free_ips }}
+            </el-descriptions-item>
+          </el-descriptions>
         </el-card>
       </template>
     </el-skeleton>
@@ -253,5 +323,9 @@ onMounted(fetchAll)
 }
 .auto-card {
   margin-top: 20px;
+}
+.unit-label {
+  margin-left: 8px;
+  color: var(--el-text-color-secondary);
 }
 </style>
