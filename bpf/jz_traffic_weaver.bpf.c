@@ -48,6 +48,15 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_redirect_config SEC(".maps");
 
+/* Guard classification result (shared with jz_guard_classifier via pinning) */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);
+    __type(value, struct jz_guard_result);
+    __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} jz_guard_result_map SEC(".maps");
+
 /* Per-flow per-CPU traffic counters (ephemeral) */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
@@ -173,6 +182,25 @@ jz_emit_policy_event(struct rs_ctx *ctx,
     RS_EMIT_EVENT(&evt, sizeof(evt));
 }
 
+static __always_inline bool
+jz_is_guard_non_honeypot(void)
+{
+    __u32 key = 0;
+    struct jz_guard_result *gr;
+
+    gr = bpf_map_lookup_elem(&jz_guard_result_map, &key);
+    if (!gr)
+        return false;
+
+    if (gr->guard_type == JZ_GUARD_NONE)
+        return false;
+
+    if (gr->proto == 1 || gr->proto == 2)
+        return false;
+
+    return true;
+}
+
 /* -- Main XDP Program -- */
 
 SEC("xdp")
@@ -209,9 +237,15 @@ int jz_traffic_weaver_prog(struct xdp_md *xdp_ctx)
     /* 5) Policy lookup */
     policy = bpf_map_lookup_elem(&jz_flow_policy, &flow);
 
-    /* 6) No policy match -> continue pipeline */
-    if (!policy)
+    /* 6) No explicit policy -> check guard default-drop */
+    if (!policy) {
+        if (jz_is_guard_non_honeypot()) {
+            jz_emit_policy_event(ctx, eth, &flow, JZ_ACTION_DROP,
+                                 bpf_ktime_get_ns());
+            return XDP_DROP;
+        }
         return jz_tail_pass(xdp_ctx, ctx);
+    }
 
     now_ns = bpf_ktime_get_ns();
 

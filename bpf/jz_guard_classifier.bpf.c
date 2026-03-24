@@ -61,6 +61,7 @@ struct {
     __type(key, __u32);
     __type(value, struct jz_guard_result);
     __uint(max_entries, 1);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_guard_result_map SEC(".maps");
 
 /* ── Helper: Check if source is whitelisted ── */
