@@ -14,8 +14,13 @@ import {
   updateArpSpoof,
   getVlans,
   updateVlans,
+  getCaptures,
+  startCapture,
+  stopCapture,
+  deleteCapture,
+  downloadCaptureUrl,
 } from '@/api/config'
-import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, VlanConfig } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, VlanConfig, CaptureFile } from '@/api/config'
 
 const { t } = useI18n()
 
@@ -35,17 +40,26 @@ const arpSpoofTargets = ref<ArpSpoofTarget[]>([])
 const arpSpoofSaving = ref(false)
 const vlans = ref<VlanConfig[]>([])
 const vlansSaving = ref(false)
+const captureActive = ref(false)
+const captureFilename = ref('')
+const captureBytesWritten = ref(0)
+const capturePktCount = ref(0)
+const captureMaxBytes = ref(0)
+const captureFiles = ref<CaptureFile[]>([])
+const captureMaxSizeMB = ref(100)
+const captureLoading = ref(false)
 
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces, arpSpoof, vlansData] = await Promise.all([
+    const [cfg, staged, hist, ifaces, arpSpoof, vlansData, captureData] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
       getInterfaces(),
       getArpSpoof(),
       getVlans(),
+      getCaptures(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
     configText.value = json
@@ -59,6 +73,12 @@ async function fetchAll() {
     arpSpoofInterval.value = arpSpoof.interval_sec
     arpSpoofTargets.value = arpSpoof.targets
     vlans.value = vlansData.vlans ?? []
+    captureActive.value = captureData.active
+    captureFilename.value = captureData.filename ?? ''
+    captureBytesWritten.value = captureData.bytes_written ?? 0
+    capturePktCount.value = captureData.pkt_count ?? 0
+    captureMaxBytes.value = captureData.max_bytes ?? 0
+    captureFiles.value = captureData.captures ?? []
   } catch {
     // keep defaults
   } finally {
@@ -129,6 +149,59 @@ async function handleSaveVlans() {
   } finally {
     vlansSaving.value = false
   }
+}
+
+async function handleStartCapture() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmStartCapture'), t('common.confirm'), { type: 'warning' })
+    captureLoading.value = true
+    await startCapture(captureMaxSizeMB.value * 1024 * 1024)
+    ElMessage.success(t('common.success'))
+    await fetchAll()
+  } catch {
+    // cancelled or error
+  } finally {
+    captureLoading.value = false
+  }
+}
+
+async function handleStopCapture() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmStopCapture'), t('common.confirm'), { type: 'warning' })
+    captureLoading.value = true
+    await stopCapture()
+    ElMessage.success(t('common.success'))
+    await fetchAll()
+  } catch {
+    // cancelled or error
+  } finally {
+    captureLoading.value = false
+  }
+}
+
+function handleDownloadCapture(filename: string) {
+  window.open(downloadCaptureUrl(filename), '_blank')
+}
+
+async function handleDeleteCapture(filename: string) {
+  try {
+    await ElMessageBox.confirm(t('config.confirmDeleteCapture', { filename }), t('common.confirm'), { type: 'warning' })
+    await deleteCapture(filename)
+    ElMessage.success(t('common.success'))
+    await fetchAll()
+  } catch {
+    // cancelled or error
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString()
 }
 
 function toggleEdit() {
@@ -318,6 +391,78 @@ onMounted(fetchAll)
           </el-table>
         </el-card>
 
+        <!-- Packet Capture -->
+        <el-card class="section-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('config.capture') }}</span>
+              <el-button
+                v-if="captureActive"
+                type="danger"
+                size="small"
+                :loading="captureLoading"
+                @click="handleStopCapture"
+              >
+                {{ t('config.captureStop') }}
+              </el-button>
+              <div v-else class="capture-start-row">
+                <el-input-number
+                  v-model="captureMaxSizeMB"
+                  :min="1"
+                  :max="10240"
+                  size="small"
+                  style="width: 140px;"
+                />
+                <span class="capture-unit">{{ t('config.captureMaxSize') }}</span>
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="captureLoading"
+                  @click="handleStartCapture"
+                >
+                  {{ t('config.captureStart') }}
+                </el-button>
+              </div>
+            </div>
+          </template>
+          <div class="capture-status-row">
+            <el-tag :type="captureActive ? 'danger' : 'info'" effect="dark">
+              {{ captureActive ? t('config.captureActive') : t('config.captureIdle') }}
+            </el-tag>
+            <template v-if="captureActive">
+              <span class="capture-detail">{{ t('config.capturePktCount') }}: {{ capturePktCount }}</span>
+              <span class="capture-detail">{{ t('config.captureBytesWritten') }}: {{ formatBytes(captureBytesWritten) }} / {{ formatBytes(captureMaxBytes) }}</span>
+            </template>
+          </div>
+          <div class="targets-header">
+            <span>{{ t('config.captureFiles') }}</span>
+          </div>
+          <el-table v-if="captureFiles.length > 0" :data="captureFiles" stripe>
+            <el-table-column prop="filename" :label="t('config.captureFilename')" />
+            <el-table-column :label="t('config.captureSize')" width="120">
+              <template #default="{ row }">
+                {{ formatBytes(row.size_bytes) }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('config.captureCreated')" width="180">
+              <template #default="{ row }">
+                {{ formatTime(row.created) }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('common.action')" width="160">
+              <template #default="{ row }">
+                <el-button type="primary" text size="small" @click="handleDownloadCapture(row.filename)">
+                  {{ t('config.captureDownload') }}
+                </el-button>
+                <el-button type="danger" text size="small" @click="handleDeleteCapture(row.filename)">
+                  {{ t('config.captureDelete') }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else :description="t('config.captureNoFiles')" :image-size="60" />
+        </el-card>
+
         <!-- Current Config -->
         <el-card class="section-card">
           <template #header>
@@ -417,5 +562,24 @@ onMounted(fetchAll)
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+}
+.capture-start-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.capture-unit {
+  font-size: 12px;
+  color: #909399;
+}
+.capture-status-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.capture-detail {
+  font-size: 13px;
+  color: #606266;
 }
 </style>

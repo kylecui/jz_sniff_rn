@@ -25,6 +25,7 @@
 #include "guard_mgr.h"
 #include "policy_mgr.h"
 #include "arp_spoof.h"
+#include "capture_mgr.h"
 #include "config.h"
 #include "config_map.h"
 #include "db.h"
@@ -2988,6 +2989,190 @@ static void handle_system_restart(struct mg_connection *c, struct mg_http_messag
     api_json_reply(c, 200, root);
 }
 
+/* ── Packet Capture Handlers ──────────────────────────────────── */
+
+static void handle_capture_status(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    (void) hm;
+
+    if (!api->capture_mgr || !api->capture_mgr->initialized) {
+        api_error_reply(c, 503, "capture manager not initialized");
+        return;
+    }
+
+    jz_capture_info_t infos[JZ_CAPTURE_MAX_FILES];
+    int count = jz_capture_mgr_list(infos, JZ_CAPTURE_MAX_FILES);
+
+    root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "active", api->capture_mgr->active);
+    if (api->capture_mgr->active) {
+        cJSON_AddStringToObject(root, "filename", api->capture_mgr->writer.path);
+        cJSON_AddNumberToObject(root, "bytes_written",
+                                (double)api->capture_mgr->writer.bytes_written);
+        cJSON_AddNumberToObject(root, "pkt_count",
+                                (double)api->capture_mgr->writer.pkt_count);
+        cJSON_AddNumberToObject(root, "max_bytes",
+                                (double)api->capture_mgr->max_bytes);
+    }
+
+    cJSON *arr = cJSON_AddArrayToObject(root, "captures");
+    for (int i = 0; i < count; i++) {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "filename", infos[i].filename);
+        cJSON_AddNumberToObject(obj, "size_bytes", (double)infos[i].size_bytes);
+        cJSON_AddNumberToObject(obj, "created", (double)infos[i].created);
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    api_json_reply(c, 200, root);
+}
+
+static void handle_capture_start(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *body = NULL;
+    uint64_t max_bytes = 0;
+
+    if (!api->capture_mgr || !api->capture_mgr->initialized) {
+        api_error_reply(c, 503, "capture manager not initialized");
+        return;
+    }
+
+    if (hm->body.len > 0) {
+        body = cJSON_ParseWithLength(hm->body.buf, hm->body.len);
+        if (body) {
+            cJSON *mb = cJSON_GetObjectItem(body, "max_bytes");
+            if (mb && cJSON_IsNumber(mb) && mb->valuedouble > 0)
+                max_bytes = (uint64_t)mb->valuedouble;
+            cJSON_Delete(body);
+        }
+    }
+
+    if (jz_capture_mgr_start(api->capture_mgr, max_bytes) < 0) {
+        api_error_reply(c, 500, "failed to start capture");
+        return;
+    }
+
+    jz_db_t audit_db;
+    if (api->db && api->db->path[0] && jz_db_open(&audit_db, api->db->path) == 0) {
+        char ts[32];
+        time_t now = time(NULL);
+        struct tm tmv;
+        if (gmtime_r(&now, &tmv))
+            strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+        else
+            snprintf(ts, sizeof(ts), "unknown");
+        char detail[128];
+        snprintf(detail, sizeof(detail), "max_bytes=%llu",
+                 (unsigned long long)(max_bytes ? max_bytes : JZ_CAPTURE_DEFAULT_MAX_BYTES));
+        jz_db_insert_audit(&audit_db, ts, "capture_start", "api", "capture", detail, "ok");
+        jz_db_close(&audit_db);
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "started");
+    cJSON_AddStringToObject(root, "filename", api->capture_mgr->writer.path);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_capture_stop(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    (void) hm;
+
+    if (!api->capture_mgr || !api->capture_mgr->initialized) {
+        api_error_reply(c, 503, "capture manager not initialized");
+        return;
+    }
+
+    if (!api->capture_mgr->active) {
+        api_error_reply(c, 400, "no active capture");
+        return;
+    }
+
+    jz_capture_mgr_stop(api->capture_mgr);
+
+    jz_db_t audit_db;
+    if (api->db && api->db->path[0] && jz_db_open(&audit_db, api->db->path) == 0) {
+        char ts[32];
+        time_t now = time(NULL);
+        struct tm tmv;
+        if (gmtime_r(&now, &tmv))
+            strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+        else
+            snprintf(ts, sizeof(ts), "unknown");
+        jz_db_insert_audit(&audit_db, ts, "capture_stop", "api", "capture", "", "ok");
+        jz_db_close(&audit_db);
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "stopped");
+    api_json_reply(c, 200, root);
+}
+
+static void handle_capture_download(struct mg_connection *c, struct mg_http_message *hm,
+                                     jz_api_t *api, struct mg_str filename_str)
+{
+    char filename[128];
+    char path[384];
+    (void) api;
+
+    if (api_mg_str_to_cstr(filename_str, filename, sizeof(filename)) < 0) {
+        api_error_reply(c, 400, "invalid filename");
+        return;
+    }
+
+    if (strchr(filename, '/') || strchr(filename, '\\') || strstr(filename, "..")) {
+        api_error_reply(c, 400, "invalid filename");
+        return;
+    }
+
+    snprintf(path, sizeof(path), "%s/%s", JZ_CAPTURE_DIR, filename);
+
+    struct mg_http_serve_opts opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.mime_types = "pcap=application/octet-stream";
+    opts.extra_headers = "Content-Disposition: attachment\r\n";
+    mg_http_serve_file(c, hm, path, &opts);
+}
+
+static void handle_capture_delete(struct mg_connection *c, struct mg_http_message *hm,
+                                   jz_api_t *api, struct mg_str filename_str)
+{
+    char filename[128];
+    cJSON *root;
+    (void) hm;
+
+    if (api_mg_str_to_cstr(filename_str, filename, sizeof(filename)) < 0) {
+        api_error_reply(c, 400, "invalid filename");
+        return;
+    }
+
+    if (jz_capture_mgr_delete(filename) < 0) {
+        api_error_reply(c, 404, "file not found or cannot delete");
+        return;
+    }
+
+    jz_db_t audit_db;
+    if (api->db && api->db->path[0] && jz_db_open(&audit_db, api->db->path) == 0) {
+        char ts[32];
+        time_t now = time(NULL);
+        struct tm tmv;
+        if (gmtime_r(&now, &tmv))
+            strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+        else
+            snprintf(ts, sizeof(ts), "unknown");
+        jz_db_insert_audit(&audit_db, ts, "capture_delete", "api", "capture", filename, "ok");
+        jz_db_close(&audit_db);
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "deleted");
+    cJSON_AddStringToObject(root, "filename", filename);
+    api_json_reply(c, 200, root);
+}
+
 static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     struct mg_str caps[2];
@@ -3120,6 +3305,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_system_daemons(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/captures"), NULL)) {
+            handle_capture_status(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/captures/*/download"), caps)) {
+            handle_capture_download(c, hm, api, caps[0]);
+            return;
+        }
     }
 
     if (mg_match(hm->method, mg_str("POST"), NULL)) {
@@ -3167,6 +3360,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_guards_frozen_add(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/captures/start"), NULL)) {
+            handle_capture_start(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/captures/stop"), NULL)) {
+            handle_capture_stop(c, hm, api);
+            return;
+        }
     }
 
     if (mg_match(hm->method, mg_str("DELETE"), NULL)) {
@@ -3188,6 +3389,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {
             handle_policies_del(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/captures/*"), caps)) {
+            handle_capture_delete(c, hm, api, caps[0]);
             return;
         }
     }
@@ -3291,6 +3496,7 @@ int jz_api_init(jz_api_t *api, int port,
     jz_config_t *config;
     jz_db_t *db;
     jz_arp_spoof_t *arp_spoof;
+    jz_capture_mgr_t *capture_mgr;
     char *cert_pem = NULL;
     char *key_pem = NULL;
     char *ca_pem = NULL;
@@ -3309,6 +3515,7 @@ int jz_api_init(jz_api_t *api, int port,
     config = api->config;
     db = api->db;
     arp_spoof = api->arp_spoof;
+    capture_mgr = api->capture_mgr;
 
     memset(api, 0, sizeof(*api));
     api->loader = loader;
@@ -3319,6 +3526,7 @@ int jz_api_init(jz_api_t *api, int port,
     api->config = config;
     api->db = db;
     api->arp_spoof = arp_spoof;
+    api->capture_mgr = capture_mgr;
 
     api->port = port > 0 ? port : 8443;
     api->enabled = false;

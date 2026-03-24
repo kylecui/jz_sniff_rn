@@ -13,6 +13,7 @@
 #include "api.h"
 #include "arp_spoof.h"
 #include "bpf_loader.h"
+#include "capture_mgr.h"
 #include "discovery.h"
 #include "guard_auto.h"
 #include "guard_mgr.h"
@@ -106,8 +107,12 @@ static struct {
     jz_ipc_client_t   uploadd_client;
     jz_ipc_client_t   collectord_client;
     jz_arp_spoof_t    arp_spoof;
+    jz_capture_mgr_t  capture_mgr;
     jz_api_t          api;
     int               ifindex;
+
+    /* ktime → wall-clock offset for pcap timestamps */
+    time_t            ktime_wall_offset;
 } g_ctx;
 
 /* ── Signal Handlers ──────────────────────────────────────────── */
@@ -590,12 +595,37 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
 
 static int sample_callback(const void *data, uint32_t data_len, void *user_data)
 {
-    (void)data;
     (void)user_data;
 
-    jz_log_debug("Forensic sample received: len=%u", data_len);
+    if (!g_ctx.capture_mgr.active)
+        return 0;
 
-    /* TODO: Forward to collectord via IPC when collectord is ready */
+    /*
+     * jz_event_sample layout: jz_event_hdr(44) + threat_level(1) +
+     * _pad(3) + payload_len(4) + payload[].
+     * Minimum: 44 + 1 + 3 + 4 = 52 bytes header before payload.
+     */
+    if (data_len < 52)
+        return 0;
+
+    const uint8_t *raw = (const uint8_t *)data;
+    uint64_t ktime_ns;
+    memcpy(&ktime_ns, raw + 8, sizeof(ktime_ns));
+
+    uint32_t payload_len;
+    memcpy(&payload_len, raw + 48, sizeof(payload_len));
+
+    if (payload_len == 0 || 52 + payload_len > data_len)
+        return 0;
+
+    const void *payload = raw + 52;
+
+    uint64_t wall_ns = (uint64_t)g_ctx.ktime_wall_offset * 1000000000ULL + ktime_ns;
+    uint32_t ts_sec  = (uint32_t)(wall_ns / 1000000000ULL);
+    uint32_t ts_usec = (uint32_t)((wall_ns % 1000000000ULL) / 1000);
+
+    jz_capture_mgr_write(&g_ctx.capture_mgr, ts_sec, ts_usec,
+                          payload, payload_len, payload_len);
 
     return 0;
 }
@@ -964,6 +994,15 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Initialize packet capture manager */
+    if (jz_capture_mgr_init(&g_ctx.capture_mgr) < 0) {
+        jz_log_warn("Capture manager init failed — pcap capture disabled");
+    } else {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        g_ctx.ktime_wall_offset = time(NULL) - ts.tv_sec;
+    }
+
     /* Initialize passive device discovery + ARP scanner */
     if (jz_discovery_init(&g_ctx.discovery, &g_ctx.config) < 0) {
         jz_log_warn("Discovery init failed — device fingerprinting disabled");
@@ -1014,6 +1053,7 @@ int main(int argc, char *argv[])
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
         g_ctx.api.arp_spoof = &g_ctx.arp_spoof;
+        g_ctx.api.capture_mgr = &g_ctx.capture_mgr;
         /* Set DB path from config so API can query logs readonly */
         if (g_ctx.config.collector.db_path[0])
             (void) snprintf(g_ctx.db.path, sizeof(g_ctx.db.path),
@@ -1187,6 +1227,7 @@ int main(int argc, char *argv[])
 
 cleanup:
     jz_api_destroy(&g_ctx.api);
+    jz_capture_mgr_destroy(&g_ctx.capture_mgr);
     jz_arp_spoof_destroy(&g_ctx.arp_spoof);
     jz_heartbeat_destroy(&g_ctx.heartbeat);
     jz_ipc_client_close(&g_ctx.uploadd_client);

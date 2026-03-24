@@ -1,4 +1,4 @@
-import { get, post, put } from './request'
+import { get, post, put, del } from './request'
 
 export interface ConfigData {
   config: Record<string, unknown>
@@ -74,3 +74,27 @@ export interface VlansData {
 export const getVlans = () => get<VlansData>('/config/vlans')
 export const updateVlans = (data: VlansData) =>
   put<VlansData>('/config/vlans', data)
+
+export interface CaptureFile {
+  filename: string
+  size_bytes: number
+  created: number
+}
+
+export interface CaptureStatus {
+  active: boolean
+  filename?: string
+  bytes_written?: number
+  pkt_count?: number
+  max_bytes?: number
+  captures: CaptureFile[]
+}
+
+export const getCaptures = () => get<CaptureStatus>('/captures')
+export const startCapture = (maxBytes?: number) =>
+  post<{ status: string; filename: string }>('/captures/start', maxBytes ? { max_bytes: maxBytes } : undefined)
+export const stopCapture = () => post<{ status: string }>('/captures/stop')
+export const deleteCapture = (filename: string) =>
+  del<{ status: string; filename: string }>(`/captures/${filename}`)
+export const downloadCaptureUrl = (filename: string) =>
+  `/api/v1/captures/${encodeURIComponent(filename)}/download`
