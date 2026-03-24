@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <time.h>
 #include <linux/capability.h>
 #include <linux/types.h>
 #include <unistd.h>
@@ -941,6 +942,7 @@ int main(int argc, char *argv[])
         g_ctx.discovery.guard_auto = NULL;
     } else {
         g_ctx.discovery.guard_auto = &g_ctx.guard_auto;
+        jz_guard_auto_set_discovery(&g_ctx.guard_auto, &g_ctx.discovery);
     }
 
     /* Initialize policy engine */
@@ -1078,6 +1080,20 @@ int main(int argc, char *argv[])
         if (g_ctx.heartbeat.initialized) {
             char *hb_json = jz_heartbeat_tick(&g_ctx.heartbeat);
             if (hb_json) {
+                if (g_ctx.db.path[0]) {
+                    jz_db_t hb_db;
+                    if (jz_db_open(&hb_db, g_ctx.db.path) == 0) {
+                        char ts[32];
+                        time_t now = time(NULL);
+                        struct tm tmv;
+                        if (gmtime_r(&now, &tmv))
+                            strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+                        else
+                            snprintf(ts, sizeof(ts), "unknown");
+                        jz_db_insert_heartbeat(&hb_db, ts, hb_json);
+                        jz_db_close(&hb_db);
+                    }
+                }
                 if (!g_ctx.uploadd_client.connected) {
                     jz_ipc_client_connect(&g_ctx.uploadd_client,
                                           JZ_IPC_SOCK_UPLOADD,

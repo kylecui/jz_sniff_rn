@@ -206,6 +206,10 @@ static void api_json_reply(struct mg_connection *c, int status, cJSON *json)
     cJSON_Delete(json);
 }
 
+/* forward declaration – defined after frozen/config handlers */
+static void api_audit_log(jz_api_t *api, const char *action, const char *target,
+                          const char *details, const char *result);
+
 static void api_error_reply(struct mg_connection *c, int status, const char *message)
 {
     cJSON *root = cJSON_CreateObject();
@@ -1031,6 +1035,7 @@ static void handle_guards_static_add(struct mg_connection *c, struct mg_http_mes
     uint32_t ip;
     uint8_t mac[6] = {0};
     uint16_t vlan = 0;
+    char ip_buf[INET_ADDRSTRLEN];
     cJSON *root;
 
     if (!api || !api->guard_mgr) {
@@ -1055,6 +1060,8 @@ static void handle_guards_static_add(struct mg_connection *c, struct mg_http_mes
         return;
     }
 
+    snprintf(ip_buf, sizeof(ip_buf), "%s", ip_j->valuestring);
+
     if (cJSON_IsString(mac_j) && mac_j->valuestring && mac_j->valuestring[0]) {
         if (api_parse_mac(mac_j->valuestring, mac) < 0) {
             cJSON_Delete(body);
@@ -1073,6 +1080,7 @@ static void handle_guards_static_add(struct mg_connection *c, struct mg_http_mes
         return;
     }
 
+    api_audit_log(api, "guard_static_add", ip_buf, NULL, "success");
     root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "added");
     api_json_reply(c, 201, root);
@@ -1101,6 +1109,7 @@ static void handle_guards_static_del(struct mg_connection *c, struct mg_http_mes
         return;
     }
 
+    api_audit_log(api, "guard_static_del", ip_str, NULL, "success");
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
@@ -1175,6 +1184,7 @@ static void handle_whitelist_add(struct mg_connection *c, struct mg_http_message
     cJSON *mac_j;
     uint32_t ip;
     struct jz_bpf_whitelist_entry val;
+    char ip_buf[INET_ADDRSTRLEN];
 
     if (!api || !api->guard_mgr || api->guard_mgr->whitelist_map_fd < 0) {
         api_error_reply(c, 500, "whitelist map unavailable");
@@ -1197,6 +1207,8 @@ static void handle_whitelist_add(struct mg_connection *c, struct mg_http_message
         return;
     }
 
+    snprintf(ip_buf, sizeof(ip_buf), "%s", ip_j->valuestring);
+
     memset(&val, 0, sizeof(val));
     val.ip_addr = ip;
     val.enabled = 1;
@@ -1216,6 +1228,7 @@ static void handle_whitelist_add(struct mg_connection *c, struct mg_http_message
         return;
     }
 
+    api_audit_log(api, "whitelist_add", ip_buf, NULL, "success");
     api_json_reply(c, 201, cJSON_CreateObject());
 }
 
@@ -1242,6 +1255,7 @@ static void handle_whitelist_del(struct mg_connection *c, struct mg_http_message
         return;
     }
 
+    api_audit_log(api, "whitelist_del", ip_str, NULL, "success");
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
@@ -1774,6 +1788,64 @@ static void handle_logs_audit(struct mg_connection *c, struct mg_http_message *h
     api_json_reply(c, 200, root);
 }
 
+static void handle_logs_heartbeat(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = NULL;
+    cJSON *arr = NULL;
+    int limit = api_parse_query_int(hm, "limit", 100);
+    int offset = api_parse_query_int(hm, "offset", 0);
+
+    if (limit <= 0)
+        limit = 100;
+    if (limit > 1000)
+        limit = 1000;
+    if (offset < 0)
+        offset = 0;
+
+    if (api_db_open_readonly(api, &db) < 0) {
+        api_error_reply(c, 500, "database unavailable (is collectord running?)");
+        return;
+    }
+
+    if (sqlite3_prepare_v2(db,
+                           "SELECT id,timestamp,json_data "
+                           "FROM heartbeat_log ORDER BY id DESC LIMIT ? OFFSET ?",
+                           -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        api_error_reply(c, 500, "query failed");
+        return;
+    }
+
+    sqlite3_bind_int(stmt, 1, limit);
+    sqlite3_bind_int(stmt, 2, offset);
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "rows");
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        cJSON *o = cJSON_CreateObject();
+        const char *json_text;
+
+        cJSON_AddNumberToObject(o, "id", sqlite3_column_int(stmt, 0));
+        cJSON_AddStringToObject(o, "timestamp", (const char *) sqlite3_column_text(stmt, 1));
+        json_text = (const char *) sqlite3_column_text(stmt, 2);
+        if (json_text) {
+            cJSON *parsed = cJSON_Parse(json_text);
+            if (parsed)
+                cJSON_AddItemToObject(o, "data", parsed);
+            else
+                cJSON_AddStringToObject(o, "data", json_text);
+        }
+        cJSON_AddItemToArray(arr, o);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    api_json_reply(c, 200, root);
+}
+
 static void handle_stats(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
@@ -2094,6 +2166,48 @@ static int api_persist_config(jz_api_t *api)
     return rc;
 }
 
+static void api_audit_log(jz_api_t *api, const char *action, const char *target,
+                          const char *details, const char *result)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    const char *path;
+    char ts[32];
+    time_t now;
+    struct tm tmv;
+
+    if (!api || !api->db || !action || !result)
+        return;
+
+    path = api->db->path[0] ? api->db->path : NULL;
+    if (!path)
+        return;
+
+    if (sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK)
+        return;
+
+    now = time(NULL);
+    if (gmtime_r(&now, &tmv))
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+    else
+        snprintf(ts, sizeof(ts), "unknown");
+
+    if (sqlite3_prepare_v2(db,
+            "INSERT INTO audit_log(timestamp,action,actor,target,details,result) "
+            "VALUES(?,?,?,?,?,?)", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, ts, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, action, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, "api", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 4, target ? target : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 5, details ? details : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 6, result, -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_close(db);
+}
+
 static void handle_guards_frozen_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
@@ -2127,6 +2241,7 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
     cJSON *reason_j;
     uint32_t ip_val;
     cJSON *root;
+    char ip_buf[INET_ADDRSTRLEN];
 
     if (!api || !api->config) {
         api_error_reply(c, 500, "config unavailable");
@@ -2141,6 +2256,15 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
 
     ip_j = cJSON_GetObjectItemCaseSensitive(body, "ip");
     reason_j = cJSON_GetObjectItemCaseSensitive(body, "reason");
+
+    if (!cJSON_IsString(ip_j) || !ip_j->valuestring ||
+        api_parse_ipv4(ip_j->valuestring, &ip_val) < 0) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "invalid ip");
+        return;
+    }
+
+    snprintf(ip_buf, sizeof(ip_buf), "%s", ip_j->valuestring);
 
     if (!cJSON_IsString(ip_j) || !ip_j->valuestring ||
         api_parse_ipv4(ip_j->valuestring, &ip_val) < 0) {
@@ -2174,6 +2298,7 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
     if (api_persist_config(api) < 0)
         jz_log_error("frozen_add: failed to persist config to configd");
 
+    api_audit_log(api, "guard_frozen_add", ip_buf, NULL, "success");
     root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "added");
     api_json_reply(c, 201, root);
@@ -2216,6 +2341,7 @@ static void handle_guards_frozen_del(struct mg_connection *c, struct mg_http_mes
     if (api_persist_config(api) < 0)
         jz_log_error("frozen_del: failed to persist config to configd");
 
+    api_audit_log(api, "guard_frozen_del", ip_str, NULL, "success");
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
@@ -2285,8 +2411,144 @@ static void handle_guards_auto_config_put(struct mg_connection *c, struct mg_htt
 
     jz_guard_auto_update_config(api->guard_auto, api->config);
 
+    if (api_persist_config(api) < 0)
+        jz_log_error("guards/auto/config PUT: failed to persist config");
+
+    api_audit_log(api, "guard_auto_config_update", NULL, NULL, "success");
     handle_guards_auto_config_get(c, hm, api);
     cJSON_Delete(body);
+}
+
+static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "interfaces");
+
+    for (i = 0; i < api->config->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        const jz_config_interface_t *iface = &api->config->system.interfaces[i];
+        cJSON *obj = cJSON_CreateObject();
+
+        cJSON_AddStringToObject(obj, "name", iface->name);
+        cJSON_AddStringToObject(obj, "role", iface->role);
+        cJSON_AddStringToObject(obj, "subnet", iface->subnet);
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    cJSON_AddStringToObject(root, "mode", api->config->system.mode);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *arr;
+    cJSON *mode_item;
+    int i;
+    int count;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    arr = cJSON_GetObjectItem(body, "interfaces");
+    if (!arr || !cJSON_IsArray(arr)) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "missing 'interfaces' array");
+        return;
+    }
+
+    count = cJSON_GetArraySize(arr);
+    if (count > JZ_CONFIG_MAX_INTERFACES) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "too many interfaces");
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *name = cJSON_GetObjectItem(item, "name");
+        cJSON *role = cJSON_GetObjectItem(item, "role");
+        cJSON *subnet = cJSON_GetObjectItem(item, "subnet");
+
+        if (!name || !cJSON_IsString(name) || name->valuestring[0] == '\0') {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "interface entry missing 'name'");
+            return;
+        }
+        if (!role || !cJSON_IsString(role) ||
+            (strcmp(role->valuestring, "monitor") != 0 &&
+             strcmp(role->valuestring, "manage") != 0 &&
+             strcmp(role->valuestring, "mirror") != 0)) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "invalid role (must be monitor/manage/mirror)");
+            return;
+        }
+        if (strcmp(role->valuestring, "mirror") != 0) {
+            if (!subnet || !cJSON_IsString(subnet) || !strchr(subnet->valuestring, '/')) {
+                cJSON_Delete(body);
+                api_error_reply(c, 400, "monitor/manage role requires CIDR subnet");
+                return;
+            }
+        }
+    }
+
+    api->config->system.interface_count = count;
+    for (i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        jz_config_interface_t *iface = &api->config->system.interfaces[i];
+
+        snprintf(iface->name, sizeof(iface->name), "%s",
+                 cJSON_GetObjectItem(item, "name")->valuestring);
+        snprintf(iface->role, sizeof(iface->role), "%s",
+                 cJSON_GetObjectItem(item, "role")->valuestring);
+
+        {
+            cJSON *subnet = cJSON_GetObjectItem(item, "subnet");
+            if (subnet && cJSON_IsString(subnet))
+                snprintf(iface->subnet, sizeof(iface->subnet), "%s", subnet->valuestring);
+            else
+                iface->subnet[0] = '\0';
+        }
+    }
+
+    mode_item = cJSON_GetObjectItem(body, "mode");
+    if (mode_item && cJSON_IsString(mode_item) &&
+        (strcmp(mode_item->valuestring, "bypass") == 0 ||
+         strcmp(mode_item->valuestring, "inline") == 0)) {
+        snprintf(api->config->system.mode, sizeof(api->config->system.mode),
+                 "%s", mode_item->valuestring);
+    }
+
+    if (api_persist_config(api) < 0) {
+        jz_log_error("config/interfaces PUT: failed to persist config");
+        cJSON_Delete(body);
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    if (api->guard_auto)
+        jz_guard_auto_update_config(api->guard_auto, api->config);
+
+    api_audit_log(api, "config_interfaces_update", NULL, NULL, "success");
+    cJSON_Delete(body);
+    handle_config_interfaces_get(c, hm, api);
 }
 
 static void handle_config_staged_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
@@ -2552,6 +2814,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_logs_audit(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/logs/heartbeat"), NULL)) {
+            handle_logs_heartbeat(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/stats"), NULL)) {
             handle_stats(c, hm, api);
             return;
@@ -2570,6 +2836,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/stats/background"), NULL)) {
             handle_stats_background(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/interfaces"), NULL)) {
+            handle_config_interfaces_get(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config"), NULL)) {
@@ -2679,6 +2949,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
     if (mg_match(hm->method, mg_str("PUT"), NULL)) {
         if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/config"), NULL)) {
             handle_guards_auto_config_put(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/interfaces"), NULL)) {
+            handle_config_interfaces_put(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {

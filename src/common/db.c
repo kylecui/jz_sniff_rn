@@ -101,6 +101,15 @@ static const char *SCHEMA_SQL =
     "    value           TEXT NOT NULL,"
     "    updated_at      TEXT DEFAULT (datetime('now'))"
     ");"
+
+    "CREATE TABLE IF NOT EXISTS heartbeat_log ("
+    "    id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "    timestamp       TEXT NOT NULL,"
+    "    json_data       TEXT NOT NULL,"
+    "    created_at      TEXT DEFAULT (datetime('now'))"
+    ");"
+
+    "CREATE INDEX IF NOT EXISTS idx_heartbeat_log_timestamp ON heartbeat_log(timestamp);"
     ;
 
 /* -- Helper: execute SQL with error reporting -- */
@@ -366,6 +375,33 @@ int jz_db_insert_audit(jz_db_t *ctx,
     sqlite3_bind_text(stmt, 4, target, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 5, details, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 6, result, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+/* -- Heartbeat Log -- */
+
+int jz_db_insert_heartbeat(jz_db_t *ctx,
+                           const char *timestamp,
+                           const char *json_data)
+{
+    if (!ctx || !ctx->initialized)
+        return -1;
+
+    const char *sql =
+        "INSERT INTO heartbeat_log (timestamp, json_data) "
+        "VALUES (?, ?)";
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    sqlite3_bind_text(stmt, 1, timestamp, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, json_data, -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

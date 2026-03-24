@@ -7,9 +7,8 @@ const { t } = useI18n()
 const loading = ref(true)
 const activeTab = ref<LogType>('attacks')
 const logs = ref<LogEntry[]>([])
-const total = ref(0)
-const page = ref(1)
-const perPage = ref(20)
+const limit = ref(20)
+const offset = ref(0)
 const timeRange = ref<[string, string] | null>(null)
 
 const tabMap: { name: LogType; labelKey: string }[] = [
@@ -18,50 +17,72 @@ const tabMap: { name: LogType; labelKey: string }[] = [
   { name: 'background', labelKey: 'logs.background' },
   { name: 'threats', labelKey: 'logs.threat' },
   { name: 'audit', labelKey: 'logs.audit' },
+  { name: 'heartbeat', labelKey: 'logs.heartbeat' },
 ]
+
+const isAttackLike = computed(() =>
+  ['attacks', 'sniffers', 'background', 'threats'].includes(activeTab.value),
+)
+const isAudit = computed(() => activeTab.value === 'audit')
+const isHeartbeat = computed(() => activeTab.value === 'heartbeat')
 
 async function fetchLogs() {
   loading.value = true
   try {
     const params: {
-      page?: number
-      per_page?: number
-      start_time?: string
-      end_time?: string
+      limit?: number
+      offset?: number
+      since?: string
+      until?: string
     } = {
-      page: page.value,
-      per_page: perPage.value,
+      limit: limit.value,
+      offset: offset.value,
     }
     if (timeRange.value) {
-      params.start_time = timeRange.value[0]
-      params.end_time = timeRange.value[1]
+      params.since = timeRange.value[0]
+      params.until = timeRange.value[1]
     }
     const res = await getLogs(activeTab.value, params)
-    logs.value = res.logs
-    total.value = Number(res.total) || 0
+    logs.value = res.rows ?? []
   } catch {
     logs.value = []
-    total.value = 0
   } finally {
     loading.value = false
   }
 }
 
 function onTabChange() {
-  page.value = 1
+  offset.value = 0
   fetchLogs()
 }
 
 function onTimeChange() {
-  page.value = 1
+  offset.value = 0
   fetchLogs()
 }
 
-watch(page, fetchLogs)
-watch(perPage, () => {
-  page.value = 1
+function onPrev() {
+  offset.value = Math.max(0, offset.value - limit.value)
   fetchLogs()
-})
+}
+
+function onNext() {
+  if (logs.value.length >= limit.value) {
+    offset.value += limit.value
+    fetchLogs()
+  }
+}
+
+function formatHeartbeatSummary(data: Record<string, unknown> | undefined): string {
+  if (!data) return ''
+  const parts: string[] = []
+  if (data.modules_loaded !== undefined) parts.push(`modules: ${data.modules_loaded}/${Number(data.modules_loaded) + Number(data.modules_failed ?? 0)}`)
+  if (data.static_guards !== undefined) parts.push(`static: ${data.static_guards}`)
+  if (data.dynamic_guards !== undefined) parts.push(`dynamic: ${data.dynamic_guards}`)
+  if (data.online_devices !== undefined) parts.push(`devices: ${data.online_devices}`)
+  if (data.uptime_sec !== undefined) parts.push(`uptime: ${data.uptime_sec}s`)
+  return parts.join(', ')
+}
 
 onMounted(fetchLogs)
 </script>
@@ -93,23 +114,37 @@ onMounted(fetchLogs)
 
     <el-skeleton :loading="loading" animated>
       <template #default>
-        <el-table :data="logs" stripe>
+        <el-table v-if="isAttackLike" :data="logs" stripe>
           <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
           <el-table-column prop="src_ip" :label="t('policies.srcIp')" />
           <el-table-column prop="dst_ip" :label="t('policies.dstIp')" />
           <el-table-column prop="src_mac" :label="t('common.mac')" />
-          <el-table-column prop="type" :label="t('common.type')" width="120" />
-          <el-table-column prop="detail" :label="t('common.description')" min-width="200" />
+          <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" />
+          <el-table-column prop="details" :label="t('common.description')" min-width="200" />
+        </el-table>
+
+        <el-table v-else-if="isAudit" :data="logs" stripe>
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
+          <el-table-column prop="action" :label="t('logs.auditAction')" width="180" />
+          <el-table-column prop="actor" :label="t('logs.auditActor')" width="100" />
+          <el-table-column prop="target" :label="t('logs.auditTarget')" />
+          <el-table-column prop="details" :label="t('common.description')" min-width="200" />
+          <el-table-column prop="result" :label="t('logs.auditResult')" width="100" />
+        </el-table>
+
+        <el-table v-else-if="isHeartbeat" :data="logs" stripe>
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
+          <el-table-column :label="t('logs.heartbeatSummary')" min-width="400">
+            <template #default="{ row }">
+              {{ formatHeartbeatSummary(row.data) }}
+            </template>
+          </el-table-column>
         </el-table>
 
         <div class="pagination">
-          <el-pagination
-            v-model:current-page="page"
-            v-model:page-size="perPage"
-            :total="total"
-            :page-sizes="[10, 20, 50, 100]"
-            layout="total, sizes, prev, pager, next"
-          />
+          <el-button :disabled="offset <= 0" @click="onPrev">{{ t('logs.prev') }}</el-button>
+          <span class="page-info">{{ t('logs.showing', { from: offset + 1, to: offset + logs.length }) }}</span>
+          <el-button :disabled="logs.length < limit" @click="onNext">{{ t('logs.next') }}</el-button>
         </div>
       </template>
     </el-skeleton>
@@ -130,6 +165,12 @@ onMounted(fetchLogs)
 .pagination {
   margin-top: 16px;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
+}
+.page-info {
+  font-size: 13px;
+  color: #666;
 }
 </style>

@@ -90,6 +90,12 @@ int jz_db_insert_audit(jz_db_t *ctx,
                        const char *details,
                        const char *result);
 
+/* -- Heartbeat Log -- */
+
+int jz_db_insert_heartbeat(jz_db_t *ctx,
+                           const char *timestamp,
+                           const char *json_data);
+
 /* -- System State -- */
 
 int jz_db_set_state(jz_db_t *ctx, const char *key, const char *value);

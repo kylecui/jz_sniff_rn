@@ -8,8 +8,10 @@ import {
   discardConfig,
   getConfigHistory,
   rollbackConfig,
+  getInterfaces,
+  updateInterfaces,
 } from '@/api/config'
-import type { ConfigHistoryEntry } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface } from '@/api/config'
 
 const { t } = useI18n()
 
@@ -20,14 +22,18 @@ const isEditing = ref(false)
 const hasStaged = ref(false)
 const stagedText = ref('')
 const history = ref<ConfigHistoryEntry[]>([])
+const interfaces = ref<NetworkInterface[]>([])
+const systemMode = ref('bypass')
+const interfacesSaving = ref(false)
 
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist] = await Promise.all([
+    const [cfg, staged, hist, ifaces] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
+      getInterfaces(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
     configText.value = json
@@ -35,10 +41,27 @@ async function fetchAll() {
     hasStaged.value = staged.has_staged
     stagedText.value = staged.staged ? JSON.stringify(staged.staged, null, 2) : ''
     history.value = hist.history
+    interfaces.value = ifaces.interfaces
+    systemMode.value = ifaces.mode
   } catch {
     // keep defaults
   } finally {
     loading.value = false
+  }
+}
+
+async function handleSaveInterfaces() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmSaveInterfaces'), t('common.confirm'), { type: 'warning' })
+    interfacesSaving.value = true
+    const result = await updateInterfaces({ interfaces: interfaces.value, mode: systemMode.value })
+    interfaces.value = result.interfaces
+    systemMode.value = result.mode
+    ElMessage.success(t('common.success'))
+  } catch {
+    // cancelled or error
+  } finally {
+    interfacesSaving.value = false
   }
 }
 
@@ -104,6 +127,42 @@ onMounted(fetchAll)
 
     <el-skeleton :loading="loading" animated>
       <template #default>
+        <!-- Interfaces -->
+        <el-card class="section-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('config.interfaces') }}</span>
+              <el-button type="primary" size="small" :loading="interfacesSaving" @click="handleSaveInterfaces">
+                {{ t('common.save') }}
+              </el-button>
+            </div>
+          </template>
+          <el-table :data="interfaces" stripe>
+            <el-table-column prop="name" :label="t('config.interfaceName')" width="160" />
+            <el-table-column :label="t('config.interfaceRole')" width="160">
+              <template #default="{ row }">
+                <el-select v-model="row.role" size="small">
+                  <el-option label="monitor" value="monitor" />
+                  <el-option label="manage" value="manage" />
+                  <el-option label="mirror" value="mirror" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('config.interfaceSubnet')">
+              <template #default="{ row }">
+                <el-input v-model="row.subnet" size="small" :disabled="row.role === 'mirror'" placeholder="e.g. 10.0.1.0/24" />
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="mode-row">
+            <span>{{ t('config.mode') }}:</span>
+            <el-select v-model="systemMode" size="small" style="width: 140px; margin-left: 8px;">
+              <el-option :label="t('config.modeBypass')" value="bypass" />
+              <el-option :label="t('config.modeInline')" value="inline" />
+            </el-select>
+          </div>
+        </el-card>
+
         <!-- Current Config -->
         <el-card class="section-card">
           <template #header>
@@ -182,5 +241,10 @@ onMounted(fetchAll)
 .editing :deep(textarea) {
   border-color: #409eff;
   background: #fafafa;
+}
+.mode-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
 }
 </style>

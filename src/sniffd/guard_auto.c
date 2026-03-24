@@ -2,6 +2,7 @@
 
 #include "guard_auto.h"
 #include "guard_mgr.h"
+#include "discovery.h"
 
 #if __has_include("log.h")
 #include "log.h"
@@ -38,19 +39,42 @@ static int clamp_ratio(int ratio)
     return ratio;
 }
 
+static int free_ips(const jz_guard_auto_t *ga)
+{
+    int online;
+    int stat;
+    int frozen;
+    int avail;
+
+    if (!ga || ga->subnet_total <= 0)
+        return 0;
+
+    online = (ga->discovery) ? ga->discovery->device_count : 0;
+    stat   = (ga->config) ? ga->config->guards.static_count : 0;
+    frozen = (ga->config) ? ga->config->guards.frozen_ip_count : 0;
+
+    avail = ga->subnet_total - online - stat - frozen;
+    return (avail > 0) ? avail : 0;
+}
+
 static int max_allowed_dynamic(const jz_guard_auto_t *ga)
 {
-    int64_t value;
+    int64_t by_ratio;
+    int available;
 
     if (!ga || ga->subnet_total <= 0 || ga->max_ratio <= 0)
         return 0;
 
-    value = ((int64_t)ga->subnet_total * (int64_t)ga->max_ratio) / 100;
-    if (value <= 0)
+    available = free_ips(ga);
+    by_ratio  = ((int64_t)ga->subnet_total * (int64_t)ga->max_ratio) / 100;
+
+    if (by_ratio <= 0)
         return 0;
-    if (value > INT_MAX)
+    if (by_ratio > (int64_t)available)
+        by_ratio = (int64_t)available;
+    if (by_ratio > INT_MAX)
         return INT_MAX;
-    return (int)value;
+    return (int)by_ratio;
 }
 
 static void mac_to_text(const uint8_t mac[6], char *buf, size_t buf_size)
@@ -292,17 +316,26 @@ int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_siz
     int n;
     int max_allowed;
     int frozen_count;
+    int online_devices;
+    int static_count;
+    int free;
 
     if (!ga || !buf || buf_size == 0)
         return -1;
 
-    max_allowed = max_allowed_dynamic(ga);
-    frozen_count = ga->config ? ga->config->guards.frozen_ip_count : 0;
+    max_allowed    = max_allowed_dynamic(ga);
+    frozen_count   = ga->config ? ga->config->guards.frozen_ip_count : 0;
+    static_count   = ga->config ? ga->config->guards.static_count : 0;
+    online_devices = ga->discovery ? ga->discovery->device_count : 0;
+    free           = free_ips(ga);
 
     n = snprintf(buf, buf_size,
-                 "{\"max_ratio\":%d,\"subnet_total\":%d,\"max_allowed\":%d,\"current_dynamic\":%d,\"frozen_count\":%d}",
+                 "{\"max_ratio\":%d,\"subnet_total\":%d,\"max_allowed\":%d,"
+                 "\"current_dynamic\":%d,\"frozen_count\":%d,"
+                 "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d}",
                  ga->max_ratio, ga->subnet_total, max_allowed,
-                 ga->current_dynamic, frozen_count);
+                 ga->current_dynamic, frozen_count,
+                 static_count, online_devices, free);
     if (n < 0)
         return -1;
     if ((size_t)n >= buf_size)
@@ -320,4 +353,11 @@ void jz_guard_auto_update_config(jz_guard_auto_t *ga, const jz_config_t *cfg)
     if (parse_monitor_subnet(ga, cfg) < 0)
         jz_log_warn("guard_auto config update: monitor subnet parse error");
 
+}
+
+void jz_guard_auto_set_discovery(jz_guard_auto_t *ga, const jz_discovery_t *disc)
+{
+    if (!ga)
+        return;
+    ga->discovery = disc;
 }

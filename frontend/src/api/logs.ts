@@ -9,29 +9,38 @@ export interface LogEntry {
   dst_mac?: string
   type?: string
   detail?: string
+  event_type?: number
+  guard_type?: string
+  protocol?: string
+  threat_level?: number
+  details?: string
+  action?: string
+  actor?: string
+  target?: string
+  result?: string
+  data?: Record<string, unknown>
   [key: string]: unknown
 }
 
 export interface LogsResponse {
-  logs: LogEntry[]
-  total: number
-  page: number
-  per_page: number
+  rows: LogEntry[]
+  limit: number
+  offset: number
 }
 
-export type LogType = 'attacks' | 'sniffers' | 'background' | 'threats' | 'audit'
+export type LogType = 'attacks' | 'sniffers' | 'background' | 'threats' | 'audit' | 'heartbeat'
 
 function buildQuery(params: {
-  page?: number
-  per_page?: number
-  start_time?: string
-  end_time?: string
+  limit?: number
+  offset?: number
+  since?: string
+  until?: string
 }): string {
   const qs = new URLSearchParams()
-  if (params.page) qs.set('page', String(params.page))
-  if (params.per_page) qs.set('per_page', String(params.per_page))
-  if (params.start_time) qs.set('start_time', params.start_time)
-  if (params.end_time) qs.set('end_time', params.end_time)
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.offset !== undefined) qs.set('offset', String(params.offset))
+  if (params.since) qs.set('since', params.since)
+  if (params.until) qs.set('until', params.until)
   const s = qs.toString()
   return s ? `?${s}` : ''
 }
@@ -39,9 +48,9 @@ function buildQuery(params: {
 export const getLogs = (
   type: LogType,
   params: {
-    page?: number
-    per_page?: number
-    start_time?: string
-    end_time?: string
+    limit?: number
+    offset?: number
+    since?: string
+    until?: string
   } = {},
 ) => get<LogsResponse>(`/logs/${type}${buildQuery(params)}`)

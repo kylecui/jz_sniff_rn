@@ -105,9 +105,18 @@
     "background": "Background Traffic",
     "threat": "Threat Detection",
     "audit": "Audit Logs",
+    "heartbeat": "Heartbeat",
     "timeRange": "Time Range",
     "startTime": "Start Time",
-    "endTime": "End Time"
+    "endTime": "End Time",
+    "auditAction": "Action",
+    "auditActor": "Actor",
+    "auditTarget": "Target",
+    "auditResult": "Result",
+    "heartbeatSummary": "Summary",
+    "prev": "Previous",
+    "next": "Next",
+    "showing": "Showing {from}–{to}"
   },
   "discovery": {
     "title": "Device Discovery",
@@ -136,7 +145,15 @@
     "confirmCommit": "Are you sure you want to commit staged config?",
     "confirmDiscard": "Are you sure you want to discard staged changes?",
     "confirmRollback": "Are you sure you want to rollback to version {version}?",
-    "noStaged": "No staged changes"
+    "noStaged": "No staged changes",
+    "interfaces": "Interfaces",
+    "interfaceName": "Name",
+    "interfaceRole": "Role",
+    "interfaceSubnet": "Subnet",
+    "mode": "Mode",
+    "modeBypass": "Bypass",
+    "modeInline": "Inline",
+    "confirmSaveInterfaces": "Save interface configuration?"
   },
   "system": {
     "title": "System Settings",

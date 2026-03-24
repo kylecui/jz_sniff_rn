@@ -1,4 +1,4 @@
-import { get, post } from './request'
+import { get, post, put } from './request'
 
 export interface ConfigData {
   config: Record<string, unknown>
@@ -19,6 +19,17 @@ export interface ConfigHistory {
   history: ConfigHistoryEntry[]
 }
 
+export interface NetworkInterface {
+  name: string
+  role: 'monitor' | 'manage' | 'mirror'
+  subnet: string
+}
+
+export interface InterfacesData {
+  interfaces: NetworkInterface[]
+  mode: string
+}
+
 export const getConfig = () => get<ConfigData>('/config')
 export const applyConfig = (data: Record<string, unknown>) =>
   post<void>('/config', data)
@@ -30,3 +41,7 @@ export const discardConfig = () => post<void>('/config/discard')
 export const getConfigHistory = () => get<ConfigHistory>('/config/history')
 export const rollbackConfig = (version?: number) =>
   post<void>('/config/rollback', version !== undefined ? { version } : undefined)
+
+export const getInterfaces = () => get<InterfacesData>('/config/interfaces')
+export const updateInterfaces = (data: InterfacesData) =>
+  put<InterfacesData>('/config/interfaces', data)

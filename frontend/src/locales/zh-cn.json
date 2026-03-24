@@ -105,9 +105,18 @@
     "background": "背景流量",
     "threat": "威胁检测",
     "audit": "审计日志",
+    "heartbeat": "心跳日志",
     "timeRange": "时间范围",
     "startTime": "开始时间",
-    "endTime": "结束时间"
+    "endTime": "结束时间",
+    "auditAction": "操作",
+    "auditActor": "执行者",
+    "auditTarget": "目标",
+    "auditResult": "结果",
+    "heartbeatSummary": "摘要",
+    "prev": "上一页",
+    "next": "下一页",
+    "showing": "显示 {from}–{to}"
   },
   "discovery": {
     "title": "设备发现",
@@ -136,7 +145,15 @@
     "confirmCommit": "确定要提交暂存配置吗？",
     "confirmDiscard": "确定要丢弃暂存更改吗？",
     "confirmRollback": "确定要回滚到版本 {version} 吗？",
-    "noStaged": "没有暂存更改"
+    "noStaged": "没有暂存更改",
+    "interfaces": "接口配置",
+    "interfaceName": "名称",
+    "interfaceRole": "角色",
+    "interfaceSubnet": "子网",
+    "mode": "模式",
+    "modeBypass": "旁路",
+    "modeInline": "串联",
+    "confirmSaveInterfaces": "保存接口配置？"
   },
   "system": {
     "title": "系统设置",
