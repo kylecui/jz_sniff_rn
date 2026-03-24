@@ -60,7 +60,7 @@ async function fetchAll() {
     ])
     staticGuards.value = s.guards
     dynamicGuards.value = d.guards
-    frozenGuards.value = f.guards
+    frozenGuards.value = f.frozen_ips
     autoStatus.value = a
   } catch {
     // keep defaults

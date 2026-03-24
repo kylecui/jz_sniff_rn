@@ -34,7 +34,7 @@ export const deleteDynamicGuard = (ip: string) =>
   del<void>(`/guards/dynamic/${ip}`)
 
 export const getFrozenGuards = () =>
-  get<{ guards: FrozenGuard[] }>('/guards/frozen')
+  get<{ frozen_ips: FrozenGuard[] }>('/guards/frozen')
 export const addFrozenGuard = (data: { ip: string }) =>
   post<FrozenGuard>('/guards/frozen', data)
 export const deleteFrozenGuard = (ip: string) =>
