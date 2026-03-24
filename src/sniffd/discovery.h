@@ -44,6 +44,7 @@ typedef struct jz_discovery {
 int  jz_discovery_init(jz_discovery_t *disc, const jz_config_t *cfg);
 void jz_discovery_destroy(jz_discovery_t *disc);
 int  jz_discovery_tick(jz_discovery_t *disc);
+int  jz_discovery_recv_arp(jz_discovery_t *disc);
 int  jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
                              const uint8_t *payload, uint32_t payload_len);
 jz_discovery_device_t *jz_discovery_lookup(jz_discovery_t *disc, const uint8_t mac[6]);

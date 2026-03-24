@@ -199,6 +199,20 @@ static bool check_config_changed(void)
 
 /* ── Apply Config to BPF Maps ─────────────────────────────────── */
 
+static int open_pinned_map(const char *map_name, char *pin_buf, size_t pin_size)
+{
+    int fd;
+
+    snprintf(pin_buf, pin_size, "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
+    fd = bpf_obj_get(pin_buf);
+    if (fd >= 0)
+        return fd;
+
+    snprintf(pin_buf, pin_size, "/sys/fs/bpf/%s", map_name);
+    fd = bpf_obj_get(pin_buf);
+    return fd;
+}
+
 /*
  * Open pinned BPF HASH map, push key/value entries, close fd.
  * Returns -1 if map not pinned yet (non-fatal during early startup).
@@ -209,12 +223,10 @@ static int push_hash_map(const char *map_name,
                          int count)
 {
     char pin[512];
-    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
-
-    int fd = bpf_obj_get(pin);
+    int fd = open_pinned_map(map_name, pin, sizeof(pin));
     if (fd < 0) {
         jz_log_warn("Cannot open pinned map %s: %s (BPF modules may not be loaded yet)",
-                     pin, strerror(errno));
+                     map_name, strerror(errno));
         return -1;
     }
 
@@ -240,12 +252,10 @@ static int push_array_singleton(const char *map_name,
 {
     (void)value_size;
     char pin[512];
-    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
-
-    int fd = bpf_obj_get(pin);
+    int fd = open_pinned_map(map_name, pin, sizeof(pin));
     if (fd < 0) {
         jz_log_warn("Cannot open pinned map %s: %s",
-                     pin, strerror(errno));
+                     map_name, strerror(errno));
         return -1;
     }
 
@@ -265,12 +275,10 @@ static int push_array_map(const char *map_name,
                           int count)
 {
     char pin[512];
-    snprintf(pin, sizeof(pin), "%s/%s", DEFAULT_BPF_PIN_DIR, map_name);
-
-    int fd = bpf_obj_get(pin);
+    int fd = open_pinned_map(map_name, pin, sizeof(pin));
     if (fd < 0) {
         jz_log_warn("Cannot open pinned map %s: %s",
-                     pin, strerror(errno));
+                     map_name, strerror(errno));
         return -1;
     }
 

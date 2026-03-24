@@ -1078,8 +1078,10 @@ int main(int argc, char *argv[])
         if (g_ctx.guard_mgr.initialized)
             jz_guard_mgr_tick(&g_ctx.guard_mgr);
 
-        if (g_ctx.discovery.initialized)
+        if (g_ctx.discovery.initialized) {
             jz_discovery_tick(&g_ctx.discovery);
+            jz_discovery_recv_arp(&g_ctx.discovery);
+        }
 
         if (g_ctx.guard_auto.initialized)
             jz_guard_auto_tick(&g_ctx.guard_auto);

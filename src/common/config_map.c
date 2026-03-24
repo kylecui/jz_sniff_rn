@@ -12,6 +12,7 @@
 
 #include "config.h"
 #include "config_map.h"
+#include "log.h"
 
 #define JZ_MAP_MAX_STATIC_GUARDS      256
 #define JZ_MAP_MAX_WHITELIST          256
@@ -739,7 +740,7 @@ int jz_config_load_blacklist(const char *path, jz_config_map_batch_t *batch)
 
     fp = fopen(path, "r");
     if (!fp)
-        return -1;
+        return 0;   /* missing file = empty blacklist, not fatal */
 
     ts = now_unix_sec();
 
@@ -779,33 +780,51 @@ int jz_config_to_maps(const jz_config_t *cfg, jz_config_map_batch_t *batch)
 
     memset(batch, 0, sizeof(*batch));
 
-    if (translate_guards(cfg, batch) != 0)
+    if (translate_guards(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_guards failed");
         return -1;
+    }
 
-    if (translate_whitelist(cfg, batch) != 0)
+    if (translate_whitelist(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_whitelist failed");
         return -1;
+    }
 
-    if (translate_policies(cfg, batch) != 0)
+    if (translate_policies(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_policies failed");
         return -1;
+    }
 
-    if (translate_threats(cfg, batch) != 0)
+    if (translate_threats(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_threats failed");
         return -1;
+    }
 
-    if (translate_module_configs(cfg, batch) != 0)
+    if (translate_module_configs(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_module_configs failed");
         return -1;
+    }
 
-    if (translate_bg_filters(cfg, batch) != 0)
+    if (translate_bg_filters(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_bg_filters failed");
         return -1;
+    }
 
     if (jz_config_generate_macs(cfg->fake_mac_pool.prefix,
                                 cfg->fake_mac_pool.count,
                                 batch) != 0) {
+        jz_log_error("config_to_maps: generate_macs failed (prefix=%s, count=%d)",
+                     cfg->fake_mac_pool.prefix ? cfg->fake_mac_pool.prefix : "NULL",
+                     cfg->fake_mac_pool.count);
         return -1;
     }
 
     if (cfg->threats.blacklist_file[0] != '\0') {
-        if (jz_config_load_blacklist(cfg->threats.blacklist_file, batch) != 0)
+        if (jz_config_load_blacklist(cfg->threats.blacklist_file, batch) != 0) {
+            jz_log_error("config_to_maps: load_blacklist failed (%s)",
+                         cfg->threats.blacklist_file);
             return -1;
+        }
     }
 
     return 0;

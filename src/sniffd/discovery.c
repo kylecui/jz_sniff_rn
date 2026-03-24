@@ -19,6 +19,8 @@
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#include <poll.h>
 
 #define JZ_DISCOVERY_ARP_BATCH_SIZE   16
 
@@ -183,7 +185,7 @@ static int open_arp_socket(jz_discovery_t *disc, const jz_config_t *cfg)
         return -1;
     }
 
-    sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
+    sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ARP));
     if (sock < 0) {
         jz_log_error("socket(AF_PACKET, SOCK_RAW, ETH_P_ARP) failed: %s", strerror(errno));
         return -1;
@@ -501,6 +503,44 @@ int jz_discovery_tick(jz_discovery_t *disc)
 
     disc->last_arp_scan_ns = now_ns;
     return 0;
+}
+
+int jz_discovery_recv_arp(jz_discovery_t *disc)
+{
+    uint8_t buf[128];
+    ssize_t n;
+    int count;
+
+    if (!disc || !disc->initialized || disc->arp_sock < 0)
+        return 0;
+
+    /*
+     * Drain all pending ARP frames from the raw socket (non-blocking).
+     * The socket is AF_PACKET bound to ETH_P_ARP, so every frame here
+     * is an ARP packet including the ethernet header.
+     * Cap at 64 per call to avoid starving the main loop.
+     */
+    count = 0;
+    while (count < 64) {
+        n = recv(disc->arp_sock, buf, sizeof(buf), MSG_DONTWAIT);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            if (errno == EINTR)
+                continue;
+            jz_log_warn("discovery recv_arp error: %s", strerror(errno));
+            break;
+        }
+        if (n < 42)   /* minimum ARP frame: 14 eth + 28 arp */
+            continue;
+
+        /* Feed the raw frame — discovery_feed_event extracts src_mac at
+         * offset 6 and, for FP_PROTO_ARP, sender IP at offset 28. */
+        jz_discovery_feed_event(disc, FP_PROTO_ARP, buf, (uint32_t)n);
+        count++;
+    }
+
+    return count;
 }
 
 jz_discovery_device_t *jz_discovery_lookup(jz_discovery_t *disc, const uint8_t mac[6])
