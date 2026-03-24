@@ -52,21 +52,16 @@ function onTabChange() {
   fetchLogs()
 }
 
-function onPageChange(p: number) {
-  page.value = p
-  fetchLogs()
-}
-
-function onSizeChange(s: number) {
-  perPage.value = s
-  page.value = 1
-  fetchLogs()
-}
-
 function onTimeChange() {
   page.value = 1
   fetchLogs()
 }
+
+watch(page, fetchLogs)
+watch(perPage, () => {
+  page.value = 1
+  fetchLogs()
+})
 
 onMounted(fetchLogs)
 </script>

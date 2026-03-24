@@ -1028,6 +1028,20 @@ int main(int argc, char *argv[])
                 }
                 closedir(d);
             }
+
+            /* Chown IPC sockets so jz user can connect to peer daemons */
+            d = opendir("/var/run/jz");
+            if (d) {
+                struct dirent *ent;
+                char path[512];
+                while ((ent = readdir(d)) != NULL) {
+                    if (ent->d_name[0] == '.')
+                        continue;
+                    snprintf(path, sizeof(path), "/var/run/jz/%s", ent->d_name);
+                    if (chown(path, u, g) < 0) { }
+                }
+                closedir(d);
+            }
         }
     }
 

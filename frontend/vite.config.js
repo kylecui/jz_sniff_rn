@@ -3,8 +3,6 @@ import vue from '@vitejs/plugin-vue';
 import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers';
-import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite';
-import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
     plugins: [
@@ -18,11 +16,6 @@ export default defineConfig({
         Components({
             resolvers: [ElementPlusResolver()],
             dts: 'src/components.d.ts',
-        }),
-        VueI18nPlugin({
-            include: resolve(__dirname, './src/locales/**'),
-            compositionOnly: true,
-            fullInstall: false,
         }),
     ],
     resolve: {

@@ -2602,7 +2602,7 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         struct mg_http_serve_opts opts;
         memset(&opts, 0, sizeof(opts));
         opts.root_dir = JZ_WWW_ROOT;
-        opts.page404 = "/index.html";
+        opts.page404 = JZ_WWW_ROOT "/index.html";
         mg_http_serve_dir(c, hm, &opts);
     }
 }

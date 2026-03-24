@@ -8,24 +8,24 @@ Documentation=file:/usr/share/doc/jz_sniff_rn/design.md
 After=sniffd.service
 BindsTo=sniffd.service
 PartOf=sniffd.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=forking
 ExecStart=/usr/local/sbin/collectord --daemon --config /etc/jz/base.yaml
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/var/run/jz/collectord.pid
+PIDFile=/run/jz/collectord.pid
 
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 LimitNOFILE=65536
 
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/jz /var/run/jz
+ReadWritePaths=/var/lib/jz /run/jz
 ProtectHome=yes
 PrivateTmp=yes
 

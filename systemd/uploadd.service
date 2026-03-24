@@ -10,24 +10,24 @@ After=collectord.service
 Wants=collectord.service
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=forking
 ExecStart=/usr/local/sbin/uploadd --daemon --config /etc/jz/base.yaml
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/var/run/jz/uploadd.pid
+PIDFile=/run/jz/uploadd.pid
 
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 LimitNOFILE=65536
 
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/jz /var/run/jz
+ReadWritePaths=/var/lib/jz /run/jz
 ProtectHome=yes
 PrivateTmp=yes
 
