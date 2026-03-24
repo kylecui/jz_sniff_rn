@@ -63,7 +63,11 @@
     "mac": "绑定 MAC",
     "source": "来源",
     "confirmDelete": "确定要删除哨兵 {ip} 吗？",
-    "confirmDeleteFrozen": "确定要解冻 IP {ip} 吗？"
+    "confirmDeleteFrozen": "确定要解冻 IP {ip} 吗？",
+    "maxRatio": "子网占比上限",
+    "maxAllowed": "最大允许数",
+    "currentDynamic": "当前动态哨兵",
+    "frozenCount": "冻结 IP 数"
   },
   "whitelist": {
     "title": "白名单管理",

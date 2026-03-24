@@ -14,9 +14,11 @@ export interface FrozenGuard {
 }
 
 export interface AutoGuardStatus {
-  enabled: boolean
-  last_scan?: string
-  discovered_count?: number
+  max_ratio: number
+  subnet_total: number
+  max_allowed: number
+  current_dynamic: number
+  frozen_count: number
 }
 
 export const getGuards = () => get<{ guards: Guard[] }>('/guards')
@@ -39,4 +41,4 @@ export const deleteFrozenGuard = (ip: string) =>
   del<void>(`/guards/frozen/${ip}`)
 
 export const getAutoGuardStatus = () =>
-  get<AutoGuardStatus>('/guards/auto/status')
+  get<AutoGuardStatus>('/guards/auto/config')

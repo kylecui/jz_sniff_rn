@@ -63,7 +63,11 @@
     "mac": "Bound MAC",
     "source": "Source",
     "confirmDelete": "Are you sure you want to delete guard {ip}?",
-    "confirmDeleteFrozen": "Are you sure you want to unfreeze IP {ip}?"
+    "confirmDeleteFrozen": "Are you sure you want to unfreeze IP {ip}?",
+    "maxRatio": "Subnet ratio limit",
+    "maxAllowed": "Max allowed",
+    "currentDynamic": "Current dynamic guards",
+    "frozenCount": "Frozen IPs"
   },
   "whitelist": {
     "title": "Whitelist Management",

@@ -21,7 +21,7 @@ const loading = ref(true)
 const staticGuards = ref<Guard[]>([])
 const dynamicGuards = ref<Guard[]>([])
 const frozenGuards = ref<FrozenGuard[]>([])
-const autoStatus = ref<AutoGuardStatus>({ enabled: false })
+const autoStatus = ref<AutoGuardStatus>({ max_ratio: 0, subnet_total: 0, max_allowed: 0, current_dynamic: 0, frozen_count: 0 })
 
 // Add static dialog
 const showStaticDialog = ref(false)
@@ -180,15 +180,11 @@ onMounted(fetchAll)
         <el-card class="auto-card">
           <template #header>{{ t('guards.autoStatus') }}</template>
           <p>
-            {{ t('common.status') }}:
-            <el-tag :type="autoStatus.enabled ? 'success' : 'info'">
-              {{ autoStatus.enabled ? t('common.enabled') : t('common.disabled') }}
-            </el-tag>
+            {{ t('guards.maxRatio') }}: {{ autoStatus.max_ratio }}%
+            （{{ t('guards.maxAllowed') }}: {{ autoStatus.max_allowed }} / {{ autoStatus.subnet_total }}）
           </p>
-          <p v-if="autoStatus.last_scan">Last scan: {{ autoStatus.last_scan }}</p>
-          <p v-if="autoStatus.discovered_count != null">
-            Discovered: {{ autoStatus.discovered_count }}
-          </p>
+          <p>{{ t('guards.currentDynamic') }}: {{ autoStatus.current_dynamic }}</p>
+          <p>{{ t('guards.frozenCount') }}: {{ autoStatus.frozen_count }}</p>
         </el-card>
       </template>
     </el-skeleton>
