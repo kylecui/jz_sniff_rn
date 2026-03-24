@@ -158,6 +158,15 @@ int jz_db_open(jz_db_t *ctx, const char *path)
     }
 
     ctx->initialized = true;
+
+    /* Schema migration: add vlan_id columns (safe no-op if already present) */
+    exec_sql(ctx->db,
+        "ALTER TABLE attack_log ADD COLUMN vlan_id INTEGER DEFAULT 0;");
+    exec_sql(ctx->db,
+        "ALTER TABLE sniffer_log ADD COLUMN vlan_id INTEGER DEFAULT 0;");
+    exec_sql(ctx->db,
+        "ALTER TABLE bg_capture ADD COLUMN vlan_id INTEGER DEFAULT 0;");
+
     return 0;
 }
 
@@ -186,7 +195,8 @@ int jz_db_insert_attack(jz_db_t *ctx,
                         int threat_level,
                         const void *packet_sample,
                         int sample_len,
-                        const char *details)
+                        const char *details,
+                        int vlan_id)
 {
     if (!ctx || !ctx->initialized)
         return -1;
@@ -194,8 +204,8 @@ int jz_db_insert_attack(jz_db_t *ctx,
     const char *sql =
         "INSERT INTO attack_log (event_type, timestamp, timestamp_ns, "
         "src_ip, src_mac, dst_ip, dst_mac, guard_type, protocol, "
-        "ifindex, threat_level, packet_sample, details) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        "ifindex, threat_level, packet_sample, details, vlan_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -220,6 +230,7 @@ int jz_db_insert_attack(jz_db_t *ctx,
         sqlite3_bind_null(stmt, 12);
 
     sqlite3_bind_text(stmt, 13, details, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 14, vlan_id);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -236,15 +247,16 @@ int jz_db_insert_sniffer(jz_db_t *ctx,
                          const char *first_seen,
                          const char *last_seen,
                          int response_count,
-                         const char *probe_ip)
+                         const char *probe_ip,
+                         int vlan_id)
 {
     if (!ctx || !ctx->initialized)
         return -1;
 
     const char *sql =
         "INSERT INTO sniffer_log (mac, ip, ifindex, first_seen, "
-        "last_seen, response_count, probe_ip) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)";
+        "last_seen, response_count, probe_ip, vlan_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -258,6 +270,7 @@ int jz_db_insert_sniffer(jz_db_t *ctx,
     sqlite3_bind_text(stmt, 5, last_seen, -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 6, response_count);
     sqlite3_bind_text(stmt, 7, probe_ip, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 8, vlan_id);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -274,15 +287,16 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
                             int packet_count,
                             int byte_count,
                             int unique_sources,
-                            const char *sample_data)
+                            const char *sample_data,
+                            int vlan_id)
 {
     if (!ctx || !ctx->initialized)
         return -1;
 
     const char *sql =
         "INSERT INTO bg_capture (period_start, period_end, protocol, "
-        "packet_count, byte_count, unique_sources, sample_data) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)";
+        "packet_count, byte_count, unique_sources, sample_data, vlan_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -296,6 +310,7 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
     sqlite3_bind_int(stmt, 5, byte_count);
     sqlite3_bind_int(stmt, 6, unique_sources);
     sqlite3_bind_text(stmt, 7, sample_data, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 8, vlan_id);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -547,7 +562,8 @@ int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
 
     const char *sql =
         "SELECT id, event_type, timestamp, timestamp_ns, src_ip, src_mac, "
-        "dst_ip, dst_mac, guard_type, protocol, ifindex, threat_level, details "
+        "dst_ip, dst_mac, guard_type, protocol, ifindex, threat_level, details, "
+        "COALESCE(vlan_id, 0) "
         "FROM attack_log WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
 
     sqlite3_stmt *stmt;
@@ -588,6 +604,7 @@ int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
         r->ifindex      = sqlite3_column_int(stmt, 10);
         r->threat_level = sqlite3_column_int(stmt, 11);
         snprintf(r->details,    sizeof(r->details),    "%s", safe_text(stmt, 12));
+        r->vlan_id      = sqlite3_column_int(stmt, 13);
         n++;
     }
 
@@ -611,7 +628,7 @@ int jz_db_fetch_pending_sniffers(jz_db_t *ctx, int max_rows,
 
     const char *sql =
         "SELECT id, mac, ip, ifindex, first_seen, last_seen, "
-        "response_count, probe_ip "
+        "response_count, probe_ip, COALESCE(vlan_id, 0) "
         "FROM sniffer_log WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
 
     sqlite3_stmt *stmt;
@@ -647,6 +664,7 @@ int jz_db_fetch_pending_sniffers(jz_db_t *ctx, int max_rows,
         snprintf(r->last_seen,  sizeof(r->last_seen),  "%s", safe_text(stmt, 5));
         r->response_count = sqlite3_column_int(stmt, 6);
         snprintf(r->probe_ip,   sizeof(r->probe_ip),   "%s", safe_text(stmt, 7));
+        r->vlan_id        = sqlite3_column_int(stmt, 8);
         n++;
     }
 
@@ -670,7 +688,7 @@ int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
 
     const char *sql =
         "SELECT id, period_start, period_end, protocol, packet_count, "
-        "byte_count, unique_sources, sample_data "
+        "byte_count, unique_sources, sample_data, COALESCE(vlan_id, 0) "
         "FROM bg_capture WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
 
     sqlite3_stmt *stmt;
@@ -706,6 +724,7 @@ int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
         r->byte_count     = sqlite3_column_int(stmt, 5);
         r->unique_sources = sqlite3_column_int(stmt, 6);
         snprintf(r->sample_data,  sizeof(r->sample_data),  "%s", safe_text(stmt, 7));
+        r->vlan_id        = sqlite3_column_int(stmt, 8);
         n++;
     }
 

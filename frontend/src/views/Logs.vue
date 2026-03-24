@@ -119,6 +119,7 @@ onMounted(fetchLogs)
           <el-table-column prop="src_ip" :label="t('policies.srcIp')" />
           <el-table-column prop="dst_ip" :label="t('policies.dstIp')" />
           <el-table-column prop="src_mac" :label="t('common.mac')" />
+          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" />
           <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" />
           <el-table-column prop="details" :label="t('common.description')" min-width="200" />
         </el-table>

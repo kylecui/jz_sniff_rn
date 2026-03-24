@@ -122,7 +122,8 @@
     "heartbeatSummary": "Summary",
     "prev": "Previous",
     "next": "Next",
-    "showing": "Showing {from}–{to}"
+    "showing": "Showing {from}–{to}",
+    "vlan": "VLAN"
   },
   "discovery": {
     "title": "Device Discovery",
@@ -168,7 +169,13 @@
     "arpSpoofTargetIp": "Target IP",
     "arpSpoofGatewayIp": "Gateway IP",
     "arpSpoofAddTarget": "Add Target",
-    "confirmSaveArpSpoof": "Save ARP spoof configuration? This will actively inject packets on the network."
+    "confirmSaveArpSpoof": "Save ARP spoof configuration? This will actively inject packets on the network.",
+    "vlans": "VLAN Configuration",
+    "vlanId": "VLAN ID",
+    "vlanName": "Name",
+    "vlanSubnet": "Subnet",
+    "addVlan": "Add VLAN",
+    "confirmSaveVlans": "Save VLAN configuration?"
   },
   "system": {
     "title": "System Settings",

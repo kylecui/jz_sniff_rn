@@ -89,22 +89,26 @@ jz_check_whitelist(struct rs_ctx *ctx, __u32 src_ip, const __u8 *src_mac)
 /* ── Helper: Lookup guard entry (static first, then dynamic) ── */
 
 static __always_inline struct jz_guard_entry *
-jz_lookup_guard(__u32 dst_ip, __u8 *out_guard_type)
+jz_lookup_guard(__u32 dst_ip, __u16 ingress_vlan, __u8 *out_guard_type)
 {
     struct jz_guard_entry *entry;
 
     /* Check static guards first */
     entry = bpf_map_lookup_elem(&jz_static_guards, &dst_ip);
     if (entry && entry->enabled) {
-        *out_guard_type = JZ_GUARD_STATIC;
-        return entry;
+        if (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan) {
+            *out_guard_type = JZ_GUARD_STATIC;
+            return entry;
+        }
     }
 
     /* Check dynamic guards */
     entry = bpf_map_lookup_elem(&jz_dynamic_guards, &dst_ip);
     if (entry && entry->enabled) {
-        *out_guard_type = JZ_GUARD_DYNAMIC;
-        return entry;
+        if (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan) {
+            *out_guard_type = JZ_GUARD_DYNAMIC;
+            return entry;
+        }
     }
 
     return NULL;
@@ -136,7 +140,7 @@ jz_classify_proto(struct rs_ctx *ctx)
 
 static __always_inline void
 jz_store_result(__u8 guard_type, __u8 proto, __u16 flags,
-                __u32 guarded_ip, const __u8 *fake_mac)
+                __u32 guarded_ip, const __u8 *fake_mac, __u16 vlan_id)
 {
     __u32 key = 0;
     struct jz_guard_result *result;
@@ -149,6 +153,7 @@ jz_store_result(__u8 guard_type, __u8 proto, __u16 flags,
     result->proto = proto;
     result->flags = flags;
     result->guarded_ip = guarded_ip;
+    result->vlan_id = vlan_id;
 
     if (fake_mac)
         __builtin_memcpy(result->fake_mac, fake_mac, 6);
@@ -209,8 +214,12 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     __u32 dst_ip;
 
     if (ctx->layers.eth_proto == bpf_htons(0x0806)) {
-        /* ARP: extract IPs from ARP payload */
-        struct arphdr_ipv4 *arp = (void *)(eth + 1);
+        /* ARP: extract IPs from ARP payload (use l3_offset for VLAN support)
+         * Mask offset with RS_L3_OFFSET_MASK so the BPF verifier can
+         * prove the range after the subsequent bounds check.
+         */
+        __u16 l3_off = ctx->layers.l3_offset & RS_L3_OFFSET_MASK;
+        struct arphdr_ipv4 *arp = (void *)data + l3_off;
         if ((void *)(arp + 1) > data_end)
             return XDP_PASS;
 
@@ -231,7 +240,8 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     /* Step 1: Check whitelist — if whitelisted, skip guard classification */
     if (jz_check_whitelist(ctx, src_ip, src_mac)) {
         /* Store whitelist bypass result */
-        jz_store_result(JZ_GUARD_NONE, 0, JZ_FLAG_WHITELIST_BYPASS, 0, NULL);
+        jz_store_result(JZ_GUARD_NONE, 0, JZ_FLAG_WHITELIST_BYPASS, 0, NULL,
+                        ctx->ingress_vlan);
 
         /* Tail-call to next stage in pipeline */
         RS_TAIL_CALL_NEXT(xdp_ctx, ctx);
@@ -240,11 +250,12 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
 
     /* Step 2: Lookup guard tables */
     __u8 guard_type = JZ_GUARD_NONE;
-    struct jz_guard_entry *entry = jz_lookup_guard(dst_ip, &guard_type);
+    struct jz_guard_entry *entry = jz_lookup_guard(dst_ip, ctx->ingress_vlan,
+                                                    &guard_type);
 
     if (!entry) {
         /* No guard match — continue pipeline */
-        jz_store_result(JZ_GUARD_NONE, 0, 0, 0, NULL);
+        jz_store_result(JZ_GUARD_NONE, 0, 0, 0, NULL, ctx->ingress_vlan);
         RS_TAIL_CALL_NEXT(xdp_ctx, ctx);
         return XDP_PASS;
     }
@@ -264,7 +275,8 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     if (entry->fake_mac[0] || entry->fake_mac[1] || entry->fake_mac[2])
         fake_mac = entry->fake_mac;
 
-    jz_store_result(guard_type, proto, flags, dst_ip, fake_mac);
+    jz_store_result(guard_type, proto, flags, dst_ip, fake_mac,
+                    ctx->ingress_vlan);
 
     /* Step 5: Update guard entry stats (best-effort) */
     __sync_fetch_and_add(&entry->hit_count, 1);

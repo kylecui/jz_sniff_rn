@@ -360,8 +360,9 @@ static void now_iso8601(char *buf, size_t len)
  */
 
 /* Minimum event header size: type(4) + len(4) + ts(8) + ifindex(4) +
- * src_mac(6) + dst_mac(6) + src_ip(4) + dst_ip(4) = 40 bytes */
-#define EVENT_HDR_LEN  40
+ * vlan_id(2) + pad(2) + src_mac(6) + dst_mac(6) + src_ip(4) + dst_ip(4)
+ * = 44 bytes */
+#define EVENT_HDR_LEN  44
 
 static int persist_event(const char *payload, uint32_t payload_len)
 {
@@ -384,12 +385,15 @@ static int persist_event(const char *payload, uint32_t payload_len)
     uint32_t ifindex;
     memcpy(&ifindex, p + 16, 4);
 
-    const uint8_t *src_mac = p + 20;
-    const uint8_t *dst_mac = p + 26;
+    uint16_t vlan_id;
+    memcpy(&vlan_id, p + 20, 2);
+
+    const uint8_t *src_mac = p + 24;
+    const uint8_t *dst_mac = p + 30;
 
     uint32_t src_ip, dst_ip;
-    memcpy(&src_ip, p + 32, 4);
-    memcpy(&dst_ip, p + 36, 4);
+    memcpy(&src_ip, p + 36, 4);
+    memcpy(&dst_ip, p + 40, 4);
 
     /* Dedup check */
     char fp[DEDUP_KEY_LEN];
@@ -439,7 +443,7 @@ static int persist_event(const char *payload, uint32_t payload_len)
                                   timestamp_ns, src_ip_str, src_mac_str,
                                   dst_ip_str, dst_mac_str, guard_type,
                                   protocol, (int)ifindex, threat_level,
-                                  NULL, 0, NULL);
+                                  NULL, 0, NULL, (int)vlan_id);
         break;
     }
 
@@ -460,7 +464,8 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
         rc = jz_db_insert_sniffer(&g_ctx.db, src_mac_str, src_ip_str,
                                    (int)ifindex, timestamp, timestamp,
-                                   response_count, probe_ip_str);
+                                   response_count, probe_ip_str,
+                                   (int)vlan_id);
         break;
     }
 
@@ -470,7 +475,6 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
         if (payload_len >= EVENT_HDR_LEN + 8) {
             threat_level = p[EVENT_HDR_LEN + 4];
-            /* description is at offset +8, up to 32 bytes */
             if (payload_len >= EVENT_HDR_LEN + 8 + 32) {
                 memcpy(details, p + EVENT_HDR_LEN + 8,
                        sizeof(details) - 1 < 32 ? sizeof(details) - 1 : 32);
@@ -482,7 +486,7 @@ static int persist_event(const char *payload, uint32_t payload_len)
                                   timestamp_ns, src_ip_str, src_mac_str,
                                   dst_ip_str, dst_mac_str, "threat",
                                   "IP", (int)ifindex, threat_level,
-                                  NULL, 0, details);
+                                  NULL, 0, details, (int)vlan_id);
         break;
     }
 
@@ -508,7 +512,7 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
         rc = jz_db_insert_bg_capture(&g_ctx.db, timestamp, timestamp,
                                       protocol, pkt_count, byte_count,
-                                      1, NULL);
+                                      1, NULL, (int)vlan_id);
         break;
     }
 
@@ -613,6 +617,7 @@ static char *export_pending_json(int max_records)
         cJSON_AddStringToObject(obj, "protocol",     r->protocol);
         cJSON_AddNumberToObject(obj, "ifindex",      r->ifindex);
         cJSON_AddNumberToObject(obj, "threat_level", r->threat_level);
+        cJSON_AddNumberToObject(obj, "vlan_id",      r->vlan_id);
         if (r->details[0])
             cJSON_AddStringToObject(obj, "details", r->details);
         cJSON_AddItemToArray(arr_attacks, obj);
@@ -630,6 +635,7 @@ static char *export_pending_json(int max_records)
         cJSON_AddStringToObject(obj, "last_seen",      r->last_seen);
         cJSON_AddNumberToObject(obj, "response_count", r->response_count);
         cJSON_AddStringToObject(obj, "probe_ip",       r->probe_ip);
+        cJSON_AddNumberToObject(obj, "vlan_id",        r->vlan_id);
         cJSON_AddItemToArray(arr_sniffers, obj);
     }
 
@@ -644,6 +650,7 @@ static char *export_pending_json(int max_records)
         cJSON_AddNumberToObject(obj, "packet_count",   r->packet_count);
         cJSON_AddNumberToObject(obj, "byte_count",     r->byte_count);
         cJSON_AddNumberToObject(obj, "unique_sources", r->unique_sources);
+        cJSON_AddNumberToObject(obj, "vlan_id",        r->vlan_id);
         if (r->sample_data[0])
             cJSON_AddStringToObject(obj, "sample_data", r->sample_data);
         cJSON_AddItemToArray(arr_bg, obj);

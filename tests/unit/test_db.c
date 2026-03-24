@@ -80,7 +80,8 @@ static void test_db_insert_attack(void **state)
         2,                           /* ifindex */
         0,                           /* threat_level */
         NULL, 0,                     /* packet_sample */
-        "{\"detail\":\"test\"}");   /* details */
+        "{\"detail\":\"test\"}",    /* details */
+        0);                          /* vlan_id */
     assert_int_equal(0, rc);
 }
 
@@ -96,7 +97,8 @@ static void test_db_insert_sniffer(void **state)
         "2026-03-01T10:00:00Z",     /* first_seen */
         "2026-03-01T10:05:00Z",     /* last_seen */
         3,                           /* response_count */
-        "10.0.1.254");              /* probe_ip */
+        "10.0.1.254",               /* probe_ip */
+        0);                          /* vlan_id */
     assert_int_equal(0, rc);
 }
 
@@ -112,7 +114,8 @@ static void test_db_insert_bg_capture(void **state)
         150,                          /* packet_count */
         12000,                        /* byte_count */
         8,                            /* unique_sources */
-        "[{\"src\":\"10.0.1.1\"}]"); /* sample_data */
+        "[{\"src\":\"10.0.1.1\"}]",  /* sample_data */
+        0);                           /* vlan_id */
     assert_int_equal(0, rc);
 }
 
@@ -180,7 +183,7 @@ static void test_db_mark_uploaded(void **state)
     for (int i = 0; i < 3; i++) {
         jz_db_insert_attack(&test_db, 1, "2026-03-01T10:00:00Z",
             1709290800000000000ULL, "10.0.1.100", "aa:bb:cc:dd:ee:ff",
-            "10.0.1.50", NULL, "static", "arp", 2, 0, NULL, 0, NULL);
+            "10.0.1.50", NULL, "static", "arp", 2, 0, NULL, 0, NULL, 0);
     }
 
     /* Check pending count */
@@ -213,7 +216,7 @@ static void test_db_closed_operations(void **state)
     jz_db_t closed_db = {0};
 
     assert_int_equal(-1, jz_db_insert_attack(&closed_db,
-        1, "ts", 0, "ip", "mac", "dip", NULL, "static", "arp", 0, 0, NULL, 0, NULL));
+        1, "ts", 0, "ip", "mac", "dip", NULL, "static", "arp", 0, 0, NULL, 0, NULL, 0));
     assert_int_equal(-1, jz_db_set_state(&closed_db, "key", "val"));
 
     char buf[64];

@@ -45,7 +45,8 @@ int jz_db_insert_attack(jz_db_t *ctx,
                         int threat_level,
                         const void *packet_sample,
                         int sample_len,
-                        const char *details);
+                        const char *details,
+                        int vlan_id);
 
 /* -- Sniffer Log -- */
 
@@ -56,7 +57,8 @@ int jz_db_insert_sniffer(jz_db_t *ctx,
                          const char *first_seen,
                          const char *last_seen,
                          int response_count,
-                         const char *probe_ip);
+                         const char *probe_ip,
+                         int vlan_id);
 
 /* -- Background Capture -- */
 
@@ -67,7 +69,8 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
                             int packet_count,
                             int byte_count,
                             int unique_sources,
-                            const char *sample_data);
+                            const char *sample_data,
+                            int vlan_id);
 
 /* -- Config History -- */
 
@@ -124,6 +127,7 @@ typedef struct jz_attack_row {
     char     protocol[8];
     int      ifindex;
     int      threat_level;
+    int      vlan_id;
     char     details[256];
 } jz_attack_row_t;
 
@@ -136,6 +140,7 @@ typedef struct jz_sniffer_row {
     char last_seen[32];
     int  response_count;
     char probe_ip[46];
+    int  vlan_id;
 } jz_sniffer_row_t;
 
 typedef struct jz_bg_capture_row {
@@ -146,6 +151,7 @@ typedef struct jz_bg_capture_row {
     int  packet_count;
     int  byte_count;
     int  unique_sources;
+    int  vlan_id;
     char sample_data[256];
 } jz_bg_capture_row_t;
 

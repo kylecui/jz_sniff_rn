@@ -181,7 +181,9 @@ int jz_icmp_honeypot_prog(struct xdp_md *xdp_ctx)
     if ((void *)(eth + 1) > data_end)
         return jz_tail_next(xdp_ctx, ctx);
 
-    iph = (void *)(eth + 1);
+    /* Mask l3_offset for BPF verifier packet range proof */
+    __u16 l3_off = ctx->layers.l3_offset & RS_L3_OFFSET_MASK;
+    iph = (void *)data + l3_off;
     if ((void *)(iph + 1) > data_end)
         return jz_tail_next(xdp_ctx, ctx);
 
@@ -192,7 +194,7 @@ int jz_icmp_honeypot_prog(struct xdp_md *xdp_ctx)
     if ((void *)(icmp + 1) > data_end)
         return jz_tail_next(xdp_ctx, ctx);
 
-    if (ctx->layers.eth_proto != bpf_htons(ETH_P_IP) || eth->h_proto != bpf_htons(ETH_P_IP))
+    if (ctx->layers.eth_proto != bpf_htons(ETH_P_IP))
         return jz_tail_next(xdp_ctx, ctx);
 
     if (ctx->layers.ip_proto != IPPROTO_ICMP || iph->protocol != IPPROTO_ICMP)
@@ -239,6 +241,7 @@ int jz_icmp_honeypot_prog(struct xdp_md *xdp_ctx)
         evt.hdr.len = sizeof(evt);
         evt.hdr.timestamp_ns = bpf_ktime_get_ns();
         evt.hdr.ifindex = ctx->ifindex;
+        evt.hdr.vlan_id = ctx->ingress_vlan;
         __builtin_memcpy(evt.hdr.src_mac, orig_src_mac, 6);
         __builtin_memcpy(evt.hdr.dst_mac, orig_dst_mac, 6);
         evt.hdr.src_ip = orig_src_ip;

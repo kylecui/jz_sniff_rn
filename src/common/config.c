@@ -2022,6 +2022,77 @@ static int parse_arp_spoof(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_vlans(yaml_parser_t *parser, yaml_event_t *start,
+                       jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    if (start->type != YAML_SEQUENCE_START_EVENT) {
+        add_error(errors, event_line(start), "vlans", "expected sequence");
+        return skip_node(parser, start, errors);
+    }
+    yaml_event_delete(start);
+    cfg->vlan_count = 0;
+    for (;;) {
+        yaml_event_t item_ev;
+        if (next_event(parser, &item_ev, errors, "vlans") != 0)
+            return -1;
+        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+            yaml_event_delete(&item_ev);
+            break;
+        }
+        if (item_ev.type != YAML_MAPPING_START_EVENT) {
+            add_error(errors, event_line(&item_ev), "vlans", "entries must be mappings");
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        if (cfg->vlan_count >= JZ_CONFIG_MAX_VLANS) {
+            add_error(errors, event_line(&item_ev), "vlans", "too many entries (max %d)",
+                      JZ_CONFIG_MAX_VLANS);
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        yaml_event_delete(&item_ev);
+        for (;;) {
+            yaml_event_t k2, v2;
+            const char *k;
+            jz_config_vlan_t *v = &cfg->vlans[cfg->vlan_count];
+            if (next_event(parser, &k2, errors, "vlans") != 0)
+                return -1;
+            if (k2.type == YAML_MAPPING_END_EVENT) {
+                yaml_event_delete(&k2);
+                cfg->vlan_count++;
+                break;
+            }
+            if (k2.type != YAML_SCALAR_EVENT) {
+                add_error(errors, event_line(&k2), "vlans", "expected scalar key");
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            k = (const char *)k2.data.scalar.value;
+            if (next_event(parser, &v2, errors, "vlans") != 0) {
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            if (!strcmp(k, "id")) {
+                if (scalar_to_int(&v2, &v->id) != 0)
+                    add_error(errors, event_line(&v2), "vlans[].id", "must be int");
+            } else if (!strcmp(k, "name")) {
+                copy_scalar(v->name, sizeof(v->name), &v2);
+            } else if (!strcmp(k, "subnet")) {
+                copy_scalar(v->subnet, sizeof(v->subnet), &v2);
+            } else {
+                add_error(errors, event_line(&k2), "vlans", "unknown key '%s'", k);
+            }
+            yaml_event_delete(&v2);
+            yaml_event_delete(&k2);
+        }
+    }
+    return 0;
+}
+
 static int parse_api(yaml_parser_t *parser, yaml_event_t *start,
                      jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -2246,6 +2317,11 @@ static int parse_root_mapping(yaml_parser_t *parser, yaml_event_t *start,
             }
         } else if (!strcmp(key, "arp_spoof")) {
             if (parse_arp_spoof(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "vlans")) {
+            if (parse_vlans(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
                 return -1;
             }
@@ -2566,6 +2642,23 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
                       cfg->arp_spoof.targets[i].gateway_ip);
     }
 
+    if (cfg->vlan_count < 0)
+        add_error(errors, 0, "vlan_count", "must be non-negative");
+    for (i = 0; i < cfg->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
+        const jz_config_vlan_t *vl = &cfg->vlans[i];
+        if (vl->id < 1 || vl->id > 4094)
+            add_error(errors, 0, "vlans[].id", "must be 1-4094, got %d", vl->id);
+        if (vl->subnet[0] != '\0' && !is_valid_cidr(vl->subnet))
+            add_error(errors, 0, "vlans[].subnet", "invalid CIDR '%s'", vl->subnet);
+        {
+            int j;
+            for (j = 0; j < i; j++) {
+                if (cfg->vlans[j].id == vl->id)
+                    add_error(errors, 0, "vlans[].id", "duplicate VLAN ID %d", vl->id);
+            }
+        }
+    }
+
     return (errors && errors->count > start_count) ? -1 : 0;
 }
 
@@ -2681,6 +2774,8 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->arp_spoof.enabled = false;
     cfg->arp_spoof.interval_sec = 5;
     cfg->arp_spoof.target_count = 0;
+
+    cfg->vlan_count = 0;
 }
 
 void jz_config_free(jz_config_t *cfg)
@@ -3071,6 +3166,21 @@ char *jz_config_serialize(const jz_config_t *cfg)
         if (sb_appendf(&sb, "    - { target_ip: %s, gateway_ip: %s }\n",
                        cfg->arp_spoof.targets[i].target_ip,
                        cfg->arp_spoof.targets[i].gateway_ip) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb, "vlans:\n") != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->vlan_count; i++) {
+        if (sb_appendf(&sb, "  - { id: %d, name: %s, subnet: %s }\n",
+                       cfg->vlans[i].id,
+                       cfg->vlans[i].name,
+                       cfg->vlans[i].subnet) != 0) {
             free(sb.data);
             return NULL;
         }

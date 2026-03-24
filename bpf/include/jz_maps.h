@@ -38,7 +38,7 @@ struct jz_guard_result {
     __u16 flags;          /* JZ_FLAG_* */
     __u32 guarded_ip;     /* the IP that was matched */
     __u8  fake_mac[6];    /* MAC to use for response (from entry or pool) */
-    __u16 _pad;
+    __u16 vlan_id;        /* ingress VLAN (0=untagged) */
 };
 
 /* ═══════════════════════════════════════════════

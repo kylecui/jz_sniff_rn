@@ -1520,7 +1520,7 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
 
     (void) snprintf(sql, sizeof(sql),
                     "SELECT id,event_type,timestamp,timestamp_ns,src_ip,src_mac,dst_ip,dst_mac,"
-                    "guard_type,protocol,ifindex,threat_level,details "
+                    "guard_type,protocol,ifindex,threat_level,details,COALESCE(vlan_id,0) "
                     "FROM attack_log WHERE 1=1 %s %s %s ORDER BY id DESC LIMIT ? OFFSET ?",
                     since[0] ? "AND timestamp >= ?" : "",
                     until[0] ? "AND timestamp <= ?" : "",
@@ -1556,6 +1556,7 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
         cJSON_AddNumberToObject(o, "ifindex", sqlite3_column_int(stmt, 10));
         cJSON_AddNumberToObject(o, "threat_level", sqlite3_column_int(stmt, 11));
         cJSON_AddStringToObject(o, "details", (const char *) sqlite3_column_text(stmt, 12));
+        cJSON_AddNumberToObject(o, "vlan_id", sqlite3_column_int(stmt, 13));
         cJSON_AddItemToArray(arr, o);
     }
 
@@ -1705,7 +1706,7 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
     }
 
     if (sqlite3_prepare_v2(db,
-                           "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details "
+                           "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,COALESCE(vlan_id,0) "
                            "FROM attack_log WHERE threat_level > 0 ORDER BY id DESC LIMIT ? OFFSET ?",
                            -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
@@ -1728,6 +1729,7 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
         cJSON_AddStringToObject(o, "protocol", (const char *) sqlite3_column_text(stmt, 4));
         cJSON_AddNumberToObject(o, "threat_level", sqlite3_column_int(stmt, 5));
         cJSON_AddStringToObject(o, "details", (const char *) sqlite3_column_text(stmt, 6));
+        cJSON_AddNumberToObject(o, "vlan_id", sqlite3_column_int(stmt, 7));
         cJSON_AddItemToArray(arr, o);
     }
 
@@ -2666,6 +2668,127 @@ static void handle_config_arp_spoof_put(struct mg_connection *c, struct mg_http_
     handle_config_arp_spoof_get(c, hm, api);
 }
 
+static void handle_config_vlans_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "vlans");
+
+    for (i = 0; i < api->config->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
+        const jz_config_vlan_t *v = &api->config->vlans[i];
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "id", v->id);
+        cJSON_AddStringToObject(obj, "name", v->name);
+        cJSON_AddStringToObject(obj, "subnet", v->subnet);
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_vlans_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *arr;
+    int i;
+    int count;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    arr = cJSON_GetObjectItem(body, "vlans");
+    if (!arr || !cJSON_IsArray(arr)) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "missing 'vlans' array");
+        return;
+    }
+
+    count = cJSON_GetArraySize(arr);
+    if (count > JZ_CONFIG_MAX_VLANS) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "too many VLANs (max 16)");
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *id_j = cJSON_GetObjectItem(item, "id");
+        cJSON *name_j = cJSON_GetObjectItem(item, "name");
+        cJSON *subnet_j = cJSON_GetObjectItem(item, "subnet");
+
+        if (!id_j || !cJSON_IsNumber(id_j) ||
+            id_j->valueint < 1 || id_j->valueint > 4094) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "invalid VLAN id (must be 1-4094)");
+            return;
+        }
+        if (!name_j || !cJSON_IsString(name_j) || !name_j->valuestring[0]) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "VLAN entry missing 'name'");
+            return;
+        }
+        if (!subnet_j || !cJSON_IsString(subnet_j) || !strchr(subnet_j->valuestring, '/')) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "VLAN entry requires CIDR subnet");
+            return;
+        }
+
+        {
+            int j;
+            for (j = 0; j < i; j++) {
+                cJSON *prev = cJSON_GetArrayItem(arr, j);
+                cJSON *prev_id = cJSON_GetObjectItem(prev, "id");
+                if (prev_id && cJSON_IsNumber(prev_id) &&
+                    prev_id->valueint == id_j->valueint) {
+                    cJSON_Delete(body);
+                    api_error_reply(c, 400, "duplicate VLAN id");
+                    return;
+                }
+            }
+        }
+    }
+
+    api->config->vlan_count = count;
+    for (i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        jz_config_vlan_t *v = &api->config->vlans[i];
+
+        v->id = cJSON_GetObjectItem(item, "id")->valueint;
+        snprintf(v->name, sizeof(v->name), "%s",
+                 cJSON_GetObjectItem(item, "name")->valuestring);
+        snprintf(v->subnet, sizeof(v->subnet), "%s",
+                 cJSON_GetObjectItem(item, "subnet")->valuestring);
+    }
+
+    if (api_persist_config(api) < 0) {
+        jz_log_error("config/vlans PUT: failed to persist config");
+        cJSON_Delete(body);
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    api_audit_log(api, "config_vlans_update", NULL, NULL, "success");
+    cJSON_Delete(body);
+    handle_config_vlans_get(c, hm, api);
+}
+
 static void handle_config_staged_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     jz_ipc_msg_t reply;
@@ -2961,6 +3084,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_arp_spoof_get(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/vlans"), NULL)) {
+            handle_config_vlans_get(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/config"), NULL)) {
             handle_config_get(c, hm, api);
             return;
@@ -3076,6 +3203,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config/arp_spoof"), NULL)) {
             handle_config_arp_spoof_put(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/vlans"), NULL)) {
+            handle_config_vlans_put(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {

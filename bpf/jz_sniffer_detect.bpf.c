@@ -102,7 +102,9 @@ int jz_sniffer_detect_prog(struct xdp_md *xdp_ctx)
     void *data = (void *)(long)xdp_ctx->data;
     void *data_end = (void *)(long)xdp_ctx->data_end;
     struct ethhdr *eth = data;
-    struct arphdr_eth_ip *arp = (void *)(eth + 1);
+    /* Mask l3_offset for BPF verifier packet range proof */
+    __u16 l3_off = ctx->layers.l3_offset & RS_L3_OFFSET_MASK;
+    struct arphdr_eth_ip *arp = (void *)data + l3_off;
 
     if ((void *)(eth + 1) > data_end)
         goto out;
@@ -162,6 +164,7 @@ int jz_sniffer_detect_prog(struct xdp_md *xdp_ctx)
         evt.hdr.len = sizeof(evt);
         evt.hdr.timestamp_ns = now_ns;
         evt.hdr.ifindex = ctx->ifindex;
+        evt.hdr.vlan_id = ctx->ingress_vlan;
         __builtin_memcpy(evt.hdr.src_mac, arp->ar_sha, 6);
         evt.hdr.src_ip = sender_ip;
 

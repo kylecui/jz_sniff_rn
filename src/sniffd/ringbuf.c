@@ -20,7 +20,7 @@
  * We only need the size/offsets here — the callback gets raw data. */
 
 /* Minimum event size: just the header */
-#define JZ_EVENT_HDR_SIZE  32  /* sizeof(struct jz_event_hdr) */
+#define JZ_EVENT_HDR_SIZE  44  /* sizeof(struct jz_event_hdr) with vlan_id */
 
 /* ── Internal libbpf Callbacks ────────────────────────────────── */
 

@@ -122,7 +122,8 @@
     "heartbeatSummary": "摘要",
     "prev": "上一页",
     "next": "下一页",
-    "showing": "显示 {from}–{to}"
+    "showing": "显示 {from}–{to}",
+    "vlan": "VLAN"
   },
   "discovery": {
     "title": "设备发现",
@@ -168,7 +169,13 @@
     "arpSpoofTargetIp": "目标 IP",
     "arpSpoofGatewayIp": "网关 IP",
     "arpSpoofAddTarget": "添加目标",
-    "confirmSaveArpSpoof": "保存 ARP 欺骗配置？此操作将主动向网络注入数据包。"
+    "confirmSaveArpSpoof": "保存 ARP 欺骗配置？此操作将主动向网络注入数据包。",
+    "vlans": "VLAN 配置",
+    "vlanId": "VLAN ID",
+    "vlanName": "名称",
+    "vlanSubnet": "子网",
+    "addVlan": "添加 VLAN",
+    "confirmSaveVlans": "保存 VLAN 配置？"
   },
   "system": {
     "title": "系统设置",

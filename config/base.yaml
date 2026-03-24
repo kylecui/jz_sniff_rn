@@ -169,3 +169,11 @@ api:
   auth_tokens:
     - token: "changeme"              # CHANGE THIS — generate with: openssl rand -hex 32
       role: "admin"
+
+vlans: []
+#  - id: 10
+#    name: "servers"
+#    subnet: "10.10.0.0/24"
+#  - id: 20
+#    name: "clients"
+#    subnet: "10.20.0.0/24"

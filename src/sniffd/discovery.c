@@ -536,7 +536,7 @@ int jz_discovery_recv_arp(jz_discovery_t *disc)
 
         /* Feed the raw frame — discovery_feed_event extracts src_mac at
          * offset 6 and, for FP_PROTO_ARP, sender IP at offset 28. */
-        jz_discovery_feed_event(disc, FP_PROTO_ARP, buf, (uint32_t)n);
+        jz_discovery_feed_event(disc, FP_PROTO_ARP, buf, (uint32_t)n, 0);
         count++;
     }
 
@@ -562,7 +562,8 @@ jz_discovery_device_t *jz_discovery_lookup(jz_discovery_t *disc, const uint8_t m
 }
 
 int jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
-                            const uint8_t *payload, uint32_t payload_len)
+                            const uint8_t *payload, uint32_t payload_len,
+                            uint16_t vlan_id)
 {
     uint8_t src_mac[6];
     uint32_t src_ip;
@@ -600,6 +601,9 @@ int jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
     if (device->profile.first_seen == 0)
         device->profile.first_seen = now_sec;
     device->profile.last_seen = now_sec;
+
+    if (vlan_id != 0)
+        device->profile.vlan = vlan_id;
 
     src_ip = 0;
     if (extract_src_ip(proto, payload, payload_len, &src_ip) && device->profile.ip == 0)
@@ -686,8 +690,8 @@ int jz_discovery_list_json(const jz_discovery_t *disc, char *buf, size_t buf_siz
             if (buf_append_json_escaped(buf, buf_size, &off, p->hostname) < 0)
                 return -1;
             if (buf_append(buf, buf_size, &off,
-                           "\",\"confidence\":%u,\"signals\":%u,\"first_seen\":%u,\"last_seen\":%u}",
-                           p->confidence, p->signals, p->first_seen, p->last_seen) < 0)
+                           "\",\"confidence\":%u,\"signals\":%u,\"first_seen\":%u,\"last_seen\":%u,\"vlan\":%u}",
+                           p->confidence, p->signals, p->first_seen, p->last_seen, p->vlan) < 0)
                 return -1;
 
             total++;

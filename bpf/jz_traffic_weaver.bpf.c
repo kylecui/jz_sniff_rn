@@ -169,6 +169,7 @@ jz_emit_policy_event(struct rs_ctx *ctx,
     evt.hdr.len = sizeof(evt);
     evt.hdr.timestamp_ns = now_ns;
     evt.hdr.ifindex = ctx->ifindex;
+    evt.hdr.vlan_id = ctx->ingress_vlan;
     __builtin_memcpy(evt.hdr.src_mac, eth->h_source, 6);
     __builtin_memcpy(evt.hdr.dst_mac, eth->h_dest, 6);
     evt.hdr.src_ip = flow->src_ip;

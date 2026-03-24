@@ -188,10 +188,12 @@ int jz_arp_honeypot_prog(struct xdp_md *xdp_ctx)
     if ((void *)(eth + 1) > data_end)
         return jz_tail_pass(xdp_ctx, ctx);
 
-    if (eth->h_proto != bpf_htons(ETH_P_ARP))
+    if (ctx->layers.eth_proto != bpf_htons(ETH_P_ARP))
         return jz_tail_pass(xdp_ctx, ctx);
 
-    struct arphdr_eth_ip *arp = (void *)(eth + 1);
+    /* Mask l3_offset for BPF verifier packet range proof */
+    __u16 l3_off = ctx->layers.l3_offset & RS_L3_OFFSET_MASK;
+    struct arphdr_eth_ip *arp = (void *)data + l3_off;
     if ((void *)(arp + 1) > data_end)
         return jz_tail_pass(xdp_ctx, ctx);
 
@@ -236,6 +238,7 @@ int jz_arp_honeypot_prog(struct xdp_md *xdp_ctx)
     evt.hdr.len = sizeof(evt);
     evt.hdr.timestamp_ns = bpf_ktime_get_ns();
     evt.hdr.ifindex = ctx->ifindex;
+    evt.hdr.vlan_id = ctx->ingress_vlan;
     __builtin_memcpy(evt.hdr.src_mac, orig_eth_src, 6);
     __builtin_memcpy(evt.hdr.dst_mac, orig_eth_dst, 6);
     evt.hdr.src_ip = (__u32)orig_arp_sip;

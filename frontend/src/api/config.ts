@@ -60,3 +60,17 @@ export interface ArpSpoofConfig {
 export const getArpSpoof = () => get<ArpSpoofConfig>('/config/arp_spoof')
 export const updateArpSpoof = (data: ArpSpoofConfig) =>
   put<ArpSpoofConfig>('/config/arp_spoof', data)
+
+export interface VlanConfig {
+  id: number
+  name: string
+  subnet: string
+}
+
+export interface VlansData {
+  vlans: VlanConfig[]
+}
+
+export const getVlans = () => get<VlansData>('/config/vlans')
+export const updateVlans = (data: VlansData) =>
+  put<VlansData>('/config/vlans', data)

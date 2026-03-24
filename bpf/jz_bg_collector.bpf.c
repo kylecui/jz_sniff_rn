@@ -275,6 +275,7 @@ int jz_bg_collector_prog(struct xdp_md *xdp_ctx)
         evt->hdr.len = sizeof(*evt);
         evt->hdr.timestamp_ns = bpf_ktime_get_ns();
         evt->hdr.ifindex = ctx->ifindex;
+        evt->hdr.vlan_id = ctx->ingress_vlan;
         __builtin_memcpy(evt->hdr.src_mac, eth->h_source, 6);
         __builtin_memcpy(evt->hdr.dst_mac, eth->h_dest, 6);
         evt->hdr.src_ip = (__u32)ctx->layers.saddr;

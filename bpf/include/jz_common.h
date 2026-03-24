@@ -29,6 +29,7 @@
 #define JZ_CTX_WEAVER_PORT          197  /* __u8: redirect target port */
 #define JZ_CTX_THREAT_LEVEL         198  /* __u8: 0=none, 1=low, 2=med, 3=high, 4=crit */
 #define JZ_CTX_SAMPLE_FLAG          199  /* __u8: 1=sample this packet */
+#define JZ_CTX_VLAN_ID              200  /* __u16: ingress VLAN ID (0=untagged) */
 
 /* ── Guard Types ── */
 #define JZ_GUARD_NONE               0
@@ -64,6 +65,8 @@ struct jz_event_hdr {
     __u32 len;            /* total event length */
     __u64 timestamp_ns;   /* bpf_ktime_get_ns() */
     __u32 ifindex;        /* ingress interface */
+    __u16 vlan_id;        /* ingress VLAN (0=untagged) */
+    __u8  _pad_hdr[2];
     __u8  src_mac[6];     /* source MAC */
     __u8  dst_mac[6];     /* destination MAC */
     __u32 src_ip;         /* source IP (0 if not applicable) */

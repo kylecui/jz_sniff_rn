@@ -543,31 +543,34 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
 
     jz_log_debug("Event received: type=%u len=%u", event_type, data_len);
 
-    if (g_ctx.discovery.initialized && data_len >= 16) {
+    if (g_ctx.discovery.initialized && event_type == 6 && data_len >= 52) {
         const uint8_t *ev = (const uint8_t *)data;
-        uint8_t bg_proto = ev[8];
+        uint8_t bg_proto = ev[44];
+        uint16_t vlan_id;
         uint32_t plen;
-        memcpy(&plen, ev + 12, 4);
-        if (plen > 0 && data_len >= 16 + plen)
-            jz_discovery_feed_event(&g_ctx.discovery, bg_proto, ev + 16, plen);
+        memcpy(&vlan_id, ev + 20, 2);
+        memcpy(&plen, ev + 48, 4);
+        if (plen > 0 && data_len >= 52 + plen)
+            jz_discovery_feed_event(&g_ctx.discovery, bg_proto,
+                                    ev + 52, plen, vlan_id);
     }
 
     if (g_ctx.policy_auto.initialized &&
-        (event_type == 1 || event_type == 2) && data_len >= 44) {
+        (event_type == 1 || event_type == 2) && data_len >= 56) {
         uint32_t attacker_ip;
         uint32_t guarded_ip;
         uint8_t protocol;
-        memcpy(&attacker_ip, (const uint8_t *)data + 24, 4);
-        memcpy(&guarded_ip, (const uint8_t *)data + 40, 4);
-        protocol = ((const uint8_t *)data)[33];
+        memcpy(&attacker_ip, (const uint8_t *)data + 36, 4);
+        memcpy(&guarded_ip, (const uint8_t *)data + 52, 4);
+        protocol = ((const uint8_t *)data)[45];
         jz_policy_auto_feed_attack(&g_ctx.policy_auto, attacker_ip,
                                    guarded_ip, protocol);
     }
 
     /* Forward raw event to collectord for persistence.
-     * 40 = minimum event header: type(4)+len(4)+ts(8)+ifindex(4)+
-     *       src_mac(6)+dst_mac(6)+src_ip(4)+dst_ip(4) */
-    if (g_ctx.collectord_client.connected && data_len >= 40) {
+     * 44 = minimum event header: type(4)+len(4)+ts(8)+ifindex(4)+
+     *       vlan_id(2)+pad(2)+src_mac(6)+dst_mac(6)+src_ip(4)+dst_ip(4) */
+    if (g_ctx.collectord_client.connected && data_len >= 44) {
         const size_t prefix_len = 6;  /* strlen("event:") */
         size_t msg_len = prefix_len + data_len;
         if (msg_len <= JZ_IPC_MAX_MSG_LEN) {

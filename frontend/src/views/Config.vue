@@ -12,8 +12,10 @@ import {
   updateInterfaces,
   getArpSpoof,
   updateArpSpoof,
+  getVlans,
+  updateVlans,
 } from '@/api/config'
-import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, VlanConfig } from '@/api/config'
 
 const { t } = useI18n()
 
@@ -31,16 +33,19 @@ const arpSpoofEnabled = ref(false)
 const arpSpoofInterval = ref(5)
 const arpSpoofTargets = ref<ArpSpoofTarget[]>([])
 const arpSpoofSaving = ref(false)
+const vlans = ref<VlanConfig[]>([])
+const vlansSaving = ref(false)
 
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces, arpSpoof] = await Promise.all([
+    const [cfg, staged, hist, ifaces, arpSpoof, vlansData] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
       getInterfaces(),
       getArpSpoof(),
+      getVlans(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
     configText.value = json
@@ -53,6 +58,7 @@ async function fetchAll() {
     arpSpoofEnabled.value = arpSpoof.enabled
     arpSpoofInterval.value = arpSpoof.interval_sec
     arpSpoofTargets.value = arpSpoof.targets
+    vlans.value = vlansData.vlans ?? []
   } catch {
     // keep defaults
   } finally {
@@ -100,6 +106,28 @@ async function handleSaveArpSpoof() {
     // cancelled or error
   } finally {
     arpSpoofSaving.value = false
+  }
+}
+
+function addVlan() {
+  vlans.value.push({ id: 0, name: '', subnet: '' })
+}
+
+function removeVlan(index: number) {
+  vlans.value.splice(index, 1)
+}
+
+async function handleSaveVlans() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmSaveVlans'), t('common.confirm'), { type: 'warning' })
+    vlansSaving.value = true
+    const result = await updateVlans({ vlans: vlans.value })
+    vlans.value = result.vlans ?? []
+    ElMessage.success(t('common.success'))
+  } catch {
+    // cancelled or error
+  } finally {
+    vlansSaving.value = false
   }
 }
 
@@ -241,6 +269,48 @@ onMounted(fetchAll)
             <el-table-column :label="t('common.action')" width="80">
               <template #default="{ $index }">
                 <el-button type="danger" text size="small" @click="removeArpSpoofTarget($index)">
+                  {{ t('common.delete') }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+
+        <!-- VLANs -->
+        <el-card class="section-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('config.vlans') }}</span>
+              <el-button type="primary" size="small" :loading="vlansSaving" @click="handleSaveVlans">
+                {{ t('common.save') }}
+              </el-button>
+            </div>
+          </template>
+          <div class="targets-header">
+            <span />
+            <el-button type="primary" text size="small" @click="addVlan">
+              + {{ t('config.addVlan') }}
+            </el-button>
+          </div>
+          <el-table :data="vlans" stripe>
+            <el-table-column :label="t('config.vlanId')" width="140">
+              <template #default="{ row }">
+                <el-input-number v-model="row.id" :min="1" :max="4094" size="small" controls-position="right" style="width: 110px;" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('config.vlanName')">
+              <template #default="{ row }">
+                <el-input v-model="row.name" size="small" placeholder="e.g. VLAN10" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('config.vlanSubnet')">
+              <template #default="{ row }">
+                <el-input v-model="row.subnet" size="small" placeholder="e.g. 10.0.10.0/24" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('common.action')" width="80">
+              <template #default="{ $index }">
+                <el-button type="danger" text size="small" @click="removeVlan($index)">
                   {{ t('common.delete') }}
                 </el-button>
               </template>

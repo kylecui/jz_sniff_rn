@@ -25,6 +25,7 @@
 #define JZ_CONFIG_MAX_INTERFACES           8
 #define JZ_CONFIG_MAX_FROZEN_IPS           256
 #define JZ_CONFIG_MAX_ARP_SPOOF_TARGETS   32
+#define JZ_CONFIG_MAX_VLANS                16
 
 #define JZ_CONFIG_MAX_ERRORS               64
 
@@ -285,6 +286,12 @@ typedef struct jz_config_arp_spoof {
     int  target_count;
 } jz_config_arp_spoof_t;
 
+typedef struct jz_config_vlan {
+    int  id;                                 /* 802.1Q VLAN ID (1-4094) */
+    char name[JZ_CONFIG_STR_SHORT];          /* human-readable label */
+    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.10.0.0/24" */
+} jz_config_vlan_t;
+
 typedef struct jz_config {
     int version;
     jz_config_system_t system;
@@ -300,6 +307,8 @@ typedef struct jz_config {
     jz_config_log_t log;
     jz_config_api_t api;
     jz_config_arp_spoof_t arp_spoof;
+    jz_config_vlan_t vlans[JZ_CONFIG_MAX_VLANS];
+    int vlan_count;
 } jz_config_t;
 
 /* Load config from YAML file. Returns 0 on success, -1 on error.
