@@ -45,11 +45,9 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vendor-vue': ['vue', 'vue-router', 'pinia'],
-          'vendor-elplus': ['element-plus'],
           'vendor-i18n': ['vue-i18n'],
         },
       },
     },
-    chunkSizeWarningLimit: 600,
   },
 })
