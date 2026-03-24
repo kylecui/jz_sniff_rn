@@ -36,7 +36,7 @@ async function handleAdd() {
 
 async function handleDelete(ip: string) {
   try {
-    await ElMessageBox.confirm(t('whitelist.confirmDelete', { ip }))
+    await ElMessageBox.confirm(t('whitelist.confirmDelete', { ip }), t('common.confirm'), { type: 'warning' })
     await deleteWhitelistEntry(ip)
     ElMessage.success(t('common.success'))
     await fetchData()

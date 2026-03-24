@@ -38,7 +38,7 @@ async function fetchLogs() {
     }
     const res = await getLogs(activeTab.value, params)
     logs.value = res.logs
-    total.value = res.total
+    total.value = Number(res.total) || 0
   } catch {
     logs.value = []
     total.value = 0

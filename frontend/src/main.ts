@@ -5,6 +5,9 @@ import i18n from './i18n'
 import App from './App.vue'
 
 import 'element-plus/theme-chalk/dark/css-vars.css'
+// Programmatic components need explicit CSS imports (unplugin-vue-components only handles template usage)
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 
 const app = createApp(App)
 

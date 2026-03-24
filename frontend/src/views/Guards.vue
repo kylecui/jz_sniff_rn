@@ -26,6 +26,24 @@ const autoStatus = ref<AutoGuardStatus>({ max_ratio: 0, subnet_total: 0, max_all
 // Add static dialog
 const showStaticDialog = ref(false)
 const staticForm = reactive({ ip: '', mac: '' })
+const autoMac = ref(true)
+
+function generateMac(): string {
+  const bytes = Array.from({ length: 6 }, () => Math.floor(Math.random() * 256))
+  bytes[0] = (bytes[0] | 0x02) & 0xfe
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join(':')
+}
+
+function onAutoMacChange(val: boolean) {
+  if (val) staticForm.mac = generateMac()
+  else staticForm.mac = ''
+}
+
+function resetStaticForm() {
+  staticForm.ip = ''
+  autoMac.value = true
+  staticForm.mac = generateMac()
+}
 
 // Add frozen dialog
 const showFrozenDialog = ref(false)
@@ -56,8 +74,7 @@ async function handleAddStatic() {
     await addStaticGuard({ ip: staticForm.ip, mac: staticForm.mac || undefined })
     ElMessage.success(t('common.success'))
     showStaticDialog.value = false
-    staticForm.ip = ''
-    staticForm.mac = ''
+    resetStaticForm()
     await fetchAll()
   } catch (e: unknown) {
     ElMessage.error((e as Error).message)
@@ -66,7 +83,7 @@ async function handleAddStatic() {
 
 async function handleDeleteStatic(ip: string) {
   try {
-    await ElMessageBox.confirm(t('guards.confirmDelete', { ip }))
+    await ElMessageBox.confirm(t('guards.confirmDelete', { ip }), t('common.confirm'), { type: 'warning' })
     await deleteStaticGuard(ip)
     ElMessage.success(t('common.success'))
     await fetchAll()
@@ -77,7 +94,7 @@ async function handleDeleteStatic(ip: string) {
 
 async function handleDeleteDynamic(ip: string) {
   try {
-    await ElMessageBox.confirm(t('guards.confirmDelete', { ip }))
+    await ElMessageBox.confirm(t('guards.confirmDelete', { ip }), t('common.confirm'), { type: 'warning' })
     await deleteDynamicGuard(ip)
     ElMessage.success(t('common.success'))
     await fetchAll()
@@ -100,7 +117,7 @@ async function handleAddFrozen() {
 
 async function handleDeleteFrozen(ip: string) {
   try {
-    await ElMessageBox.confirm(t('guards.confirmDeleteFrozen', { ip }))
+    await ElMessageBox.confirm(t('guards.confirmDeleteFrozen', { ip }), t('common.confirm'), { type: 'warning' })
     await deleteFrozenGuard(ip)
     ElMessage.success(t('common.success'))
     await fetchAll()
@@ -190,12 +207,22 @@ onMounted(fetchAll)
     </el-skeleton>
 
     <!-- Add Static Dialog -->
-    <el-dialog v-model="showStaticDialog" :title="t('guards.addStatic')" width="420px">
+    <el-dialog v-model="showStaticDialog" :title="t('guards.addStatic')" width="420px" @open="resetStaticForm">
       <el-form label-width="100px">
         <el-form-item :label="t('guards.ip')">
           <el-input v-model="staticForm.ip" placeholder="e.g. 10.0.1.50" />
         </el-form-item>
         <el-form-item :label="t('guards.mac')">
+          <el-checkbox v-model="autoMac" :label="t('guards.autoMac')" @change="onAutoMacChange" />
+        </el-form-item>
+        <el-form-item v-if="autoMac" :label="t('guards.generatedMac')">
+          <el-input :model-value="staticForm.mac" readonly>
+            <template #append>
+              <el-button @click="staticForm.mac = generateMac()">{{ t('guards.regenerate') }}</el-button>
+            </template>
+          </el-input>
+        </el-form-item>
+        <el-form-item v-else :label="t('guards.mac')">
           <el-input v-model="staticForm.mac" placeholder="aa:bb:cc:dd:ee:ff" />
         </el-form-item>
       </el-form>

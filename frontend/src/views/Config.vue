@@ -64,7 +64,7 @@ async function handleStage() {
 
 async function handleCommit() {
   try {
-    await ElMessageBox.confirm(t('config.confirmCommit'))
+    await ElMessageBox.confirm(t('config.confirmCommit'), t('common.confirm'), { type: 'warning' })
     await commitConfig()
     ElMessage.success(t('common.success'))
     await fetchAll()
@@ -75,7 +75,7 @@ async function handleCommit() {
 
 async function handleDiscard() {
   try {
-    await ElMessageBox.confirm(t('config.confirmDiscard'))
+    await ElMessageBox.confirm(t('config.confirmDiscard'), t('common.confirm'), { type: 'warning' })
     await discardConfig()
     ElMessage.success(t('common.success'))
     await fetchAll()
@@ -86,7 +86,7 @@ async function handleDiscard() {
 
 async function handleRollback(version: number) {
   try {
-    await ElMessageBox.confirm(t('config.confirmRollback', { version }))
+    await ElMessageBox.confirm(t('config.confirmRollback', { version }), t('common.confirm'), { type: 'warning' })
     await rollbackConfig(version)
     ElMessage.success(t('common.success'))
     await fetchAll()

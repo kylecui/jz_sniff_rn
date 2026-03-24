@@ -36,7 +36,7 @@ async function handleReload(name: string) {
 
 async function handleRestart(daemon: string) {
   try {
-    await ElMessageBox.confirm(t('system.confirmRestart', { daemon }))
+    await ElMessageBox.confirm(t('system.confirmRestart', { daemon }), t('common.confirm'), { type: 'warning' })
     await restartDaemon(daemon)
     ElMessage.success(t('common.success'))
   } catch {

@@ -98,7 +98,7 @@ async function handleSubmit() {
 
 async function handleDelete(id: number) {
   try {
-    await ElMessageBox.confirm(t('policies.confirmDelete', { id }))
+    await ElMessageBox.confirm(t('policies.confirmDelete', { id }), t('common.confirm'), { type: 'warning' })
     await deletePolicy(id)
     ElMessage.success(t('common.success'))
     await fetchData()
