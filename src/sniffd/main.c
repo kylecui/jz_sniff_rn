@@ -11,6 +11,7 @@
 
 
 #include "api.h"
+#include "arp_spoof.h"
 #include "bpf_loader.h"
 #include "discovery.h"
 #include "guard_auto.h"
@@ -103,6 +104,7 @@ static struct {
     jz_policy_auto_t  policy_auto;
     jz_heartbeat_t    heartbeat;
     jz_ipc_client_t   uploadd_client;
+    jz_arp_spoof_t    arp_spoof;
     jz_api_t          api;
     int               ifindex;
 } g_ctx;
@@ -637,6 +639,9 @@ static int do_reload(void)
     if (g_ctx.heartbeat.initialized)
         jz_heartbeat_update_config(&g_ctx.heartbeat, &g_ctx.config);
 
+    if (g_ctx.arp_spoof.initialized)
+        jz_arp_spoof_update_config(&g_ctx.arp_spoof, &g_ctx.config);
+
     jz_log_info("Configuration reloaded successfully");
     return 0;
 }
@@ -930,6 +935,13 @@ int main(int argc, char *argv[])
         jz_log_warn("No interface for probe generator — sniffer detection disabled");
     }
 
+    /* Initialize ARP spoof module (bypass/tap mode traffic capture) */
+    if (g_ctx.ifindex > 0) {
+        if (jz_arp_spoof_init(&g_ctx.arp_spoof, &g_ctx.config, g_ctx.ifindex) < 0) {
+            jz_log_warn("ARP spoof init failed — bypass tap mode unavailable");
+        }
+    }
+
     /* Initialize passive device discovery + ARP scanner */
     if (jz_discovery_init(&g_ctx.discovery, &g_ctx.config) < 0) {
         jz_log_warn("Discovery init failed — device fingerprinting disabled");
@@ -979,6 +991,7 @@ int main(int argc, char *argv[])
         g_ctx.api.policy_mgr = &g_ctx.policy_mgr;
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
+        g_ctx.api.arp_spoof = &g_ctx.arp_spoof;
         /* Set DB path from config so API can query logs readonly */
         if (g_ctx.config.collector.db_path[0])
             (void) snprintf(g_ctx.db.path, sizeof(g_ctx.db.path),
@@ -1077,6 +1090,9 @@ int main(int argc, char *argv[])
         if (g_ctx.policy_auto.initialized)
             jz_policy_auto_tick(&g_ctx.policy_auto);
 
+        if (g_ctx.arp_spoof.initialized)
+            jz_arp_spoof_tick(&g_ctx.arp_spoof);
+
         if (g_ctx.heartbeat.initialized) {
             char *hb_json = jz_heartbeat_tick(&g_ctx.heartbeat);
             if (hb_json) {
@@ -1133,6 +1149,7 @@ int main(int argc, char *argv[])
 
 cleanup:
     jz_api_destroy(&g_ctx.api);
+    jz_arp_spoof_destroy(&g_ctx.arp_spoof);
     jz_heartbeat_destroy(&g_ctx.heartbeat);
     jz_ipc_client_close(&g_ctx.uploadd_client);
     jz_policy_auto_destroy(&g_ctx.policy_auto);

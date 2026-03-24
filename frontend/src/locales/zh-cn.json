@@ -153,7 +153,16 @@
     "mode": "模式",
     "modeBypass": "旁路",
     "modeInline": "串联",
-    "confirmSaveInterfaces": "保存接口配置？"
+    "confirmSaveInterfaces": "保存接口配置？",
+    "arpSpoof": "ARP 欺骗（旁路模式）",
+    "arpSpoofWarning": "⚠️ 启用 ARP 欺骗后，系统将主动向网络发送伪造的 ARP 报文。此功能会注入流量，可能触发被监控设备上的安全告警。",
+    "arpSpoofEnabled": "启用 ARP 欺骗",
+    "arpSpoofInterval": "发送间隔（秒）",
+    "arpSpoofTargets": "欺骗目标",
+    "arpSpoofTargetIp": "目标 IP",
+    "arpSpoofGatewayIp": "网关 IP",
+    "arpSpoofAddTarget": "添加目标",
+    "confirmSaveArpSpoof": "保存 ARP 欺骗配置？此操作将主动向网络注入数据包。"
   },
   "system": {
     "title": "系统设置",

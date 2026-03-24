@@ -1896,6 +1896,132 @@ static int parse_log(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_arp_spoof(yaml_parser_t *parser, yaml_event_t *start,
+                           jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "arp_spoof", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "arp_spoof") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "arp_spoof", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "arp_spoof") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        if (!strcmp(key, "enabled")) {
+            if (scalar_to_bool(&val_ev, &cfg->arp_spoof.enabled) != 0)
+                add_error(errors, event_line(&val_ev), "arp_spoof.enabled", "must be bool");
+            yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "interval_sec")) {
+            if (scalar_to_int(&val_ev, &cfg->arp_spoof.interval_sec) != 0)
+                add_error(errors, event_line(&val_ev), "arp_spoof.interval_sec", "must be int");
+            yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "targets")) {
+            if (val_ev.type != YAML_SEQUENCE_START_EVENT) {
+                add_error(errors, event_line(&val_ev), "arp_spoof.targets", "expected sequence");
+                if (skip_node(parser, &val_ev, errors) != 0) {
+                    yaml_event_delete(&key_ev);
+                    return -1;
+                }
+            } else {
+                yaml_event_delete(&val_ev);
+                cfg->arp_spoof.target_count = 0;
+                for (;;) {
+                    yaml_event_t item_ev;
+                    if (next_event(parser, &item_ev, errors, "arp_spoof.targets") != 0) {
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+                        yaml_event_delete(&item_ev);
+                        break;
+                    }
+                    if (item_ev.type != YAML_MAPPING_START_EVENT) {
+                        add_error(errors, event_line(&item_ev), "arp_spoof.targets", "entries must be mappings");
+                        if (skip_node(parser, &item_ev, errors) != 0) {
+                            yaml_event_delete(&key_ev);
+                            return -1;
+                        }
+                        continue;
+                    }
+                    if (cfg->arp_spoof.target_count >= JZ_CONFIG_MAX_ARP_SPOOF_TARGETS) {
+                        add_error(errors, event_line(&item_ev), "arp_spoof.targets",
+                                  "too many entries (max %d)", JZ_CONFIG_MAX_ARP_SPOOF_TARGETS);
+                        if (skip_node(parser, &item_ev, errors) != 0) {
+                            yaml_event_delete(&key_ev);
+                            return -1;
+                        }
+                        continue;
+                    }
+                    yaml_event_delete(&item_ev);
+                    for (;;) {
+                        yaml_event_t k2, v2;
+                        const char *k;
+                        jz_config_arp_spoof_target_t *t =
+                            &cfg->arp_spoof.targets[cfg->arp_spoof.target_count];
+                        if (next_event(parser, &k2, errors, "arp_spoof.targets") != 0) {
+                            yaml_event_delete(&key_ev);
+                            return -1;
+                        }
+                        if (k2.type == YAML_MAPPING_END_EVENT) {
+                            yaml_event_delete(&k2);
+                            cfg->arp_spoof.target_count++;
+                            break;
+                        }
+                        if (k2.type != YAML_SCALAR_EVENT) {
+                            add_error(errors, event_line(&k2), "arp_spoof.targets", "expected scalar key");
+                            yaml_event_delete(&k2);
+                            yaml_event_delete(&key_ev);
+                            return -1;
+                        }
+                        k = (const char *)k2.data.scalar.value;
+                        if (next_event(parser, &v2, errors, "arp_spoof.targets") != 0) {
+                            yaml_event_delete(&k2);
+                            yaml_event_delete(&key_ev);
+                            return -1;
+                        }
+                        if (!strcmp(k, "target_ip"))
+                            copy_scalar(t->target_ip, sizeof(t->target_ip), &v2);
+                        else if (!strcmp(k, "gateway_ip"))
+                            copy_scalar(t->gateway_ip, sizeof(t->gateway_ip), &v2);
+                        else
+                            add_error(errors, event_line(&k2), "arp_spoof.targets", "unknown key '%s'", k);
+                        yaml_event_delete(&v2);
+                        yaml_event_delete(&k2);
+                    }
+                }
+            }
+        } else {
+            add_error(errors, event_line(&key_ev), "arp_spoof", "unknown key '%s'", key);
+            if (skip_node(parser, &val_ev, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        }
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
 static int parse_api(yaml_parser_t *parser, yaml_event_t *start,
                      jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -2115,6 +2241,11 @@ static int parse_root_mapping(yaml_parser_t *parser, yaml_event_t *start,
             }
         } else if (!strcmp(key, "api")) {
             if (parse_api(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "arp_spoof")) {
+            if (parse_arp_spoof(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
                 return -1;
             }
@@ -2422,6 +2553,19 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
             add_error(errors, 0, "api.auth_tokens[].role", "must not be empty");
     }
 
+    if (cfg->arp_spoof.interval_sec < 1)
+        add_error(errors, 0, "arp_spoof.interval_sec", "must be >= 1");
+    if (cfg->arp_spoof.target_count < 0)
+        add_error(errors, 0, "arp_spoof.target_count", "must be non-negative");
+    for (i = 0; i < cfg->arp_spoof.target_count && i < JZ_CONFIG_MAX_ARP_SPOOF_TARGETS; i++) {
+        if (!is_valid_ipv4(cfg->arp_spoof.targets[i].target_ip))
+            add_error(errors, 0, "arp_spoof.targets[].target_ip", "invalid IPv4 '%s'",
+                      cfg->arp_spoof.targets[i].target_ip);
+        if (!is_valid_ipv4(cfg->arp_spoof.targets[i].gateway_ip))
+            add_error(errors, 0, "arp_spoof.targets[].gateway_ip", "invalid IPv4 '%s'",
+                      cfg->arp_spoof.targets[i].gateway_ip);
+    }
+
     return (errors && errors->count > start_count) ? -1 : 0;
 }
 
@@ -2533,6 +2677,10 @@ void jz_config_defaults(jz_config_t *cfg)
 
     cfg->api.enabled = true;
     snprintf(cfg->api.listen, sizeof(cfg->api.listen), "0.0.0.0:8443");
+
+    cfg->arp_spoof.enabled = false;
+    cfg->arp_spoof.interval_sec = 5;
+    cfg->arp_spoof.target_count = 0;
 }
 
 void jz_config_free(jz_config_t *cfg)
@@ -2903,6 +3051,26 @@ char *jz_config_serialize(const jz_config_t *cfg)
         if (sb_appendf(&sb, "    - { token: %s, role: %s }\n",
                        cfg->api.auth_tokens[i].token,
                        cfg->api.auth_tokens[i].role) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb,
+                   "arp_spoof:\n"
+                   "  enabled: %s\n"
+                   "  interval_sec: %d\n"
+                   "  targets:\n",
+                   cfg->arp_spoof.enabled ? "true" : "false",
+                   cfg->arp_spoof.interval_sec) != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->arp_spoof.target_count; i++) {
+        if (sb_appendf(&sb, "    - { target_ip: %s, gateway_ip: %s }\n",
+                       cfg->arp_spoof.targets[i].target_ip,
+                       cfg->arp_spoof.targets[i].gateway_ip) != 0) {
             free(sb.data);
             return NULL;
         }

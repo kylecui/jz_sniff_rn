@@ -24,6 +24,7 @@
 #define JZ_CONFIG_MAX_AUTH_TOKENS          16
 #define JZ_CONFIG_MAX_INTERFACES           8
 #define JZ_CONFIG_MAX_FROZEN_IPS           256
+#define JZ_CONFIG_MAX_ARP_SPOOF_TARGETS   32
 
 #define JZ_CONFIG_MAX_ERRORS               64
 
@@ -272,6 +273,18 @@ typedef struct jz_config_log {
     jz_config_log_https_t https;
 } jz_config_log_t;
 
+typedef struct jz_config_arp_spoof_target {
+    char target_ip[JZ_CONFIG_STR_SHORT];    /* IP of the host whose traffic we intercept */
+    char gateway_ip[JZ_CONFIG_STR_SHORT];   /* IP of the gateway we impersonate */
+} jz_config_arp_spoof_target_t;
+
+typedef struct jz_config_arp_spoof {
+    bool enabled;
+    int  interval_sec;                      /* GARP send interval (default 5) */
+    jz_config_arp_spoof_target_t targets[JZ_CONFIG_MAX_ARP_SPOOF_TARGETS];
+    int  target_count;
+} jz_config_arp_spoof_t;
+
 typedef struct jz_config {
     int version;
     jz_config_system_t system;
@@ -286,6 +299,7 @@ typedef struct jz_config {
     jz_config_uploader_t uploader;
     jz_config_log_t log;
     jz_config_api_t api;
+    jz_config_arp_spoof_t arp_spoof;
 } jz_config_t;
 
 /* Load config from YAML file. Returns 0 on success, -1 on error.

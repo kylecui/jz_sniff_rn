@@ -45,3 +45,18 @@ export const rollbackConfig = (version?: number) =>
 export const getInterfaces = () => get<InterfacesData>('/config/interfaces')
 export const updateInterfaces = (data: InterfacesData) =>
   put<InterfacesData>('/config/interfaces', data)
+
+export interface ArpSpoofTarget {
+  target_ip: string
+  gateway_ip: string
+}
+
+export interface ArpSpoofConfig {
+  enabled: boolean
+  interval_sec: number
+  targets: ArpSpoofTarget[]
+}
+
+export const getArpSpoof = () => get<ArpSpoofConfig>('/config/arp_spoof')
+export const updateArpSpoof = (data: ArpSpoofConfig) =>
+  put<ArpSpoofConfig>('/config/arp_spoof', data)

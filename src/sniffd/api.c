@@ -24,6 +24,7 @@
 #include "guard_auto.h"
 #include "guard_mgr.h"
 #include "policy_mgr.h"
+#include "arp_spoof.h"
 #include "config.h"
 #include "config_map.h"
 #include "db.h"
@@ -2551,6 +2552,120 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
     handle_config_interfaces_get(c, hm, api);
 }
 
+static void handle_config_arp_spoof_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "enabled", api->config->arp_spoof.enabled);
+    cJSON_AddNumberToObject(root, "interval_sec", api->config->arp_spoof.interval_sec);
+
+    arr = cJSON_AddArrayToObject(root, "targets");
+    for (i = 0; i < api->config->arp_spoof.target_count &&
+                i < JZ_CONFIG_MAX_ARP_SPOOF_TARGETS; i++) {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "target_ip",
+                                api->config->arp_spoof.targets[i].target_ip);
+        cJSON_AddStringToObject(obj, "gateway_ip",
+                                api->config->arp_spoof.targets[i].gateway_ip);
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_arp_spoof_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *enabled_item;
+    cJSON *interval_item;
+    cJSON *targets_arr;
+    int i;
+    int count;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    enabled_item = cJSON_GetObjectItem(body, "enabled");
+    if (enabled_item && cJSON_IsBool(enabled_item))
+        api->config->arp_spoof.enabled = cJSON_IsTrue(enabled_item);
+
+    interval_item = cJSON_GetObjectItem(body, "interval_sec");
+    if (interval_item && cJSON_IsNumber(interval_item)) {
+        int val = interval_item->valueint;
+        if (val < 1) val = 1;
+        if (val > 300) val = 300;
+        api->config->arp_spoof.interval_sec = val;
+    }
+
+    targets_arr = cJSON_GetObjectItem(body, "targets");
+    if (targets_arr && cJSON_IsArray(targets_arr)) {
+        count = cJSON_GetArraySize(targets_arr);
+        if (count > JZ_CONFIG_MAX_ARP_SPOOF_TARGETS) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "too many ARP spoof targets");
+            return;
+        }
+
+        api->config->arp_spoof.target_count = count;
+        for (i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(targets_arr, i);
+            cJSON *tip = cJSON_GetObjectItem(item, "target_ip");
+            cJSON *gip = cJSON_GetObjectItem(item, "gateway_ip");
+            jz_config_arp_spoof_target_t *t = &api->config->arp_spoof.targets[i];
+
+            if (!tip || !cJSON_IsString(tip) || !gip || !cJSON_IsString(gip)) {
+                cJSON_Delete(body);
+                api_error_reply(c, 400, "target entry requires target_ip and gateway_ip");
+                return;
+            }
+
+            {
+                struct in_addr addr;
+                if (inet_pton(AF_INET, tip->valuestring, &addr) != 1 ||
+                    inet_pton(AF_INET, gip->valuestring, &addr) != 1) {
+                    cJSON_Delete(body);
+                    api_error_reply(c, 400, "invalid IP address in target entry");
+                    return;
+                }
+            }
+
+            snprintf(t->target_ip, sizeof(t->target_ip), "%s", tip->valuestring);
+            snprintf(t->gateway_ip, sizeof(t->gateway_ip), "%s", gip->valuestring);
+        }
+    }
+
+    if (api_persist_config(api) < 0) {
+        jz_log_error("config/arp_spoof PUT: failed to persist config");
+        cJSON_Delete(body);
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    if (api->arp_spoof)
+        jz_arp_spoof_update_config(api->arp_spoof, api->config);
+
+    api_audit_log(api, "config_arp_spoof_update", NULL, NULL, "success");
+    cJSON_Delete(body);
+    handle_config_arp_spoof_get(c, hm, api);
+}
+
 static void handle_config_staged_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     jz_ipc_msg_t reply;
@@ -2842,6 +2957,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_interfaces_get(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/arp_spoof"), NULL)) {
+            handle_config_arp_spoof_get(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/config"), NULL)) {
             handle_config_get(c, hm, api);
             return;
@@ -2955,6 +3074,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_interfaces_put(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/arp_spoof"), NULL)) {
+            handle_config_arp_spoof_put(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {
             handle_policies_update(c, hm, api, caps[0]);
             return;
@@ -3036,6 +3159,7 @@ int jz_api_init(jz_api_t *api, int port,
     jz_policy_mgr_t *policy_mgr;
     jz_config_t *config;
     jz_db_t *db;
+    jz_arp_spoof_t *arp_spoof;
     char *cert_pem = NULL;
     char *key_pem = NULL;
     char *ca_pem = NULL;
@@ -3053,6 +3177,7 @@ int jz_api_init(jz_api_t *api, int port,
     policy_mgr = api->policy_mgr;
     config = api->config;
     db = api->db;
+    arp_spoof = api->arp_spoof;
 
     memset(api, 0, sizeof(*api));
     api->loader = loader;
@@ -3062,6 +3187,7 @@ int jz_api_init(jz_api_t *api, int port,
     api->policy_mgr = policy_mgr;
     api->config = config;
     api->db = db;
+    api->arp_spoof = arp_spoof;
 
     api->port = port > 0 ? port : 8443;
     api->enabled = false;

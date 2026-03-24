@@ -10,8 +10,10 @@ import {
   rollbackConfig,
   getInterfaces,
   updateInterfaces,
+  getArpSpoof,
+  updateArpSpoof,
 } from '@/api/config'
-import type { ConfigHistoryEntry, NetworkInterface } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget } from '@/api/config'
 
 const { t } = useI18n()
 
@@ -25,15 +27,20 @@ const history = ref<ConfigHistoryEntry[]>([])
 const interfaces = ref<NetworkInterface[]>([])
 const systemMode = ref('bypass')
 const interfacesSaving = ref(false)
+const arpSpoofEnabled = ref(false)
+const arpSpoofInterval = ref(5)
+const arpSpoofTargets = ref<ArpSpoofTarget[]>([])
+const arpSpoofSaving = ref(false)
 
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces] = await Promise.all([
+    const [cfg, staged, hist, ifaces, arpSpoof] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
       getInterfaces(),
+      getArpSpoof(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
     configText.value = json
@@ -43,6 +50,9 @@ async function fetchAll() {
     history.value = hist.history
     interfaces.value = ifaces.interfaces
     systemMode.value = ifaces.mode
+    arpSpoofEnabled.value = arpSpoof.enabled
+    arpSpoofInterval.value = arpSpoof.interval_sec
+    arpSpoofTargets.value = arpSpoof.targets
   } catch {
     // keep defaults
   } finally {
@@ -62,6 +72,34 @@ async function handleSaveInterfaces() {
     // cancelled or error
   } finally {
     interfacesSaving.value = false
+  }
+}
+
+function addArpSpoofTarget() {
+  arpSpoofTargets.value.push({ target_ip: '', gateway_ip: '' })
+}
+
+function removeArpSpoofTarget(index: number) {
+  arpSpoofTargets.value.splice(index, 1)
+}
+
+async function handleSaveArpSpoof() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmSaveArpSpoof'), t('common.confirm'), { type: 'warning' })
+    arpSpoofSaving.value = true
+    const result = await updateArpSpoof({
+      enabled: arpSpoofEnabled.value,
+      interval_sec: arpSpoofInterval.value,
+      targets: arpSpoofTargets.value,
+    })
+    arpSpoofEnabled.value = result.enabled
+    arpSpoofInterval.value = result.interval_sec
+    arpSpoofTargets.value = result.targets
+    ElMessage.success(t('common.success'))
+  } catch {
+    // cancelled or error
+  } finally {
+    arpSpoofSaving.value = false
   }
 }
 
@@ -163,6 +201,53 @@ onMounted(fetchAll)
           </div>
         </el-card>
 
+        <!-- ARP Spoofing -->
+        <el-card class="section-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('config.arpSpoof') }}</span>
+              <el-button type="primary" size="small" :loading="arpSpoofSaving" @click="handleSaveArpSpoof">
+                {{ t('common.save') }}
+              </el-button>
+            </div>
+          </template>
+          <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px;">
+            <template #title>{{ t('config.arpSpoofWarning') }}</template>
+          </el-alert>
+          <div class="arp-spoof-controls">
+            <el-switch v-model="arpSpoofEnabled" :active-text="t('config.arpSpoofEnabled')" />
+            <div class="interval-row">
+              <span>{{ t('config.arpSpoofInterval') }}:</span>
+              <el-input-number v-model="arpSpoofInterval" :min="1" :max="300" size="small" style="width: 140px; margin-left: 8px;" />
+            </div>
+          </div>
+          <div class="targets-header">
+            <span>{{ t('config.arpSpoofTargets') }}</span>
+            <el-button type="primary" text size="small" @click="addArpSpoofTarget">
+              + {{ t('config.arpSpoofAddTarget') }}
+            </el-button>
+          </div>
+          <el-table :data="arpSpoofTargets" stripe>
+            <el-table-column :label="t('config.arpSpoofTargetIp')">
+              <template #default="{ row }">
+                <el-input v-model="row.target_ip" size="small" placeholder="e.g. 10.0.1.100" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('config.arpSpoofGatewayIp')">
+              <template #default="{ row }">
+                <el-input v-model="row.gateway_ip" size="small" placeholder="e.g. 10.0.1.1" />
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('common.action')" width="80">
+              <template #default="{ $index }">
+                <el-button type="danger" text size="small" @click="removeArpSpoofTarget($index)">
+                  {{ t('common.delete') }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+
         <!-- Current Config -->
         <el-card class="section-card">
           <template #header>
@@ -246,5 +331,21 @@ onMounted(fetchAll)
   margin-top: 12px;
   display: flex;
   align-items: center;
+}
+.arp-spoof-controls {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+.interval-row {
+  display: flex;
+  align-items: center;
+}
+.targets-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
 }
 </style>

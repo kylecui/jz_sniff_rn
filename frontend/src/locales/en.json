@@ -153,7 +153,16 @@
     "mode": "Mode",
     "modeBypass": "Bypass",
     "modeInline": "Inline",
-    "confirmSaveInterfaces": "Save interface configuration?"
+    "confirmSaveInterfaces": "Save interface configuration?",
+    "arpSpoof": "ARP Spoofing (Bypass Mode)",
+    "arpSpoofWarning": "⚠️ Enabling ARP spoofing will actively send forged ARP packets on the network. This injects traffic and may trigger security alerts on monitored devices.",
+    "arpSpoofEnabled": "Enable ARP Spoofing",
+    "arpSpoofInterval": "Interval (sec)",
+    "arpSpoofTargets": "Spoof Targets",
+    "arpSpoofTargetIp": "Target IP",
+    "arpSpoofGatewayIp": "Gateway IP",
+    "arpSpoofAddTarget": "Add Target",
+    "confirmSaveArpSpoof": "Save ARP spoof configuration? This will actively inject packets on the network."
   },
   "system": {
     "title": "System Settings",
