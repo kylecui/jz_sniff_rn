@@ -2068,6 +2068,32 @@ static void handle_discovery_device_by_mac(struct mg_connection *c, struct mg_ht
     api_json_reply(c, 200, root);
 }
 
+static int api_persist_config(jz_api_t *api)
+{
+    char *yaml;
+    char *req;
+    size_t req_len;
+    jz_ipc_msg_t reply;
+    int rc;
+
+    yaml = jz_config_serialize(api->config);
+    if (!yaml)
+        return -1;
+
+    req_len = strlen("config_push:") + strlen(yaml) + 1;
+    req = (char *) malloc(req_len);
+    if (!req) {
+        free(yaml);
+        return -1;
+    }
+    (void) snprintf(req, req_len, "config_push:%s", yaml);
+    free(yaml);
+
+    rc = api_configd_request(req, &reply);
+    free(req);
+    return rc;
+}
+
 static void handle_guards_frozen_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
@@ -2144,6 +2170,10 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
     }
 
     cJSON_Delete(body);
+
+    if (api_persist_config(api) < 0)
+        jz_log_error("frozen_add: failed to persist config to configd");
+
     root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "added");
     api_json_reply(c, 201, root);
@@ -2182,6 +2212,9 @@ static void handle_guards_frozen_del(struct mg_connection *c, struct mg_http_mes
     for (i = found; i < api->config->guards.frozen_ip_count - 1; i++)
         api->config->guards.frozen_ips[i] = api->config->guards.frozen_ips[i + 1];
     api->config->guards.frozen_ip_count--;
+
+    if (api_persist_config(api) < 0)
+        jz_log_error("frozen_del: failed to persist config to configd");
 
     api_json_reply(c, 200, cJSON_CreateObject());
 }

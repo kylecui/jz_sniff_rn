@@ -530,10 +530,10 @@ static int apply_config_body(const char *body, size_t body_len, const char *sour
 
     if (apply_config_to_maps(&new_config) < 0) {
         jz_log_error("config_push(%s): failed to apply to BPF maps", source);
-        jz_config_audit_log(&g_ctx.db, "config_push", source, &diff, "failure");
-        jz_config_free(&new_config);
-        unlink(tmp_path);
-        return -4;
+        jz_config_audit_log(&g_ctx.db, "config_push", source, &diff, "partial");
+        /* BPF maps failed but persist the YAML file anyway so config
+           survives daemon restart.  Maps will be applied on next
+           successful reload / restart. */
     }
 
     if (rename(tmp_path, g_ctx.config_path) < 0) {
