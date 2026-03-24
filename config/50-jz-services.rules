@@ -1,0 +1,9 @@
+// Polkit rule: allow jz user to manage jz_sniff_rn daemon services
+// without interactive authentication (needed for REST API restart endpoint).
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        subject.user === "jz" &&
+        /^(sniffd|configd|collectord|uploadd)\.service$/.test(action.lookup("unit"))) {
+        return polkit.Result.YES;
+    }
+});

@@ -151,6 +151,9 @@
     "ifindex": "ifindex",
     "role": "Role",
     "daemonName": "Daemon",
+    "pid": "PID",
+    "running": "Running",
+    "stopped": "Stopped",
     "confirmRestart": "Are you sure you want to restart {daemon}? This may cause a brief service interruption."
   }
 }

@@ -271,6 +271,9 @@ install: all
 	# Systemd services
 	$(INSTALL) -d $(DESTDIR)$(UNITDIR)
 	$(INSTALL) -m 0644 $(SYSTEMD_DIR)/*.service $(DESTDIR)$(UNITDIR)/
+	# Polkit rule (allow jz user to restart daemon services)
+	$(INSTALL) -d $(DESTDIR)/etc/polkit-1/rules.d
+	$(INSTALL) -m 0644 $(CONFIG_DIR)/50-jz-services.rules $(DESTDIR)/etc/polkit-1/rules.d/
 	# Runtime directories
 	$(INSTALL) -d -m 0750 $(DESTDIR)$(DATADIR)
 	$(INSTALL) -d -m 0750 $(DESTDIR)$(RUNDIR)

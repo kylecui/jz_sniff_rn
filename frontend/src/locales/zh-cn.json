@@ -151,6 +151,9 @@
     "ifindex": "接口索引",
     "role": "角色",
     "daemonName": "进程名",
+    "pid": "PID",
+    "running": "运行中",
+    "stopped": "已停止",
     "confirmRestart": "确定要重启 {daemon} 吗？此操作可能导致短暂服务中断。"
   }
 }

@@ -31,7 +31,9 @@ lcov.info
 *.swp
 *.swo
 *~
+.clangd
 .clangd/
+.cache/
 compile_commands.json
 
 # OS-specific

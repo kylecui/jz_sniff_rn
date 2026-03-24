@@ -41,6 +41,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -2360,6 +2361,52 @@ static void handle_config_discard_post(struct mg_connection *c, struct mg_http_m
     api_json_reply(c, 200, root);
 }
 
+/* ── Daemon Status (PID / running) ─────────────────────────────── */
+
+static const char *daemon_names[] = { "sniffd", "configd", "collectord", "uploadd" };
+#define DAEMON_COUNT (sizeof(daemon_names) / sizeof(daemon_names[0]))
+
+static void handle_system_daemons(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    size_t i;
+
+    (void) hm;
+    (void) api;
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "daemons");
+
+    for (i = 0; i < DAEMON_COUNT; i++) {
+        char path[64];
+        char buf[32];
+        FILE *fp;
+        pid_t pid = 0;
+        int running = 0;
+        cJSON *obj;
+
+        snprintf(path, sizeof(path), "/run/jz/%s.pid", daemon_names[i]);
+        fp = fopen(path, "r");
+        if (fp) {
+            if (fgets(buf, sizeof(buf), fp))
+                pid = (pid_t) atol(buf);
+            fclose(fp);
+        }
+
+        if (pid > 0 && (kill(pid, 0) == 0 || errno == EPERM))
+            running = 1;
+
+        obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "name", daemon_names[i]);
+        cJSON_AddNumberToObject(obj, "pid", (double) pid);
+        cJSON_AddBoolToObject(obj, "running", running);
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    api_json_reply(c, 200, root);
+}
+
 static void handle_system_restart(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
                                   struct mg_str daemon_name)
 {
@@ -2381,6 +2428,8 @@ static void handle_system_restart(struct mg_connection *c, struct mg_http_messag
         return;
     }
 
+    /* Double-fork to avoid zombie: first child exits immediately,
+     * grandchild is reparented to init and runs systemctl. */
     pid = fork();
     if (pid < 0) {
         api_error_reply(c, 500, "restart failed");
@@ -2388,9 +2437,17 @@ static void handle_system_restart(struct mg_connection *c, struct mg_http_messag
     }
 
     if (pid == 0) {
-        (void) execl("/bin/systemctl", "systemctl", "restart", daemon, (char *) NULL);
-        _exit(127);
+        pid_t pid2 = fork();
+        if (pid2 == 0) {
+            (void) execl("/bin/systemctl", "systemctl", "restart", daemon, (char *) NULL);
+            _exit(127);
+        }
+        _exit(0);
     }
+
+    (void) waitpid(pid, NULL, 0);
+
+    jz_log_info("api: restart requested for %s", daemon);
 
     root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "restarting");
@@ -2508,6 +2565,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/config"), NULL)) {
             handle_guards_auto_config_get(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/system/daemons"), NULL)) {
+            handle_system_daemons(c, hm, api);
             return;
         }
     }

@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getModules, reloadModule, restartDaemon } from '@/api/system'
-import type { BpfModule, NetworkInterface } from '@/api/system'
+import { getModules, getDaemons, reloadModule, restartDaemon } from '@/api/system'
+import type { BpfModule, NetworkInterface, DaemonStatus } from '@/api/system'
 
 const { t } = useI18n()
 
 const loading = ref(true)
 const modules = ref<BpfModule[]>([])
 const interfaces = ref<NetworkInterface[]>([])
-
-const daemons = ['sniffd', 'configd', 'collectord', 'uploadd']
+const daemonList = ref<DaemonStatus[]>([])
 
 async function fetchData() {
   loading.value = true
   try {
-    const res = await getModules()
-    modules.value = res.modules
-    interfaces.value = res.interfaces ?? []
+    const [modRes, daemonRes] = await Promise.all([getModules(), getDaemons()])
+    modules.value = modRes.modules
+    interfaces.value = modRes.interfaces ?? []
+    daemonList.value = daemonRes.daemons
   } catch {
     // keep empty
   } finally {
@@ -39,6 +39,12 @@ async function handleRestart(daemon: string) {
     await ElMessageBox.confirm(t('system.confirmRestart', { daemon }), t('common.confirm'), { type: 'warning' })
     await restartDaemon(daemon)
     ElMessage.success(t('common.success'))
+    setTimeout(async () => {
+      try {
+        const res = await getDaemons()
+        daemonList.value = res.daemons
+      } catch { /* ignore */ }
+    }, 1500)
   } catch {
     // cancelled or error
   }
@@ -90,10 +96,16 @@ onMounted(fetchData)
         <el-card class="section-card">
           <template #header>{{ t('system.daemons') }}</template>
           <el-row :gutter="16">
-            <el-col v-for="d in daemons" :key="d" :span="6">
+            <el-col v-for="d in daemonList" :key="d.name" :span="6">
               <el-card shadow="hover" class="daemon-card">
-                <div class="daemon-name">{{ d }}</div>
-                <el-button type="danger" size="small" @click="handleRestart(d)">
+                <div class="daemon-name">{{ d.name }}</div>
+                <div class="daemon-info">
+                  <el-tag :type="d.running ? 'success' : 'danger'" size="small">
+                    {{ d.running ? t('system.running') : t('system.stopped') }}
+                  </el-tag>
+                  <span v-if="d.pid" class="daemon-pid">{{ t('system.pid') }}: {{ d.pid }}</span>
+                </div>
+                <el-button type="danger" size="small" @click="handleRestart(d.name)">
                   {{ t('system.restart') }}
                 </el-button>
               </el-card>
@@ -116,6 +128,18 @@ onMounted(fetchData)
 .daemon-name {
   font-size: 16px;
   font-weight: 600;
+  margin-bottom: 8px;
+}
+.daemon-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-bottom: 12px;
+}
+.daemon-pid {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
 }
 </style>
