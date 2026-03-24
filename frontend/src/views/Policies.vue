@@ -185,7 +185,7 @@ onMounted(fetchData)
       :title="isEdit ? t('policies.editPolicy') : t('policies.addPolicy')"
       width="500px"
     >
-      <el-form label-width="100px">
+      <el-form label-width="100px" @submit.prevent="handleSubmit">
         <el-form-item :label="t('policies.srcIp')">
           <el-input v-model="form.src_ip" placeholder="0.0.0.0/0" />
         </el-form-item>

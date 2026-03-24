@@ -208,7 +208,7 @@ onMounted(fetchAll)
 
     <!-- Add Static Dialog -->
     <el-dialog v-model="showStaticDialog" :title="t('guards.addStatic')" width="420px" @open="resetStaticForm">
-      <el-form label-width="100px">
+      <el-form label-width="100px" @submit.prevent="handleAddStatic">
         <el-form-item :label="t('guards.ip')">
           <el-input v-model="staticForm.ip" placeholder="e.g. 10.0.1.50" />
         </el-form-item>
@@ -234,7 +234,7 @@ onMounted(fetchAll)
 
     <!-- Add Frozen Dialog -->
     <el-dialog v-model="showFrozenDialog" :title="t('guards.addFrozen')" width="420px">
-      <el-form label-width="100px">
+      <el-form label-width="100px" @submit.prevent="handleAddFrozen">
         <el-form-item :label="t('common.ip')">
           <el-input v-model="frozenForm.ip" placeholder="e.g. 10.0.1.100" />
         </el-form-item>

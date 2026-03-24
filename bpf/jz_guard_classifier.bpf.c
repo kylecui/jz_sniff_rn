@@ -156,6 +156,27 @@ jz_store_result(__u8 guard_type, __u8 proto, __u16 flags,
         __builtin_memset(result->fake_mac, 0, 6);
 }
 
+/* ── ARP Header (for extracting target IP) ── */
+
+struct arphdr_ipv4 {
+    __be16 ar_hrd;    /* hardware type (1=Ethernet) */
+    __be16 ar_pro;    /* protocol type (0x0800=IPv4) */
+    __u8   ar_hln;    /* hardware address length (6) */
+    __u8   ar_pln;    /* protocol address length (4) */
+    __be16 ar_op;     /* opcode (1=request, 2=reply) */
+    __u8   ar_sha[6]; /* sender hardware address */
+    __be32 ar_sip;    /* sender IP address */
+    __u8   ar_tha[6]; /* target hardware address */
+    __be32 ar_tip;    /* target IP address */
+} __attribute__((packed));
+
+static __always_inline __be32 arp_read_be32(const void *p)
+{
+    __be32 val;
+    __builtin_memcpy(&val, p, sizeof(val));
+    return val;
+}
+
 /* ── Main XDP Program ── */
 
 SEC("xdp")
@@ -175,10 +196,37 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     if ((void *)(eth + 1) > data_end)
         return XDP_PASS;
 
-    /* Extract source MAC and IPs from parsed context */
+    /* Extract source MAC */
     __u8 *src_mac = eth->h_source;
-    __u32 src_ip = ctx->layers.saddr;
-    __u32 dst_ip = ctx->layers.daddr;
+
+    /* Determine src/dst IPs depending on protocol.
+     * For IP packets (ICMP, TCP, UDP), rSwitch parser populates
+     * ctx->layers.saddr/daddr from the IP header.
+     * For ARP packets, these fields are ZERO because there is no
+     * IP header — we must extract from the ARP payload directly.
+     */
+    __u32 src_ip;
+    __u32 dst_ip;
+
+    if (ctx->layers.eth_proto == bpf_htons(0x0806)) {
+        /* ARP: extract IPs from ARP payload */
+        struct arphdr_ipv4 *arp = (void *)(eth + 1);
+        if ((void *)(arp + 1) > data_end)
+            return XDP_PASS;
+
+        /* Only handle Ethernet/IPv4 ARP */
+        if (arp->ar_hrd != bpf_htons(1) ||
+            arp->ar_pro != bpf_htons(0x0800) ||
+            arp->ar_hln != 6 || arp->ar_pln != 4)
+            return XDP_PASS;
+
+        src_ip = arp_read_be32(&arp->ar_sip);
+        dst_ip = arp_read_be32(&arp->ar_tip);
+    } else {
+        /* IP and everything else: use parsed context */
+        src_ip = ctx->layers.saddr;
+        dst_ip = ctx->layers.daddr;
+    }
 
     /* Step 1: Check whitelist — if whitelisted, skip guard classification */
     if (jz_check_whitelist(ctx, src_ip, src_mac)) {
@@ -225,8 +273,8 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     /* Step 6: Tail-call to next stage
      * RS_TAIL_CALL_NEXT handles sequential pipeline chaining.
      * The rSwitch loader assigns modules to sequential slots.
-     * ARP/ICMP honeypot modules (stages 23/24) will read
-     * the guard_result from the per-CPU map.
+     * ARP honeypot (stage 22) / ICMP honeypot (stage 23) will
+     * read the guard_result from the per-CPU map.
      */
     RS_TAIL_CALL_NEXT(xdp_ctx, ctx);
 

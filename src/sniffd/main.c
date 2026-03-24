@@ -104,6 +104,7 @@ static struct {
     jz_policy_auto_t  policy_auto;
     jz_heartbeat_t    heartbeat;
     jz_ipc_client_t   uploadd_client;
+    jz_ipc_client_t   collectord_client;
     jz_arp_spoof_t    arp_spoof;
     jz_api_t          api;
     int               ifindex;
@@ -561,6 +562,24 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
         protocol = ((const uint8_t *)data)[33];
         jz_policy_auto_feed_attack(&g_ctx.policy_auto, attacker_ip,
                                    guarded_ip, protocol);
+    }
+
+    /* Forward raw event to collectord for persistence.
+     * 40 = minimum event header: type(4)+len(4)+ts(8)+ifindex(4)+
+     *       src_mac(6)+dst_mac(6)+src_ip(4)+dst_ip(4) */
+    if (g_ctx.collectord_client.connected && data_len >= 40) {
+        const size_t prefix_len = 6;  /* strlen("event:") */
+        size_t msg_len = prefix_len + data_len;
+        if (msg_len <= JZ_IPC_MAX_MSG_LEN) {
+            uint8_t msg[JZ_IPC_MAX_MSG_LEN];
+            memcpy(msg, "event:", prefix_len);
+            memcpy(msg + prefix_len, data, data_len);
+            if (jz_ipc_client_send(&g_ctx.collectord_client,
+                                    msg, (uint32_t)msg_len) < 0) {
+                jz_log_warn("Failed to forward event to collectord");
+                jz_ipc_client_close(&g_ctx.collectord_client);
+            }
+        }
     }
 
     return 0;
@@ -1066,8 +1085,21 @@ int main(int argc, char *argv[])
     jz_log_info("sniffd ready — entering main loop");
 
     /* ── Main Loop ── */
+    time_t collectord_retry_after = 0;
+
     while (g_running) {
         jz_ipc_server_poll(&g_ctx.ipc, 10);
+
+        if (!g_ctx.collectord_client.connected) {
+            time_t now = time(NULL);
+            if (now >= collectord_retry_after) {
+                jz_ipc_client_connect(&g_ctx.collectord_client,
+                                      JZ_IPC_SOCK_COLLECTORD,
+                                      JZ_IPC_DEFAULT_TIMEOUT_MS);
+                if (!g_ctx.collectord_client.connected)
+                    collectord_retry_after = now + 5;
+            }
+        }
 
         if (g_ctx.ringbuf.initialized)
             jz_ringbuf_poll(&g_ctx.ringbuf, RINGBUF_POLL_MS);
@@ -1127,6 +1159,7 @@ int main(int argc, char *argv[])
                                                    ipc_buf, (uint32_t)ipc_len,
                                                    &reply) < 0) {
                             jz_ipc_client_close(&g_ctx.uploadd_client);
+                            jz_ipc_client_close(&g_ctx.collectord_client);
                         }
                     }
                 }

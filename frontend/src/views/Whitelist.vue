@@ -74,7 +74,7 @@ onMounted(fetchData)
     </el-skeleton>
 
     <el-dialog v-model="showDialog" :title="t('whitelist.addEntry')" width="420px">
-      <el-form label-width="100px">
+      <el-form label-width="100px" @submit.prevent="handleAdd">
         <el-form-item :label="t('whitelist.ip')">
           <el-input v-model="form.ip" placeholder="e.g. 10.0.1.200" />
         </el-form-item>
