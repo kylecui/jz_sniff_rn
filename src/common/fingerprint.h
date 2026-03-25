@@ -26,6 +26,7 @@ typedef struct {
 #define FP_SIG_SSDP       0x08
 #define FP_SIG_LLDP       0x10
 #define FP_SIG_CDP        0x20
+#define FP_SIG_DHCP_SERVER 0x40
 
 #define FP_SCORE_OUI          15
 #define FP_SCORE_DHCP_OPT55   35

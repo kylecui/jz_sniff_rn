@@ -869,8 +869,13 @@ int fp_update_profile(device_profile_t *profile,
         break;
     case FP_PROTO_DHCP:
         rc = fp_parse_dhcp(profile, payload, payload_len);
-        if (rc == 0)
+        if (rc == 0) {
             signal |= FP_SIG_DHCP;
+            /* BOOTP op=2 (BOOTREPLY) identifies DHCP server messages
+             * (OFFER, ACK).  Offset 42 = ETH(14) + IP(20) + UDP(8). */
+            if (payload_len > 42 && payload[42] == 2)
+                signal |= FP_SIG_DHCP_SERVER;
+        }
         break;
     case FP_PROTO_MDNS:
         rc = fp_parse_mdns(profile, payload, payload_len);

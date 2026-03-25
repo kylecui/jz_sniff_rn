@@ -1453,9 +1453,10 @@ static void handle_dhcp_alerts(struct mg_connection *c, struct mg_http_message *
 
             if (fd >= 0) {
                 struct bpf_dhcp_exception_key dk;
+                struct jz_bpf_whitelist_entry val;
                 memset(&dk, 0, sizeof(dk));
                 memcpy(dk.mac, servers[i]->profile.mac, 6);
-                if (bpf_map_lookup_elem(fd, &dk, NULL) == 0)
+                if (bpf_map_lookup_elem(fd, &dk, &val) == 0)
                     is_protected = true;
             }
 

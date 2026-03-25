@@ -793,7 +793,7 @@ int jz_discovery_find_dhcp_servers(const jz_discovery_t *disc,
     for (i = 0; i < JZ_DISCOVERY_HASH_BUCKETS; i++) {
         node = disc->buckets[i];
         while (node) {
-            if (node->profile.signals & FP_SIG_DHCP) {
+            if (node->profile.signals & FP_SIG_DHCP_SERVER) {
                 out[count++] = node;
                 if (count >= max_out)
                     return count;
