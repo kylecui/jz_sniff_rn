@@ -1484,6 +1484,66 @@
 
 ---
 
+## v0.9.0 已完成项目 (Post-Deployment Fixes & Enhancements)
+
+> 部署后通过实际测试完成的修复和增强，共 11 个提交。
+
+### DHCP 保护子系统 (新增)
+
+**已完成功能**:
+- [x] DHCP 服务器自动检测（从背景流量 bg_collector 识别 DHCP Offer/ACK）
+- [x] DHCP 服务器豁免管理 API（GET/POST/DELETE /api/v1/dhcp/exceptions）
+- [x] DHCP 告警 API（GET /api/v1/dhcp/alerts）
+- [x] Dashboard 告警面板（未受保护的 DHCP 服务器，一键添加豁免）
+- [x] 主动 DHCP 探测（aggressive 模式，可开关，定期发送 DHCP Discovery）
+- [x] 区分 DHCP 服务器与客户端（通过消息类型 Offer/ACK vs Discover/Request）
+- [x] Protected 状态正确查找（匹配 IP 而非 ID）
+
+**相关提交**: fd15333, f4c746d, 8c68196, 625ca5a
+
+### 配置界面重新设计 (新增)
+
+**已完成功能**:
+- [x] 接口角色配置：monitor（监听）、manage（管理）、mirror（镜像）
+- [x] 按接口 VLAN 配置（从全局列表迁移到每接口卡片内 VLAN 表格）
+- [x] 管理接口额外字段：网关 (gateway)、DNS 服务器
+- [x] 当前配置显示：原始 YAML + 结构化表单
+- [x] 接口配置 API（GET/PUT /api/v1/config/interfaces）
+
+**相关提交**: 6fb1962, 9173c22, 9b6129a
+
+### VLAN 自动检测 (新增)
+
+**已完成功能**:
+- [x] 从背景流量自动检测 VLAN ID
+- [x] VLAN 发现 API（GET /api/v1/discovery/vlans）
+- [x] Discovery 页面展示已发现的 VLAN
+
+**相关提交**: 86e9a6c
+
+### Dashboard 增强
+
+**已完成功能**:
+- [x] 统计卡片点击导航（攻击数→日志攻击标签页，哨兵数→哨兵页，嗅探器→发现页，威胁数→日志威胁标签页）
+- [x] DHCP 告警面板（显示未保护的 DHCP 服务器）
+
+**相关提交**: 9b6129a
+
+### Bug 修复
+
+- [x] 静态哨兵 ping 无响应 (e061fa8)
+- [x] 动态哨兵部署失败 (e061fa8)
+- [x] 统计计数和冻结功能异常 (e061fa8)
+- [x] EVENT_HDR_LEN 44→48 结构体对齐 (d22b701)
+- [x] 背景流量日志 src/dst IP 和 MAC 字段为空 (d21510c)
+- [x] L4 端口解析错误 (625ca5a)
+- [x] 单播 DHCP 报文未捕获 (625ca5a)
+- [x] 配置显示空白 (9b6129a)
+- [x] 发现页字段缺失 (9b6129a)
+- [x] VLAN 子网布局问题 (9b6129a)
+
+---
+
 ## Development Phase Map
 
 ```

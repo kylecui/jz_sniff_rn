@@ -1,8 +1,8 @@
 # jz_sniff_rn Phase 2 项目完成报告
 
-> 日期：2026-03-24
+> 日期：2026-03-25
 > 基线文档：[phase2_plan.md](../phase2_plan.md) v1.3.1
-> 部署环境：10.174.254.136（Ubuntu 24.04 / x86_64 / kernel 6.8）
+> 部署环境：10.174.254.139（Ubuntu 24.04 / x86_64 / kernel 6.8）
 
 ---
 
@@ -15,8 +15,9 @@
 5. [实验室部署结果](#5-实验室部署结果)
 6. [代码统计](#6-代码统计)
 7. [Git 提交历史](#7-git-提交历史)
-8. [已知限制](#8-已知限制)
-9. [后续工作建议](#9-后续工作建议)
+10. [v0.9.0 部署后修复与增强](#10-v090-部署后修复与增强)
+11. [已知限制](#11-已知限制)
+12. [后续工作建议](#12-后续工作建议)
 
 ---
 
@@ -209,7 +210,7 @@ CLI 工具：
 
 | 项目 | 值 |
 |------|-----|
-| 目标主机 | 10.174.254.136 |
+| 目标主机 | 10.174.254.139 |
 | 操作系统 | Ubuntu 24.04 LTS |
 | 架构 | x86_64 |
 | 内核 | 6.8（带 BTF 支持） |
@@ -231,9 +232,9 @@ CLI 工具：
 | configd 服务 | ✅ active (running)，enabled |
 | collectord 服务 | ✅ active (running)，enabled |
 | uploadd 服务 | ✅ active (running)，enabled |
-| API 健康检查 | ✅ `{"status":"ok","version":"0.8.0"}` |
+| API 健康检查 | ✅ `{"status":"ok","version":"0.9.0"}` |
 | BPF 模块 | ✅ 8/8 loaded，全部 enabled |
-| 前端访问 | ✅ https://10.174.254.136:8443/ 正常加载 |
+| 前端访问 | ✅ https://10.174.254.139:8443/ 正常加载 |
 | 自动部署 API | ✅ GET/PUT `/guards/auto/config` 正常 |
 
 ### 5.4 systemd 服务配置
@@ -299,23 +300,26 @@ CLI 工具：
 
 ### 6.2 REST API 端点
 
-Phase 2 完成后共 **42 个端点**：
+Phase 2 + v0.9.0 增强后共 **50+ 个端点**：
 
 | 分类 | 端点数 | 说明 |
 |------|--------|------|
 | Health & Status | 4 | health, status, modules, module reload |
 | Guards | 6 | 静态/动态哨兵 CRUD |
+| DHCP 保护 | 4 | DHCP 告警查询 + 豁免 CRUD |
 | Whitelist | 3 | 白名单 CRUD |
 | Policies | 4 | 策略 CRUD |
-| Logs | 5 | 5 类日志查询 |
+| Logs | 6 | 6 类日志查询（新增 heartbeat） |
 | Stats | 5 | 统计聚合 |
 | Config | 4 | 配置查看/推送/历史/回滚 |
-| Discovery | 1 | 设备发现 |
+| Discovery | 2 | 设备发现 + VLAN 发现 |
+| VLAN 发现 | 1 | 流量自动检测 VLAN |
+| 接口配置 | 2 | 接口角色 GET/PUT |
 | Frozen IPs | 3 | 冻结 IP CRUD |
 | Auto Config | 2 | 自动部署参数 GET/PUT |
 | Staged Config | 4 | 暂存/查看/提交/丢弃 |
 | System | 1 | 守护进程重启 |
-| **总计** | **42** | |
+| **总计** | **50+** | |
 
 ---
 
@@ -333,11 +337,66 @@ fe53ed3 feat(deploy): Phase 5 — multi-NIC XDP attach and daemon control
 f3d05c2 feat(frontend): Phase 6 — Vue 3 management SPA with Element Plus
 e2e44f2 fix(gaps): close 5 plan gaps — guard conflict, auto/config API, heartbeat topology, V1 syslog, test coverage
 c72ffa8 feat(deploy): add install script and fix sniffd service deps
+e061fa8 fix(guards): static guard ping, dynamic guard deploy, stats, freeze
+fd15333 feat(dhcp): DHCP server exception mechanism
+d22b701 fix(events): EVENT_HDR_LEN 44→48
+f4c746d feat(discovery): active DHCP probe with aggressive mode
+d21510c fix(bg-logs): populate src/dst IP and MAC in background capture logs
+625ca5a fix(bpf): add L4 port parsing and unicast DHCP capture
+8c68196 fix(dhcp): distinguish DHCP servers from clients and fix protected status lookup
+6fb1962 feat(config): role-specific interface config with gateway and DNS
+9173c22 feat(config): per-interface VLAN configuration
+86e9a6c feat(discovery): VLAN auto-detection from traffic
+9b6129a fix(ui): config display, discovery fields, VLAN subnet layout, dashboard nav
 ```
 
 ---
 
-## 8. 已知限制
+## 10. v0.9.0 部署后修复与增强
+
+### 10.1 概述
+
+v0.9.0 在 Phase 2 全量交付后，基于实验室实际运行反馈进行了 11 项修复与增强，涵盖 DHCP 保护、配置管理 UI 重构、VLAN 自动发现、仪表盘导航等功能。实验室 IP 从 10.174.254.136 变更为 10.174.254.139。
+
+### 10.2 新增功能
+
+| 功能 | 说明 | 提交 |
+|------|------|------|
+| DHCP 服务器自动检测 | bg_collector BPF 捕获 DHCP 流量 → collectord 识别 DHCP 服务器 → dashboard 告警 | `fd15333`, `f4c746d` |
+| DHCP 豁免机制 | 手动/一键添加 DHCP 服务器豁免，告警消除 | `fd15333`, `8c68196` |
+| 主动 DHCP 探测（aggressive mode） | 可选开关，发送 DHCP Discovery 主动探测 DHCP 服务器 | `f4c746d` |
+| 接口角色配置 | 接口类型（monitor/manage/mirror）+ 管理口 gateway/DNS | `6fb1962` |
+| Per-interface VLAN 配置 | 每个接口独立配置 VLAN 列表（ID + subnet + 名称） | `9173c22` |
+| VLAN 流量自动发现 | 从背景流量中自动识别活跃 VLAN | `86e9a6c` |
+| 仪表盘导航快捷方式 | 点击统计卡片跳转到对应管理页面 | `9b6129a` |
+
+### 10.3 Bug 修复
+
+| 问题 | 修复 | 提交 |
+|------|------|------|
+| 静态哨兵无法 ping、动态哨兵不部署 | 修复 guard 表同步和统计逻辑 | `e061fa8` |
+| EVENT_HDR_LEN 不匹配 | 44→48 对齐修复 | `d22b701` |
+| 背景日志缺少 IP/MAC/VLAN 字段 | 修复 bg_capture 事件字段填充 | `d21510c` |
+| BPF 缺少 L4 端口解析 | 添加 TCP/UDP 端口解析和单播 DHCP 捕获 | `625ca5a` |
+| DHCP 客户端误判为服务器 | 区分 DHCP Server 和 Client 报文方向 | `8c68196` |
+| 配置显示、发现字段、VLAN 布局问题 | 前端 UI 修复 | `9b6129a` |
+
+### 10.4 新增 API 端点（8 个）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/dhcp/alerts` | DHCP 服务器告警列表 |
+| GET | `/api/v1/dhcp/exceptions` | DHCP 豁免列表 |
+| POST | `/api/v1/dhcp/exceptions` | 添加 DHCP 豁免 |
+| DELETE | `/api/v1/dhcp/exceptions/{mac}` | 删除 DHCP 豁免 |
+| GET | `/api/v1/discovery/vlans` | 流量发现的 VLAN 列表 |
+| GET | `/api/v1/config/interfaces` | 接口角色配置 |
+| PUT | `/api/v1/config/interfaces` | 修改接口角色配置 |
+| GET | `/api/v1/logs/heartbeat` | 心跳日志查询 |
+
+---
+
+## 11. 已知限制
 
 | 限制 | 说明 | 影响 |
 |------|------|------|
@@ -349,7 +408,7 @@ c72ffa8 feat(deploy): add install script and fix sniffd service deps
 
 ---
 
-## 9. 后续工作建议
+## 12. 后续工作建议
 
 | 优先级 | 建议 | 说明 |
 |--------|------|------|

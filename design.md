@@ -2325,4 +2325,138 @@ jz_sniff_rn/
 
 ---
 
+## 11. v0.9.0 新增子系统设计
+
+### 11.1 DHCP 保护子系统 (DHCP Protection Subsystem)
+
+#### 架构概述
+
+```
+Network Traffic → bg_collector (BPF Stage 40)
+                       │
+                       │ DHCP Offer/ACK events
+                       ▼
+                  collectord
+                       │
+                       │ 解析 DHCP 消息类型
+                       │ 区分服务器 (Offer/ACK) vs 客户端 (Discover/Request)
+                       ▼
+                  SQLite: dhcp_servers 表
+                       │
+                       ├── sniffd REST API
+                       │   ├── GET /api/v1/dhcp/alerts     (未保护的服务器)
+                       │   ├── GET /api/v1/dhcp/exceptions (豁免列表)
+                       │   ├── POST /api/v1/dhcp/exceptions (添加豁免)
+                       │   └── DELETE /api/v1/dhcp/exceptions/:id
+                       │
+                       └── Dashboard 告警面板
+                           └── 一键添加豁免按钮
+```
+
+#### 关键设计决策
+
+1. **被动检测优先**: 默认从背景流量 (bg_collector) 被动识别 DHCP 服务器
+2. **主动探测可选**: `aggressive_mode` 开关，开启后定期发送 DHCP Discovery 广播
+3. **服务器 vs 客户端区分**: 通过 DHCP 消息类型判断 — Offer(2)/ACK(5) = 服务器, Discover(1)/Request(3) = 客户端
+4. **Protected 状态**: 通过 IP 地址匹配 dhcp_exceptions 表判断是否受保护
+
+#### 数据模型
+
+```sql
+CREATE TABLE dhcp_servers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip          TEXT NOT NULL,
+    mac         TEXT NOT NULL,
+    vlan_id     INTEGER DEFAULT 0,
+    msg_type    INTEGER NOT NULL,     -- DHCP message type (2=Offer, 5=ACK)
+    first_seen  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    packet_count INTEGER DEFAULT 1,
+    interface   TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE dhcp_exceptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip          TEXT NOT NULL,
+    mac         TEXT,
+    description TEXT,
+    created_by  TEXT DEFAULT 'manual',
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+```
+
+#### 配置
+
+```yaml
+discovery:
+  aggressive_mode: false          # 主动 DHCP 探测开关
+  dhcp_probe_interval_sec: 120    # 探测间隔（秒）
+```
+
+### 11.2 VLAN 自动检测 (VLAN Auto-Detection)
+
+#### 架构概述
+
+从背景流量中提取 802.1Q VLAN 标签，自动建立网络 VLAN 拓扑。
+
+```
+Network Traffic → bg_collector (BPF Stage 40)
+                       │
+                       │ 带 VLAN tag 的报文
+                       ▼
+                  collectord
+                       │
+                       │ 提取 VLAN ID, 记录来源 MAC/IP
+                       ▼
+                  SQLite: discovered_vlans 表
+                       │
+                       └── sniffd REST API
+                           └── GET /api/v1/discovery/vlans
+```
+
+#### 关键设计决策
+
+1. **纯被动检测**: 不发送任何 VLAN 探测报文，仅从流经设备的流量中提取
+2. **VLAN 子网为信息字段**: 接口 `subnet` 字段用于 guard_auto.c 部署范围（关键），VLAN `subnet` 仅为元数据
+
+### 11.3 配置管理 UI 架构 (Config Management UI)
+
+#### 接口角色模型
+
+每个网络接口分配一个角色:
+
+| 角色 | 说明 | 额外配置 |
+|------|------|----------|
+| monitor (监听) | 被动监听流量 | 无 |
+| manage (管理) | 管理接口 | DHCP 客户端/静态 IP、网关、DNS |
+| mirror (镜像) | 流量镜像接口 | 无 |
+
+#### 配置层次
+
+```
+接口配置 API (PUT /api/v1/config/interfaces)
+  └── interfaces[]
+      ├── name: "ens33"
+      ├── role: "monitor" | "manage" | "mirror"
+      ├── subnet: "10.174.254.0/24"    (guard 部署范围)
+      ├── gateway: "10.174.254.1"      (仅 manage)
+      ├── dns: ["8.8.8.8"]             (仅 manage)
+      └── vlans[]                      (按接口)
+          ├── vlan_id: 100
+          ├── name: "Office"
+          └── subnet: "10.100.0.0/24"  (信息字段)
+```
+
+#### 前端页面结构
+
+配置页面使用卡片布局，每个接口一张卡片：
+- 卡片标题: 接口名 + 角色标签 + 状态指示
+- 基本信息: IP、MAC、subnet、gateway、DNS
+- VLAN 表格: 嵌入卡片内，per-interface VLAN 管理
+- 当前配置: 同时显示原始 YAML 和结构化表单
+```
+
+---
+
 *End of Design Document*

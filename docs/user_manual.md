@@ -2,7 +2,7 @@
 
 > 版本：1.0.0
 > 更新日期：2026-03-24
-> 适用版本：jz_sniff_rn 0.8.0+（Phase 2 集成完成）
+> 适用版本：jz_sniff_rn 0.9.0+（Phase 2 集成完成）
 
 ---
 
@@ -376,7 +376,7 @@ systemctl status sniffd configd collectord uploadd
 
 # API 健康检查
 curl -sk https://localhost:8443/api/v1/health
-# 预期：{"status":"ok","version":"0.8.0"}
+# 预期：{"status":"ok","version":"0.9.0"}
 
 # BPF 模块加载
 curl -sk https://localhost:8443/api/v1/modules | python3 -m json.tool
@@ -406,8 +406,10 @@ system:
   run_dir: "/var/run/jz"          # 运行时目录（PID 文件、IPC socket）
   interfaces:                      # 网络接口配置
     - name: "ens33"                #   接口名
-      role: "monitor"             #   角色：monitor（业务口）, manage（管理口）, mirror（镜像口）
-      subnet: "10.0.1.0/24"       #   关联子网
+      role: "monitor"             #   角色：monitor（监听）, manage（管理）, mirror（镜像）
+      vlans: [100, 200]           #   该接口关联的 VLAN 列表
+      gateway: "10.0.1.1"         #   网关（仅 manage 角色有效）
+      dns: ["8.8.8.8"]            #   DNS（仅 manage 角色有效）
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
@@ -419,8 +421,10 @@ system:
 | run_dir | string | "/var/run/jz" | PID 文件和 IPC socket 存放路径 |
 | interfaces | array | - | 网络接口列表 |
 | interfaces[].name | string | - | 接口名称（如 eth0, ens33） |
-| interfaces[].role | string | "monitor" | monitor=业务口（attach XDP）, manage=管理口（不 attach）, mirror=镜像口 |
-| interfaces[].subnet | string | - | 关联的子网 CIDR |
+| interfaces[].role | string | "monitor" | monitor=监听, manage=管理, mirror=镜像 |
+| interfaces[].vlans | array | [] | 关联的 VLAN ID 列表 |
+| interfaces[].gateway | string | - | 网关 IP（仅 manage 角色有效） |
+| interfaces[].dns | array | [] | DNS 服务器列表（仅 manage 角色有效） |
 
 #### modules — BPF 模块配置
 
@@ -873,7 +877,7 @@ sudo jzlog tail
 | 协议 | HTTPS（TLS 1.3，ECC 证书） |
 | 认证 | Bearer Token（`Authorization: Bearer <token>`） |
 | 响应格式 | JSON |
-| 端点总数 | 42 |
+| 端点总数 | 50+ |
 
 > **注意**：根路径 `/` 返回 `{"error":"not found"}`，所有 API 端点位于 `/api/v1/` 下。
 
@@ -928,15 +932,16 @@ curl -sk https://localhost:8443/api/v1/guards \
 | PUT | `/api/v1/policies/{id}` | 更新策略 |
 | DELETE | `/api/v1/policies/{id}` | 删除策略 |
 
-#### 日志查询（5 个）
+#### 日志查询（6 个）
 
 | 方法 | 路径 | 说明 | 依赖 |
 |------|------|------|------|
 | GET | `/api/v1/logs/attacks` | 攻击日志 | collectord |
-| GET | `/api/v1/logs/sniffers` | 嗅探器检测日志 | collectord |
-| GET | `/api/v1/logs/background` | 背景采集日志 | collectord |
+| GET | `/api/v1/logs/sniffers` | 哨兵日志 | collectord |
+| GET | `/api/v1/logs/background` | 背景流量日志 | collectord |
 | GET | `/api/v1/logs/threats` | 威胁检测日志 | collectord |
 | GET | `/api/v1/logs/audit` | 审计日志 | collectord |
+| GET | `/api/v1/logs/heartbeat` | 心跳日志 | collectord |
 
 > 日志端点需要 collectord 运行，否则返回 `"database unavailable (is collectord running?)"` 。
 
@@ -950,7 +955,7 @@ curl -sk https://localhost:8443/api/v1/guards \
 | GET | `/api/v1/stats/threats` | 威胁统计 |
 | GET | `/api/v1/stats/background` | 背景采集统计 |
 
-#### 配置管理（4 + 4 = 8 个）
+#### 配置管理（10 个）
 
 | 方法 | 路径 | 说明 | 依赖 |
 |------|------|------|------|
@@ -962,12 +967,24 @@ curl -sk https://localhost:8443/api/v1/guards \
 | POST | `/api/v1/config/stage` | 暂存配置修改 | configd |
 | POST | `/api/v1/config/commit` | 提交暂存配置 | configd |
 | POST | `/api/v1/config/discard` | 丢弃暂存配置 | configd |
+| GET | `/api/v1/config/interfaces` | 接口配置 | configd |
+| PUT | `/api/v1/config/interfaces` | 更新接口配置 | configd |
 
-#### 设备发现（1 个）
+#### 设备发现（2 个）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/discovery/devices` | 在线设备列表（含指纹信息） |
+| GET | `/api/v1/discovery/vlans` | VLAN 自动发现 |
+
+#### DHCP 告警与豁免（4 个）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/dhcp/alerts` | DHCP 服务器告警 |
+| GET | `/api/v1/dhcp/exceptions` | DHCP 豁免列表 |
+| POST | `/api/v1/dhcp/exceptions` | 添加 DHCP 豁免 |
+| DELETE | `/api/v1/dhcp/exceptions/{id}` | 删除 DHCP 豁免 |
 
 #### 冻结 IP（3 个）
 
@@ -995,7 +1012,7 @@ curl -sk https://localhost:8443/api/v1/guards \
 以下所有示例使用 `-k` 跳过自签名证书验证。如启用了认证，需添加 `-H "Authorization: Bearer <token>"`。
 
 ```bash
-HOST=10.174.254.136
+HOST=10.174.254.139
 TOKEN="changeme"
 AUTH="-H \"Authorization: Bearer $TOKEN\""
 
@@ -1183,6 +1200,9 @@ https://<host>:8443/
 
 ### 8.3 页面功能
 
+前端共有 8 个主要页面：
+Dashboard, Guards, Discovery, Logs, Config, Whitelist, Policies, About
+
 #### 仪表盘（Dashboard）
 
 系统状态总览页面，显示：
@@ -1191,8 +1211,15 @@ https://<host>:8443/
 - 攻击事件计数
 - BPF 模块状态一览（8 个模块的 loaded 状态）
 - 系统版本信息
+- **DHCP 告警面板**：显示未受保护的 DHCP 服务器，支持一键"添加豁免"
 
-数据来源：`GET /api/v1/status`、`GET /api/v1/stats`
+**快捷导航**：
+- 点击"攻击次数"卡片跳转至日志页攻击标签页
+- 点击"哨兵数量"卡片跳转至哨兵管理页
+- 点击"嗅探器数量"卡片跳转至设备发现页
+- 点击"威胁数量"卡片跳转至日志页威胁标签页
+
+数据来源：`GET /api/v1/status`、`GET /api/v1/stats`、`GET /api/v1/dhcp/alerts`
 
 #### 哨兵管理（Guards）
 
@@ -1204,6 +1231,51 @@ https://<host>:8443/
 - 自动部署参数配置（启用/禁用、比例限制、扫描间隔）
 
 数据来源：`GET /api/v1/guards`、`GET/POST/DELETE /api/v1/guards/frozen`、`GET/PUT /api/v1/guards/auto/config`
+
+#### 设备发现（Discovery）
+
+在线设备视图，支持：
+- **设备列表**：IP、MAC、VLAN、厂商、OS 类型、设备类型、主机名、置信度
+- **VLAN 自动发现**：从背景流量中自动识别网络中的 VLAN (新增)
+- **设备指纹识别**：基于 OUI + DHCP option 55/60 + mDNS/SSDP/LLDP 的多维指纹识别
+- **VLAN 分组展示**
+- **指纹信息详情**
+
+数据来源：`GET /api/v1/discovery/devices`、`GET /api/v1/discovery/vlans`
+
+#### 日志查看（Logs）
+
+多类型日志浏览器，包含 6 个标签页：
+- **攻击日志** (attacks)：ARP/ICMP 蜜罐触发事件
+- **哨兵日志** (sniffers)：混杂模式检测结果
+- **背景流量** (background)：广播/组播协议捕获
+- **威胁检测** (threats)：威胁模式匹配告警（attack_log 中威胁等级 > 0 的子集）
+- **审计日志** (audit)：管理员操作审计记录
+- **心跳日志** (heartbeat)：守护进程运行状态记录 (新增)
+
+支持功能：
+- 时间范围过滤
+- 分页浏览
+- 数据表格展示
+
+数据来源：`GET /api/v1/logs/{type}`、`GET /api/v1/logs/heartbeat`
+
+#### 配置管理（Config）
+
+重新设计的配置界面，支持：
+- **接口角色配置**：监听 (monitor)、管理 (manage)、镜像 (mirror)
+- **按接口 VLAN 配置**：每个网卡卡片内嵌独立的 VLAN 表格
+- **管理口增强**：为 manage 类型接口配置网关和 DNS
+- **配置显示**：同时提供原始 YAML 和结构化表单视图
+- **UCI 式分阶段管理**：
+  - 查看当前运行配置
+  - 编辑配置（暂存模式）
+  - 提交 (commit) / 丢弃 (discard) 暂存修改
+  - 配置版本历史与回滚 (rollback)
+
+数据来源：`GET/POST /api/v1/config`、`GET/POST /api/v1/config/staged`、`POST /api/v1/config/commit`、`POST /api/v1/config/discard`、`GET /api/v1/config/history`、`GET/PUT /api/v1/config/interfaces`
+
+> **暂存过期**：暂存配置超过 300 秒未提交将自动丢弃。
 
 #### 白名单（Whitelist）
 
@@ -1222,51 +1294,14 @@ https://<host>:8443/
 
 数据来源：`GET/POST/PUT/DELETE /api/v1/policies`
 
-#### 日志查看（Logs）
+#### 关于（About）
 
-多类型日志浏览器，5 个 tab：
-- **攻击日志**（attack）：ARP/ICMP 蜜罐触发事件
-- **嗅探器日志**（sniffer）：混杂模式检测结果
-- **背景日志**（background）：广播/组播协议捕获
-- **威胁日志**（threat）：威胁模式匹配告警
-- **审计日志**（audit）：配置变更审计记录
-
-支持功能：
-- 时间范围过滤
-- 分页浏览
-- 数据表格展示
-
-数据来源：`GET /api/v1/logs/{type}`
-
-#### 设备发现（Discovery）
-
-在线设备视图：
-- 设备列表（IP、MAC、VLAN、厂商、OS 类型、设备类型、主机名、置信度）
-- VLAN 分组展示
-- 指纹信息详情
-
-数据来源：`GET /api/v1/discovery/devices`
-
-#### 配置管理（Config）
-
-UCI 式分阶段配置管理：
-- 查看当前运行配置
-- 编辑配置（暂存模式）
-- 提交/丢弃暂存修改
-- 配置版本历史
-- 配置回滚
-
-数据来源：`GET/POST /api/v1/config`、`GET/POST /api/v1/config/staged`、`POST /api/v1/config/commit`、`POST /api/v1/config/discard`、`GET /api/v1/config/history`
-
-> **暂存过期**：暂存配置超过 300 秒未提交将自动丢弃。
-
-#### 系统设置（System）
-
-系统级管理功能：
+系统级管理与信息展示：
 - BPF 模块状态（8 个模块的 loaded/enabled 状态）
 - 网络接口状态
 - 日志传输配置（syslog/MQTT/HTTPS 的启用状态）
 - 守护进程重启（sniffd/configd/collectord/uploadd）
+- 系统版本与版权信息
 
 数据来源：`GET /api/v1/modules`、`GET /api/v1/status`、`POST /api/v1/system/restart/{daemon}`
 

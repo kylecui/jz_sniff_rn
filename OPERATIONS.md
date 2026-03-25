@@ -17,10 +17,13 @@ This guide covers deploying, configuring, and operating `jz_sniff_rn` on a produ
 9. [Operational Smoke Test](#9-operational-smoke-test)
 10. [CLI Usage](#10-cli-usage)
 11. [REST API Usage](#11-rest-api-usage)
-12. [Systemd Operation](#12-systemd-operation)
-13. [Log Management](#13-log-management)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Uninstall](#15-uninstall)
+12. [DHCP Protection Operations](#12-dhcp-protection-operations)
+13. [VLAN Auto-Detection Operations](#13-vlan-auto-detection-operations)
+14. [Config Management Operations](#14-config-management-operations)
+15. [Systemd Operation](#15-systemd-operation)
+16. [Log Management](#16-log-management)
+17. [Troubleshooting](#17-troubleshooting)
+18. [Uninstall](#18-uninstall)
 
 ---
 
@@ -582,7 +585,7 @@ https://<host>:8443
 
 > **Note**: The root path `/` returns `{"error":"not found"}` — this is expected. All endpoints live under `/api/v1/`.
 
-### Endpoints (31 total)
+### Endpoints (50+ total)
 
 #### Health & Status
 
@@ -604,6 +607,15 @@ https://<host>:8443
 | DELETE | `/api/v1/guards/static/{ip}` | Delete a static guard entry |
 | DELETE | `/api/v1/guards/dynamic/{ip}` | Delete a dynamic guard entry |
 
+#### DHCP Protection
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/dhcp/alerts` | List DHCP server alerts |
+| GET | `/api/v1/dhcp/exceptions` | List DHCP server exemptions |
+| POST | `/api/v1/dhcp/exceptions` | Add a DHCP server exemption |
+| DELETE | `/api/v1/dhcp/exceptions/{id}` | Delete a DHCP server exemption |
+
 #### Whitelist
 
 | Method | Endpoint | Description |
@@ -621,6 +633,12 @@ https://<host>:8443
 | PUT | `/api/v1/policies/{id}` | Update a traffic policy |
 | DELETE | `/api/v1/policies/{id}` | Delete a traffic policy |
 
+#### Discovery
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/discovery/vlans` | List auto-discovered VLANs |
+
 #### Logs
 
 | Method | Endpoint | Description |
@@ -630,6 +648,7 @@ https://<host>:8443
 | GET | `/api/v1/logs/background` | Query background collector logs |
 | GET | `/api/v1/logs/threats` | Query threat detection logs |
 | GET | `/api/v1/logs/audit` | Query configuration audit trail |
+| GET | `/api/v1/logs/heartbeat` | Query system heartbeat logs |
 
 #### Statistics
 
@@ -649,6 +668,8 @@ https://<host>:8443
 | GET | `/api/v1/config/history` | Get config change history |
 | POST | `/api/v1/config` | Push new configuration |
 | POST | `/api/v1/config/rollback` | Rollback to a previous config version |
+| GET | `/api/v1/config/interfaces` | Get interface role configuration |
+| PUT | `/api/v1/config/interfaces` | Update interface role configuration |
 
 ### curl Examples
 
@@ -656,7 +677,7 @@ All examples use `-k` to skip TLS certificate verification (self-signed cert).
 If auth is enabled, add `-H "Authorization: Bearer <token>"` to each command.
 
 ```bash
-HOST=10.174.254.136
+HOST=10.174.254.139
 
 # --- Health & Status ---
 curl -sk https://$HOST:8443/api/v1/health
@@ -715,19 +736,117 @@ curl -sk -X POST https://$HOST:8443/api/v1/config/rollback \
 
 # --- Module Reload ---
 curl -sk -X POST -d "" https://$HOST:8443/api/v1/modules/guard_classifier/reload
+
+# --- DHCP Protection ---
+curl -sk https://$HOST:8443/api/v1/dhcp/alerts
+curl -sk https://$HOST:8443/api/v1/dhcp/exceptions
+
+# Add a DHCP exception
+curl -sk -X POST https://$HOST:8443/api/v1/dhcp/exceptions \
+  -H "Content-Type: application/json" \
+  -d '{"ip":"10.0.1.1","mac":"00:11:22:33:44:55","description":"Main DHCP"}'
+
+# --- Discovery ---
+curl -sk https://$HOST:8443/api/v1/discovery/vlans
+
+# --- Interface Config ---
+curl -sk https://$HOST:8443/api/v1/config/interfaces
+
+# Update interface role
+curl -sk -X PUT https://$HOST:8443/api/v1/config/interfaces \
+  -H "Content-Type: application/json" \
+  -d '{"interfaces":[{"name":"ens33","role":"monitor"}]}'
+
+# --- Heartbeat ---
+curl -sk https://$HOST:8443/api/v1/logs/heartbeat
 ```
 
 ### Quick Smoke Test (copy-paste one-liner)
 
 ```bash
-curl -sk https://10.174.254.136:8443/api/v1/health && echo " OK"
+curl -sk https://10.174.254.139:8443/api/v1/health && echo " OK"
 ```
 
 If you see `{"status":"ok"...}` followed by `OK`, the API is running.
 
 ---
 
-## 12. Systemd Operation
+## 12. DHCP Protection Operations (DHCP 防护运维)
+
+### DHCP 服务器自动探测与豁免管理
+
+sniffd 会自动探测网络中的 DHCP 服务器。如果发现未授权的 DHCP 服务器，会产生告警。
+
+### 开启主动探测 (Aggressive Mode)
+
+在 `base.yaml` 中配置：
+```yaml
+discovery:
+  dhcp_aggressive: true
+```
+
+### 查看/添加/删除 DHCP 豁免
+
+```bash
+# 查看豁免列表
+curl -sk -H "Authorization: Bearer $TOKEN" "https://$HOST:8443/api/v1/dhcp/exceptions"
+
+# 添加豁免
+curl -sk -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"ip":"10.0.1.1","mac":"00:11:22:33:44:55","description":"Authorized DHCP"}' \
+  "https://$HOST:8443/api/v1/dhcp/exceptions"
+
+# 删除豁免
+curl -sk -X DELETE -H "Authorization: Bearer $TOKEN" "https://$HOST:8443/api/v1/dhcp/exceptions/1"
+```
+
+---
+
+## 13. VLAN Auto-Detection Operations (VLAN 自动发现运维)
+
+### 查看自动发现的 VLAN
+
+sniffd 会从流量中自动识别活跃的 VLAN。
+
+```bash
+# 查看发现的 VLAN 列表
+curl -sk -H "Authorization: Bearer $TOKEN" "https://$HOST:8443/api/v1/discovery/vlans"
+```
+
+---
+
+## 14. Config Management Operations (配置管理运维)
+
+### 接口角色配置 (Interface Roles)
+
+支持三种接口角色：
+- `monitor`: 监控接口，用于流量分析
+- `manage`: 管理接口，用于 SSH/API
+- `mirror`: 镜像接口，用于流量镜像
+
+### 接口 VLAN 配置
+
+可以为每个接口配置允许的 VLAN 范围。
+
+### 管理接口的网关与 DNS
+
+对于 `manage` 类型的接口，可以配置网关和 DNS。
+
+### 配置示例 (curl)
+
+```bash
+# 获取当前接口配置
+curl -sk -H "Authorization: Bearer $TOKEN" "https://$HOST:8443/api/v1/config/interfaces"
+
+# 更新接口配置
+curl -sk -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"interfaces":[{"name":"ens33","role":"monitor","vlans":"1-4094"},{"name":"ens34","role":"manage","gateway":"10.0.1.1","dns":["8.8.8.8"]}]}' \
+  "https://$HOST:8443/api/v1/config/interfaces"
+```
+
+---
+
+## 15. Systemd Operation
 
 For production deployment, use the provided systemd service files.
 
@@ -777,7 +896,7 @@ The systemd units include security hardening:
 
 ---
 
-## 13. Log Management
+## 16. Log Management
 
 ### Log Destinations
 
@@ -809,7 +928,7 @@ sqlite3 /var/lib/jz/jz.db "SELECT COUNT(*) FROM events;"
 
 ---
 
-## 14. Troubleshooting
+## 17. Troubleshooting
 
 ### sniffd Fails to Start
 
@@ -895,7 +1014,7 @@ dpkg -l | grep -E 'libelf|libsqlite3|libyaml|libcmocka'
 
 ---
 
-## 15. Uninstall
+## 18. Uninstall
 
 ```bash
 # Stop all services

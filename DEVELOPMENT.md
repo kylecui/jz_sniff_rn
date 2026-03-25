@@ -28,11 +28,29 @@ The project has progressed through seven major phases, documented in the followi
 
 9.  **Phase 8**: Implemented all three CLI tools — jzctl (604 lines, system management), jzlog (847 lines, log viewer with SQLite queries), jzguard (706 lines, guard table management with IPC). (~2,157 lines)
 
-10. **Phase 9**: REST API & Deployment — 31-endpoint HTTPS management API (api.h/api.c, 2,153 lines) integrated into sniffd with bearer token auth, guard/whitelist CRUD, log queries with pagination, config IPC, stats endpoints. Four systemd service files with dependency ordering, security hardening, and watchdog support (167 lines). sniffd main.c updated with API init/poll/destroy lifecycle and 6 new CLI options. (~2,393 lines)
+10. **Phase 9**: REST API & Deployment — 50+-endpoint HTTPS management API (api.h/api.c, 2,153 lines) integrated into sniffd with bearer token auth, guard/whitelist CRUD, log queries with pagination, config IPC, stats endpoints. Four systemd service files with dependency ordering, security hardening, and watchdog support (167 lines). sniffd main.c updated with API init/poll/destroy lifecycle and 6 new CLI options. (~2,393 lines)
 
-Total implementation: ~24,287 lines of C across 66 source files (plus 33,781 lines vendored).
+11. **Phase 10**: v0.9.0 Integration & Validation — End-to-end integration tests with rSwitch pipeline, performance benchmarks (PPS, latency at line rate), and final documentation. 11 post-deployment fixes applied.
 
-## 3. Architecture Overview
+Total implementation: ~28,000+ lines of C across 70+ source files (plus 33,781 lines vendored).
+
+## 3. v0.9.0 Post-Deployment 修复 (11 commits)
+
+| Commit | 描述 |
+|--------|------|
+| e061fa8 | fix(guards): 静态哨兵 ping、动态哨兵部署、统计、冻结修复 |
+| fd15333 | feat(dhcp): DHCP 服务器豁免机制 |
+| d22b701 | fix(events): EVENT_HDR_LEN 44→48 |
+| f4c746d | feat(discovery): 主动 DHCP 探测与 aggressive 模式 |
+| d21510c | fix(bg-logs): 背景流量日志填充 src/dst IP 和 MAC |
+| 625ca5a | fix(bpf): L4 端口解析与单播 DHCP 捕获 |
+| 8c68196 | fix(dhcp): 区分 DHCP 服务器与客户端，修复 protected 状态查找 |
+| 6fb1962 | feat(config): 基于角色的接口配置（网关、DNS） |
+| 9173c22 | feat(config): 按接口 VLAN 配置 |
+| 86e9a6c | feat(discovery): 从流量自动检测 VLAN |
+| 9b6129a | fix(ui): 配置显示、发现字段、VLAN 子网布局、Dashboard 导航 |
+
+## 4. Architecture Overview
 
 ### BPF Pipeline
 The data plane consists of a series of BPF modules executed in the rSwitch pipeline. Each module handles a specific security or deception task:
@@ -69,7 +87,7 @@ Four daemons are implemented with core functionality:
 ### Build System
 A top-level Makefile handles auto-discovery of BPF modules and user-space components. It supports CO-RE (Compile Once, Run Everywhere) for BPF portability.
 
-## 4. Complete File Inventory
+## 5. Complete File Inventory
 
 The project consists of 66 implemented source files (~24,287 lines of C), organized as follows:
 
@@ -95,18 +113,31 @@ The project consists of 66 implemented source files (~24,287 lines of C), organi
 - **mac_pool.c / .h**: Fake MAC management. (250 lines)
 - **ipc.c / .h**: Unix domain socket IPC (server + client). (695 lines)
 - **log.c / .h**: Structured logging with syslog integration. (244 lines)
+- **fingerprint.c / .h**: Device fingerprinting (OUI + DHCP opt55/60).
+- **log_format.c / .h**: Log formatting utilities.
+- **syslog_export.c / .h**: Syslog export management.
 
-### User-Space Daemons (14 files, ~7,985 lines)
+### User-Space Daemons (22 files, ~11,000+ lines)
 - **src/sniffd/main.c**: Orchestrator daemon main loop. (800 lines)
 - **src/sniffd/bpf_loader.c / .h**: BPF module lifecycle manager (8 slots). (429 lines)
 - **src/sniffd/ringbuf.c / .h**: Dual ring buffer consumer (events + forensic samples). (318 lines)
 - **src/sniffd/probe_gen.c / .h**: ARP probe generator with timerfd scheduling. (472 lines)
 - **src/sniffd/guard_mgr.c / .h**: Guard table manager (CRUD, TTL, IPC). (557 lines)
-- **src/sniffd/api.c / .h**: REST API server (31 HTTPS endpoints, bearer auth, mongoose). (2,153 lines)
+- **src/sniffd/api.c / .h**: REST API server (50+ HTTPS endpoints, bearer auth, mongoose). (2,153 lines)
+- **src/sniffd/discovery.c / .h**: Device discovery and VLAN detection.
+- **src/sniffd/guard_auto.c / .h**: Dynamic guard auto-deployment.
+- **src/sniffd/heartbeat.c / .h**: System heartbeat logging.
+- **src/sniffd/policy_mgr.c / .h**: Traffic policy management.
+- **src/sniffd/policy_auto.c / .h**: Automatic policy generation.
 - **src/configd/main.c**: Configuration manager daemon with BPF map push. (888 lines)
 - **src/configd/remote.c / .h**: Remote TLS config endpoint (mTLS, mongoose). (425 lines)
+- **src/configd/staged.c / .h**: Staged configuration management.
 - **src/collectord/main.c**: Event collector daemon with DB auto-pruning. (1,021 lines)
 - **src/uploadd/main.c**: Upload agent daemon with native HTTPS. (1,102 lines)
+- **src/uploadd/mqtt.c / .h**: MQTT client for management platform.
+
+### Frontend (20+ files, ~3,000+ lines)
+- **frontend/**: Vue 3 management SPA (Element Plus, vue-i18n).
 
 ### Tests (16 files, ~3,698 lines)
 - **tests/bpf/test_*.c**: 8 BPF module tests using prog_test_run. (~1,800 lines)
@@ -140,7 +171,7 @@ All services include: Restart=on-failure, NoNewPrivileges=yes, ProtectSystem=str
 ### Build and Project Files
 - **Makefile, .gitignore, .editorconfig, .gitattributes, README.md, LICENSE**: Project metadata and build config.
 
-## 5. Step-by-Step Build Instructions for Ubuntu
+## 6. Step-by-Step Build Instructions for Ubuntu
 
 Follow these steps to build the project on Ubuntu 22.04 or newer.
 
@@ -267,7 +298,26 @@ sudo make uninstall
 make clean
 ```
 
-## 6. Configuration Reference
+## 7. 前端构建 (Frontend Build)
+
+前端使用 Vue 3 + Vite + Element Plus + vue-i18n 构建，使用 Bun 作为包管理器和构建工具。
+
+### 依赖安装
+cd frontend
+/snap/bin/bun install
+
+### 开发模式
+/snap/bin/bun run dev
+
+### 生产构建
+/snap/bin/bun run build
+# 输出到 frontend/dist/，由 sniffd 的 mongoose HTTPS 服务器托管
+
+### 部署到设备
+rsync -avz --delete frontend/dist/ jzzn@10.174.254.139:/tmp/jz_www/
+ssh jzzn@10.174.254.139 'sudo rsync -av --delete /tmp/jz_www/ /usr/share/jz/www/ && rm -rf /tmp/jz_www'
+
+## 8. Configuration Reference
 
 The system uses YAML profiles for configuration. The base configuration is located at `config/base.yaml` and is installed to `/etc/jz/base.yaml`.
 
@@ -282,7 +332,7 @@ The system uses YAML profiles for configuration. The base configuration is locat
 - **uploader**: Remote management platform URL and upload intervals.
 - **api**: REST API listener settings and authentication tokens.
 
-## 7. BPF Module Reference
+## 9. BPF Module Reference
 
 ### jz_guard_classifier (Stage 21)
 - **Purpose**: Gatekeeper for the deception engine.
@@ -332,7 +382,7 @@ The system uses YAML profiles for configuration. The base configuration is locat
 - **Events**: None (emits raw samples to a dedicated ring buffer).
 - **Operation**: Captures packet payloads based on flags or random sampling.
 
-## 8. User-Space Library API Reference
+## 10. User-Space Library API Reference
 
 ### db (db.h / db.c)
 - **Purpose**: SQLite wrapper for attack logs, sniffer records, bg captures, config history, audit trail, and system state.
@@ -429,7 +479,7 @@ The system uses YAML profiles for configuration. The base configuration is locat
   - `JZ_LOG_DEBUG/INFO/WARN/ERROR/FATAL(fmt, ...)` -- Convenience macros with file:line.
 - **Dependencies**: syslog.h (POSIX).
 
-## 9. Key Technical Decisions & Discoveries
+## 11. Key Technical Decisions & Discoveries
 
 1.  **Tail Call Mechanism**: rSwitch uses auto-incrementing slots for tail calls. Modules do not use stage numbers directly for the `bpf_tail_call` index.
 2.  **Context Limitations**: The `rs_ctx` reserved area is limited to 16 bytes. Use per-CPU maps to pass complex state between pipeline modules.
@@ -444,7 +494,7 @@ The system uses YAML profiles for configuration. The base configuration is locat
 11. **REST API Design**: The REST API runs inside sniffd (not as a separate daemon) per design.md §4.6. It uses mongoose for HTTPS with bearer token auth. Guard/whitelist endpoints read BPF maps directly via bpf_map_get_next_key/lookup_elem. Config endpoints use IPC client to communicate with configd. Policy endpoints are stubbed (501) pending a policy manager module.
 12. **Mongoose Routing**: mg_match() does exact pattern matching, not prefix matching. `/api/v1/guards` does NOT match `/api/v1/guards/static` — each route needs its own handler entry.
 
-## 10. Remaining Work
+## 12. Remaining Work
 
 ### Overall: ~5% remaining
 
@@ -466,7 +516,7 @@ The system uses YAML profiles for configuration. The base configuration is locat
 - **mongoose v7.20** (third_party/mongoose/) — HTTPS server/client with built-in TLS 1.3. (30,338 lines)
 
 ### ~~Phase 7.5: uploadd Native HTTPS~~ (Complete)
-- **uploadd**: ✅ Replaced curl shell-out with mongoose-based HTTPS client. mTLS support, 10s connect / 30s response timeout, graceful shutdown aware. Version bumped to 0.8.0.
+- **uploadd**: ✅ Replaced curl shell-out with mongoose-based HTTPS client. mTLS support, 10s connect / 30s response timeout, graceful shutdown aware. Version bumped to 0.9.0.
 
 ### ~~Phase 8: CLI Tools~~ (Complete)
 Three CLI tools in `cli/` directory:
@@ -475,7 +525,7 @@ Three CLI tools in `cli/` directory:
 - **jzlog** (847 lines): ✅ Log viewer — attack, sniffer, background, audit, threat subcommands with direct SQLite queries, prepared statements, table/JSON output, tail -f mode with configurable interval.
 
 ### ~~Phase 9: REST API & Deployment~~ (Complete)
-- **REST API** (api.h + api.c, 2,153 lines): ✅ 31 HTTPS endpoints via mongoose, bearer token auth, guard/whitelist CRUD (direct BPF map iteration), log queries with pagination (SQLite LIMIT/OFFSET), config get/set via IPC to configd, stats from guard_mgr and bpf_loader, health/status/modules endpoints. Policy endpoints stubbed as 501.
+- **REST API** (api.h + api.c, 2,153 lines): ✅ 50+ HTTPS endpoints via mongoose, bearer token auth, guard/whitelist CRUD (direct BPF map iteration), log queries with pagination (SQLite LIMIT/OFFSET), config get/set via IPC to configd, stats from guard_mgr and bpf_loader, health/status/modules endpoints. Policy endpoints stubbed as 501.
 - **Systemd services** (4 files, 167 lines): ✅ sniffd/configd/collectord/uploadd with proper dependency ordering (After/BindsTo/Wants), security hardening (NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp), watchdog (sniffd WatchdogSec=60), LimitMEMLOCK=infinity for BPF.
 - **sniffd integration**: ✅ main.c updated (727→800 lines) with API lifecycle (init/poll/destroy), 6 new CLI options (--api-port, --api-cert, --api-key, --api-ca, --api-token, --no-api), version bumped to 0.8.0.
 
@@ -484,7 +534,7 @@ Three CLI tools in `cli/` directory:
 - Performance benchmarks (PPS, latency at line rate).
 - Final documentation and deployment guide.
 
-## 11. Development Guidelines
+## 13. Development Guidelines
 
 ### Commit Convention
 Use the following format for all commits: `<type>(<scope>): <description>`
