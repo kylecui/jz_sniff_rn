@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { getDevices, getDevice } from '@/api/discovery'
-import type { Device } from '@/api/discovery'
+import { getDevices, getDevice, getDiscoveryConfig, setDiscoveryConfig } from '@/api/discovery'
+import type { Device, DiscoveryConfig } from '@/api/discovery'
 
 const { t } = useI18n()
 
@@ -9,6 +9,12 @@ const devices = ref<Device[]>([])
 const drawerVisible = ref(false)
 const selectedDevice = ref<Device | null>(null)
 const detailLoading = ref(false)
+
+const discoveryConfig = ref<DiscoveryConfig>({
+  aggressive_mode: false,
+  dhcp_probe_interval_sec: 120,
+})
+const configLoading = ref(false)
 
 async function fetchDevices() {
   loading.value = true
@@ -19,6 +25,25 @@ async function fetchDevices() {
     devices.value = []
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchConfig() {
+  try {
+    discoveryConfig.value = await getDiscoveryConfig()
+  } catch {
+    /* keep defaults */
+  }
+}
+
+async function handleConfigChange() {
+  configLoading.value = true
+  try {
+    discoveryConfig.value = await setDiscoveryConfig(discoveryConfig.value)
+  } catch {
+    /* ignore */
+  } finally {
+    configLoading.value = false
   }
 }
 
@@ -34,12 +59,40 @@ async function handleRowClick(row: Device) {
   }
 }
 
-onMounted(fetchDevices)
+onMounted(() => {
+  fetchDevices()
+  fetchConfig()
+})
 </script>
 
 <template>
   <div>
     <h2>{{ t('discovery.title') }}</h2>
+
+    <el-card class="mb" shadow="never">
+      <div class="config-row">
+        <div class="config-item">
+          <el-switch
+            v-model="discoveryConfig.aggressive_mode"
+            :loading="configLoading"
+            @change="handleConfigChange"
+          />
+          <span class="config-label">{{ t('discovery.aggressiveMode') }}</span>
+          <span class="config-desc">{{ t('discovery.aggressiveModeDesc') }}</span>
+        </div>
+        <div v-if="discoveryConfig.aggressive_mode" class="config-item">
+          <span class="config-label">{{ t('discovery.probeInterval') }}</span>
+          <el-input-number
+            v-model="discoveryConfig.dhcp_probe_interval_sec"
+            :min="10"
+            :max="3600"
+            :step="10"
+            size="small"
+            @change="handleConfigChange"
+          />
+        </div>
+      </div>
+    </el-card>
 
     <el-button type="primary" class="mb" @click="fetchDevices">
       {{ t('common.refresh') }}
@@ -91,6 +144,25 @@ onMounted(fetchDevices)
 <style scoped>
 .mb {
   margin-bottom: 12px;
+}
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.config-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.config-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.config-desc {
+  color: #909399;
+  font-size: 12px;
 }
 .fp-json {
   background: #f5f7fa;

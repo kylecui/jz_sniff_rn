@@ -2588,6 +2588,59 @@ static void handle_guards_frozen_del(struct mg_connection *c, struct mg_http_mes
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
+static void handle_discovery_config_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "aggressive_mode", api->config->discovery.aggressive_mode);
+    cJSON_AddNumberToObject(root, "dhcp_probe_interval_sec", api->config->discovery.dhcp_probe_interval_sec);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_discovery_config_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *item;
+
+    if (!api || !api->config || !api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    item = cJSON_GetObjectItem(body, "aggressive_mode");
+    if (item && cJSON_IsBool(item))
+        api->config->discovery.aggressive_mode = cJSON_IsTrue(item);
+
+    item = cJSON_GetObjectItem(body, "dhcp_probe_interval_sec");
+    if (item && cJSON_IsNumber(item)) {
+        int val = item->valueint;
+        if (val < 10) val = 10;
+        api->config->discovery.dhcp_probe_interval_sec = val;
+    }
+
+    jz_discovery_update_config(api->discovery, api->config);
+
+    if (api_persist_config(api) < 0)
+        jz_log_error("discovery/config PUT: failed to persist config");
+
+    api_audit_log(api, "discovery_config_update", NULL, NULL, "success");
+    handle_discovery_config_get(c, hm, api);
+    cJSON_Delete(body);
+}
+
 static void handle_guards_auto_config_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     char *buf;
@@ -3540,6 +3593,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_discovery_devices(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/discovery/config"), NULL)) {
+            handle_discovery_config_get(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/guards/frozen"), NULL)) {
             handle_guards_frozen_list(c, hm, api);
             return;
@@ -3653,6 +3710,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
     }
 
     if (mg_match(hm->method, mg_str("PUT"), NULL)) {
+        if (mg_match(hm->uri, mg_str("/api/v1/discovery/config"), NULL)) {
+            handle_discovery_config_put(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/guards/auto/config"), NULL)) {
             handle_guards_auto_config_put(c, hm, api);
             return;

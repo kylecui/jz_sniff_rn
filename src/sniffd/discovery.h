@@ -38,6 +38,12 @@ typedef struct jz_discovery {
     int                    arp_interval_sec;
     jz_guard_auto_t       *guard_auto;
 
+    /* Active DHCP probing */
+    bool                   aggressive_mode;
+    int                    dhcp_sock;
+    uint64_t               last_dhcp_probe_ns;
+    int                    dhcp_probe_interval_sec;
+
     bool                   initialized;
 } jz_discovery_t;
 

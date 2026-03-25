@@ -15,6 +15,8 @@
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -275,6 +277,176 @@ static int reopen_arp_socket_if_needed(jz_discovery_t *disc, const jz_config_t *
     return 0;
 }
 
+#define JZ_DHCP_BOOTP_MIN_LEN   300
+#define JZ_DHCP_MAGIC_COOKIE    0x63825363
+
+struct dhcp_discover_pkt {
+    struct ethhdr eth;
+    struct {
+        uint8_t  ihl_ver;
+        uint8_t  tos;
+        uint16_t tot_len;
+        uint16_t id;
+        uint16_t frag_off;
+        uint8_t  ttl;
+        uint8_t  protocol;
+        uint16_t check;
+        uint32_t saddr;
+        uint32_t daddr;
+    } __attribute__((packed)) ip;
+    struct {
+        uint16_t source;
+        uint16_t dest;
+        uint16_t len;
+        uint16_t check;
+    } __attribute__((packed)) udp;
+    uint8_t bootp[JZ_DHCP_BOOTP_MIN_LEN];
+} __attribute__((packed));
+
+static uint16_t ip_checksum(const void *data, int len)
+{
+    const uint16_t *p = data;
+    uint32_t sum = 0;
+
+    while (len > 1) {
+        sum += *p++;
+        len -= 2;
+    }
+    if (len == 1)
+        sum += *(const uint8_t *)p;
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+static int open_dhcp_socket(jz_discovery_t *disc, const jz_config_t *cfg)
+{
+    const jz_config_interface_t *iface;
+    struct sockaddr_ll bind_addr;
+    unsigned int ifindex;
+    int sock;
+
+    if (!disc || !cfg)
+        return -1;
+
+    iface = find_monitor_interface(cfg);
+    if (!iface) {
+        jz_log_warn("DHCP probe init skipped: no monitor interface");
+        return -1;
+    }
+
+    ifindex = if_nametoindex(iface->name);
+    if (ifindex == 0) {
+        jz_log_error("DHCP probe: if_nametoindex(%s) failed: %s", iface->name, strerror(errno));
+        return -1;
+    }
+
+    sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_IP));
+    if (sock < 0) {
+        jz_log_error("DHCP probe: socket(AF_PACKET) failed: %s", strerror(errno));
+        return -1;
+    }
+
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sll_family = AF_PACKET;
+    bind_addr.sll_protocol = htons(ETH_P_IP);
+    bind_addr.sll_ifindex = (int)ifindex;
+    if (bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        jz_log_error("DHCP probe: bind failed: %s", strerror(errno));
+        close(sock);
+        return -1;
+    }
+
+    disc->dhcp_sock = sock;
+    jz_log_info("DHCP probe socket opened on %s (ifindex=%u)", iface->name, ifindex);
+    return 0;
+}
+
+static void close_dhcp_socket(jz_discovery_t *disc)
+{
+    if (disc && disc->dhcp_sock >= 0) {
+        close(disc->dhcp_sock);
+        disc->dhcp_sock = -1;
+        jz_log_info("DHCP probe socket closed");
+    }
+}
+
+static int send_dhcp_discover(jz_discovery_t *disc)
+{
+    struct dhcp_discover_pkt pkt;
+    struct sockaddr_ll sa;
+    uint16_t udp_len;
+    uint16_t ip_total;
+    uint32_t xid;
+
+    if (!disc || disc->dhcp_sock < 0 || disc->arp_ifindex <= 0)
+        return -1;
+
+    xid = (uint32_t)get_monotonic_ns();
+
+    memset(&pkt, 0, sizeof(pkt));
+
+    memset(pkt.eth.h_dest, 0xff, ETH_ALEN);
+    memcpy(pkt.eth.h_source, disc->arp_src_mac, ETH_ALEN);
+    pkt.eth.h_proto = htons(ETH_P_IP);
+
+    udp_len = (uint16_t)(sizeof(pkt.udp) + sizeof(pkt.bootp));
+    ip_total = (uint16_t)(20 + udp_len);
+
+    pkt.ip.ihl_ver = 0x45;
+    pkt.ip.ttl = 128;
+    pkt.ip.protocol = IPPROTO_UDP;
+    pkt.ip.tot_len = htons(ip_total);
+    pkt.ip.id = htons((uint16_t)(xid & 0xFFFF));
+    pkt.ip.saddr = 0;
+    pkt.ip.daddr = 0xFFFFFFFF;
+    pkt.ip.check = ip_checksum(&pkt.ip, 20);
+
+    pkt.udp.source = htons(68);
+    pkt.udp.dest = htons(67);
+    pkt.udp.len = htons(udp_len);
+
+    pkt.bootp[0] = 1;
+    pkt.bootp[1] = 1;
+    pkt.bootp[2] = 6;
+    memcpy(pkt.bootp + 4, &xid, 4);
+    memcpy(pkt.bootp + 28, disc->arp_src_mac, ETH_ALEN);
+
+    pkt.bootp[236] = 0x63;
+    pkt.bootp[237] = 0x82;
+    pkt.bootp[238] = 0x53;
+    pkt.bootp[239] = 0x63;
+
+    pkt.bootp[240] = 53;
+    pkt.bootp[241] = 1;
+    pkt.bootp[242] = 1;
+
+    pkt.bootp[243] = 55;
+    pkt.bootp[244] = 4;
+    pkt.bootp[245] = 1;
+    pkt.bootp[246] = 3;
+    pkt.bootp[247] = 6;
+    pkt.bootp[248] = 15;
+
+    pkt.bootp[249] = 255;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sll_family = AF_PACKET;
+    sa.sll_protocol = htons(ETH_P_IP);
+    sa.sll_ifindex = disc->arp_ifindex;
+    sa.sll_halen = ETH_ALEN;
+    memset(sa.sll_addr, 0xff, ETH_ALEN);
+
+    if (sendto(disc->dhcp_sock, &pkt, sizeof(pkt), 0,
+               (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        jz_log_warn("DHCP probe sendto failed: %s", strerror(errno));
+        return -1;
+    }
+
+    jz_log_debug("DHCP DISCOVER sent (xid=%08x)", xid);
+    return 0;
+}
+
 static int send_arp_request(jz_discovery_t *disc, uint32_t target_ip)
 {
     struct arp_pkt pkt;
@@ -416,6 +588,7 @@ int jz_discovery_init(jz_discovery_t *disc, const jz_config_t *cfg)
 
     memset(disc, 0, sizeof(*disc));
     disc->arp_sock = -1;
+    disc->dhcp_sock = -1;
     disc->max_devices = cfg->guards.dynamic.max_entries;
     if (disc->max_devices <= 0 || disc->max_devices > JZ_DISCOVERY_MAX_DEVICES)
         disc->max_devices = JZ_DISCOVERY_MAX_DEVICES;
@@ -430,6 +603,15 @@ int jz_discovery_init(jz_discovery_t *disc, const jz_config_t *cfg)
     disc->arp_interval_sec = JZ_DISCOVERY_ARP_INTERVAL;
     if (open_arp_socket(disc, cfg) < 0)
         jz_log_warn("Discovery active ARP scanning disabled at init");
+
+    disc->aggressive_mode = cfg->discovery.aggressive_mode;
+    disc->dhcp_probe_interval_sec = cfg->discovery.dhcp_probe_interval_sec;
+    if (disc->dhcp_probe_interval_sec < 10)
+        disc->dhcp_probe_interval_sec = 120;
+    if (disc->aggressive_mode) {
+        if (open_dhcp_socket(disc, cfg) < 0)
+            jz_log_warn("DHCP probe disabled at init");
+    }
 
     disc->initialized = true;
     return 0;
@@ -454,6 +636,8 @@ void jz_discovery_destroy(jz_discovery_t *disc)
     if (disc->arp_sock > 0)
         close(disc->arp_sock);
 
+    close_dhcp_socket(disc);
+
     fp_destroy();
     memset(disc, 0, sizeof(*disc));
 }
@@ -467,10 +651,24 @@ int jz_discovery_tick(jz_discovery_t *disc)
 
     if (!disc || !disc->initialized)
         return -1;
+
+    now_ns = get_monotonic_ns();
+
+    /* ---- DHCP probe (independent of ARP scan) ---- */
+    if (disc->aggressive_mode && disc->dhcp_sock >= 0) {
+        uint64_t dhcp_interval_ns = (uint64_t)disc->dhcp_probe_interval_sec * 1000000000ULL;
+        if (disc->last_dhcp_probe_ns == 0 ||
+            (now_ns > disc->last_dhcp_probe_ns &&
+             (now_ns - disc->last_dhcp_probe_ns) >= dhcp_interval_ns)) {
+            send_dhcp_discover(disc);
+            disc->last_dhcp_probe_ns = now_ns;
+        }
+    }
+
+    /* ---- ARP scan ---- */
     if (disc->arp_sock < 0 || disc->arp_ifindex <= 0 || disc->scan_mask == 0)
         return 0;
 
-    now_ns = get_monotonic_ns();
     interval_ns = (uint64_t)disc->arp_interval_sec * 1000000000ULL;
     if (disc->last_arp_scan_ns != 0 && now_ns > disc->last_arp_scan_ns &&
         (now_ns - disc->last_arp_scan_ns) < interval_ns)
@@ -750,6 +948,7 @@ int jz_discovery_list_json(const jz_discovery_t *disc, char *buf, size_t buf_siz
 void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
 {
     int new_max;
+    bool was_aggressive;
 
     if (!disc || !cfg || !disc->initialized)
         return;
@@ -761,4 +960,18 @@ void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
     disc->arp_interval_sec = JZ_DISCOVERY_ARP_INTERVAL;
 
     (void)reopen_arp_socket_if_needed(disc, cfg);
+
+    was_aggressive = disc->aggressive_mode;
+    disc->aggressive_mode = cfg->discovery.aggressive_mode;
+    disc->dhcp_probe_interval_sec = cfg->discovery.dhcp_probe_interval_sec;
+    if (disc->dhcp_probe_interval_sec < 10)
+        disc->dhcp_probe_interval_sec = 120;
+
+    if (disc->aggressive_mode && disc->dhcp_sock < 0) {
+        if (open_dhcp_socket(disc, cfg) < 0)
+            jz_log_warn("DHCP probe socket open failed on config update");
+    } else if (!disc->aggressive_mode && was_aggressive) {
+        close_dhcp_socket(disc);
+        disc->last_dhcp_probe_ns = 0;
+    }
 }

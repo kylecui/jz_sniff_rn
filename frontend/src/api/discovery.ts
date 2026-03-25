@@ -1,4 +1,4 @@
-import { get } from './request'
+import { get, put } from './request'
 
 export interface Device {
   ip: string
@@ -17,6 +17,15 @@ export interface DevicesResponse {
   total: number
 }
 
+export interface DiscoveryConfig {
+  aggressive_mode: boolean
+  dhcp_probe_interval_sec: number
+}
+
 export const getDevices = () => get<DevicesResponse>('/discovery/devices')
 export const getDevice = (mac: string) =>
   get<Device>(`/discovery/devices/${mac}`)
+
+export const getDiscoveryConfig = () => get<DiscoveryConfig>('/discovery/config')
+export const setDiscoveryConfig = (data: Partial<DiscoveryConfig>) =>
+  put<DiscoveryConfig>('/discovery/config', data)

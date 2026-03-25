@@ -85,6 +85,10 @@ guards:
   #  - ip: "10.0.1.1"
   #    reason: "gateway"
 
+discovery:
+  aggressive_mode: false           # Send active DHCP DISCOVER probes
+  dhcp_probe_interval_sec: 120     # Seconds between DHCP probe bursts
+
 fake_mac_pool:
   prefix: "aa:bb:cc"                # OUI prefix for fake MACs
   count: 64                          # Number of fake MACs to generate

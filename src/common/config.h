@@ -286,6 +286,11 @@ typedef struct jz_config_arp_spoof {
     int  target_count;
 } jz_config_arp_spoof_t;
 
+typedef struct jz_config_discovery {
+    bool aggressive_mode;                   /* send active DHCP DISCOVER probes */
+    int  dhcp_probe_interval_sec;           /* seconds between probe bursts (min 10) */
+} jz_config_discovery_t;
+
 typedef struct jz_config_vlan {
     int  id;                                 /* 802.1Q VLAN ID (1-4094) */
     char name[JZ_CONFIG_STR_SHORT];          /* human-readable label */
@@ -307,6 +312,7 @@ typedef struct jz_config {
     jz_config_log_t log;
     jz_config_api_t api;
     jz_config_arp_spoof_t arp_spoof;
+    jz_config_discovery_t discovery;
     jz_config_vlan_t vlans[JZ_CONFIG_MAX_VLANS];
     int vlan_count;
 } jz_config_t;

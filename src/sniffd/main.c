@@ -259,7 +259,7 @@ static int drop_privileges(const char *user, const char *group)
     };
     struct __user_cap_data_struct cap_data[2];
     memset(cap_data, 0, sizeof(cap_data));
-    cap_data[0].effective = cap_data[0].permitted = (1U << 12);             /* CAP_NET_ADMIN */
+    cap_data[0].effective = cap_data[0].permitted = (1U << 12) | (1U << 13); /* CAP_NET_ADMIN + CAP_NET_RAW */
     cap_data[1].effective = cap_data[1].permitted = (1U << 6) | (1U << 7);  /* CAP_PERFMON(38) + CAP_BPF(39) */
 
     if (syscall(SYS_capset, &cap_hdr, cap_data) < 0) {
@@ -267,7 +267,7 @@ static int drop_privileges(const char *user, const char *group)
                      strerror(errno));
         /* Non-fatal: daemon still runs, just can't reload BPF */
     } else {
-        jz_log_info("Retained CAP_NET_ADMIN + CAP_BPF + CAP_PERFMON");
+        jz_log_info("Retained CAP_NET_ADMIN + CAP_NET_RAW + CAP_BPF + CAP_PERFMON");
     }
 
     jz_log_info("Dropped privileges to %s:%s", user, group);

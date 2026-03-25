@@ -135,7 +135,10 @@
     "lastSeen": "Last Seen",
     "osGuess": "OS Guess",
     "detail": "Device Detail",
-    "fingerprint": "Fingerprint"
+    "fingerprint": "Fingerprint",
+    "aggressiveMode": "Active DHCP Probe",
+    "aggressiveModeDesc": "Periodically send DHCP Discovery packets to actively detect DHCP servers",
+    "probeInterval": "Probe Interval (sec)"
   },
   "config": {
     "title": "Configuration",

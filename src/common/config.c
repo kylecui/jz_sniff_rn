@@ -1543,6 +1543,50 @@ static int parse_collector(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_discovery(yaml_parser_t *parser, yaml_event_t *start,
+                           jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    yaml_event_t key_ev;
+
+    if (start->type != YAML_MAPPING_START_EVENT) {
+        add_error(errors, event_line(start), "discovery", "expected mapping");
+        return skip_node(parser, start, errors);
+    }
+
+    yaml_event_delete(start);
+    for (;;) {
+        yaml_event_t val_ev;
+        const char *key;
+        if (next_event(parser, &key_ev, errors, "discovery") != 0)
+            return -1;
+        if (key_ev.type == YAML_MAPPING_END_EVENT) {
+            yaml_event_delete(&key_ev);
+            break;
+        }
+        if (key_ev.type != YAML_SCALAR_EVENT) {
+            add_error(errors, event_line(&key_ev), "discovery", "expected scalar key");
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        key = (const char *)key_ev.data.scalar.value;
+        if (next_event(parser, &val_ev, errors, "discovery") != 0) {
+            yaml_event_delete(&key_ev);
+            return -1;
+        }
+        if (!strcmp(key, "aggressive_mode") && scalar_to_bool(&val_ev, &cfg->discovery.aggressive_mode) != 0)
+            add_error(errors, event_line(&val_ev), "discovery.aggressive_mode", "must be bool");
+        else if (!strcmp(key, "dhcp_probe_interval_sec") && scalar_to_int(&val_ev, &cfg->discovery.dhcp_probe_interval_sec) != 0)
+            add_error(errors, event_line(&val_ev), "discovery.dhcp_probe_interval_sec", "must be int");
+        else if (strcmp(key, "aggressive_mode") && strcmp(key, "dhcp_probe_interval_sec"))
+            add_error(errors, event_line(&key_ev), "discovery", "unknown key '%s'", key);
+
+        yaml_event_delete(&val_ev);
+        yaml_event_delete(&key_ev);
+    }
+
+    return 0;
+}
+
 static int parse_policy_auto(yaml_parser_t *parser, yaml_event_t *start,
                              jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -2320,6 +2364,11 @@ static int parse_root_mapping(yaml_parser_t *parser, yaml_event_t *start,
                 yaml_event_delete(&key_ev);
                 return -1;
             }
+        } else if (!strcmp(key, "discovery")) {
+            if (parse_discovery(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
         } else if (!strcmp(key, "vlans")) {
             if (parse_vlans(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
@@ -2642,6 +2691,9 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
                       cfg->arp_spoof.targets[i].gateway_ip);
     }
 
+    if (cfg->discovery.dhcp_probe_interval_sec < 10)
+        add_error(errors, 0, "discovery.dhcp_probe_interval_sec", "must be >= 10");
+
     if (cfg->vlan_count < 0)
         add_error(errors, 0, "vlan_count", "must be non-negative");
     for (i = 0; i < cfg->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
@@ -2774,6 +2826,9 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->arp_spoof.enabled = false;
     cfg->arp_spoof.interval_sec = 5;
     cfg->arp_spoof.target_count = 0;
+
+    cfg->discovery.aggressive_mode = false;
+    cfg->discovery.dhcp_probe_interval_sec = 120;
 
     cfg->vlan_count = 0;
 }
@@ -3169,6 +3224,16 @@ char *jz_config_serialize(const jz_config_t *cfg)
             free(sb.data);
             return NULL;
         }
+    }
+
+    if (sb_appendf(&sb,
+                   "discovery:\n"
+                   "  aggressive_mode: %s\n"
+                   "  dhcp_probe_interval_sec: %d\n",
+                   cfg->discovery.aggressive_mode ? "true" : "false",
+                   cfg->discovery.dhcp_probe_interval_sec) != 0) {
+        free(sb.data);
+        return NULL;
     }
 
     if (sb_appendf(&sb, "vlans:\n") != 0) {
