@@ -296,7 +296,8 @@ int jz_bg_collector_prog(struct xdp_md *xdp_ctx)
             evt->payload_len = payload_len;
         }
 
-        RS_EMIT_EVENT(evt, sizeof(*evt));
+        int emit_ret = RS_EMIT_EVENT(evt, sizeof(*evt));
+        (void)emit_ret;
     }
 
     return jz_tail_pass(xdp_ctx, ctx);

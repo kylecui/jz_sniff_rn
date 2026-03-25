@@ -548,34 +548,35 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
 
     jz_log_debug("Event received: type=%u len=%u", event_type, data_len);
 
-    if (g_ctx.discovery.initialized && event_type == 6 && data_len >= 52) {
+    if (g_ctx.discovery.initialized && event_type == 6 && data_len >= 56) {
         const uint8_t *ev = (const uint8_t *)data;
-        uint8_t bg_proto = ev[44];
+        uint8_t bg_proto = ev[48];
         uint16_t vlan_id;
         uint32_t plen;
         memcpy(&vlan_id, ev + 20, 2);
-        memcpy(&plen, ev + 48, 4);
-        if (plen > 0 && data_len >= 52 + plen)
+        memcpy(&plen, ev + 52, 4);
+        if (plen > 0 && data_len >= 56 + plen)
             jz_discovery_feed_event(&g_ctx.discovery, bg_proto,
-                                    ev + 52, plen, vlan_id);
+                                    ev + 56, plen, vlan_id);
     }
 
     if (g_ctx.policy_auto.initialized &&
-        (event_type == 1 || event_type == 2) && data_len >= 56) {
+        (event_type == 1 || event_type == 2) && data_len >= 60) {
         uint32_t attacker_ip;
         uint32_t guarded_ip;
         uint8_t protocol;
         memcpy(&attacker_ip, (const uint8_t *)data + 36, 4);
-        memcpy(&guarded_ip, (const uint8_t *)data + 52, 4);
-        protocol = ((const uint8_t *)data)[45];
+        memcpy(&guarded_ip, (const uint8_t *)data + 56, 4);
+        protocol = ((const uint8_t *)data)[49];
         jz_policy_auto_feed_attack(&g_ctx.policy_auto, attacker_ip,
                                    guarded_ip, protocol);
     }
 
     /* Forward raw event to collectord for persistence.
-     * 44 = minimum event header: type(4)+len(4)+ts(8)+ifindex(4)+
-     *       vlan_id(2)+pad(2)+src_mac(6)+dst_mac(6)+src_ip(4)+dst_ip(4) */
-    if (g_ctx.collectord_client.connected && data_len >= 44) {
+     * 48 = minimum event header: type(4)+len(4)+ts(8)+ifindex(4)+
+     *       vlan_id(2)+pad(2)+src_mac(6)+dst_mac(6)+src_ip(4)+dst_ip(4)
+     *       +pad(4) for __u64 alignment */
+    if (g_ctx.collectord_client.connected && data_len >= 48) {
         const size_t prefix_len = 6;  /* strlen("event:") */
         size_t msg_len = prefix_len + data_len;
         if (msg_len <= JZ_IPC_MAX_MSG_LEN) {
@@ -601,11 +602,11 @@ static int sample_callback(const void *data, uint32_t data_len, void *user_data)
         return 0;
 
     /*
-     * jz_event_sample layout: jz_event_hdr(44) + threat_level(1) +
+     * jz_event_sample layout: jz_event_hdr(48) + threat_level(1) +
      * _pad(3) + payload_len(4) + payload[].
-     * Minimum: 44 + 1 + 3 + 4 = 52 bytes header before payload.
+     * Minimum: 48 + 1 + 3 + 4 = 56 bytes header before payload.
      */
-    if (data_len < 52)
+    if (data_len < 56)
         return 0;
 
     const uint8_t *raw = (const uint8_t *)data;
@@ -613,12 +614,12 @@ static int sample_callback(const void *data, uint32_t data_len, void *user_data)
     memcpy(&ktime_ns, raw + 8, sizeof(ktime_ns));
 
     uint32_t payload_len;
-    memcpy(&payload_len, raw + 48, sizeof(payload_len));
+    memcpy(&payload_len, raw + 52, sizeof(payload_len));
 
-    if (payload_len == 0 || 52 + payload_len > data_len)
+    if (payload_len == 0 || 56 + payload_len > data_len)
         return 0;
 
-    const void *payload = raw + 52;
+    const void *payload = raw + 56;
 
     uint64_t wall_ns = (uint64_t)g_ctx.ktime_wall_offset * 1000000000ULL + ktime_ns;
     uint32_t ts_sec  = (uint32_t)(wall_ns / 1000000000ULL);

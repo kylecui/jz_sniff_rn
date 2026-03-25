@@ -361,8 +361,9 @@ static void now_iso8601(char *buf, size_t len)
 
 /* Minimum event header size: type(4) + len(4) + ts(8) + ifindex(4) +
  * vlan_id(2) + pad(2) + src_mac(6) + dst_mac(6) + src_ip(4) + dst_ip(4)
- * = 44 bytes */
-#define EVENT_HDR_LEN  44
+ * + 4 bytes trailing padding (for __u64 alignment of timestamp_ns)
+ * = 48 bytes on x86-64 and ARM64 */
+#define EVENT_HDR_LEN  48
 
 static int persist_event(const char *payload, uint32_t payload_len)
 {
@@ -451,14 +452,16 @@ static int persist_event(const char *payload, uint32_t payload_len)
         char probe_ip_str[INET_ADDRSTRLEN] = "0.0.0.0";
         int response_count = 0;
 
-        /* Parse sniffer-specific fields if available */
-        if (payload_len >= EVENT_HDR_LEN + 16) {
+        /* Parse sniffer-specific fields if available.
+         * jz_event_sniffer layout after hdr: suspect_mac(6) + _pad(2) +
+         * suspect_ip(4) + probe_ip(4) + response_count(4) = 20 bytes */
+        if (payload_len >= EVENT_HDR_LEN + 20) {
             uint32_t probe_ip;
-            memcpy(&probe_ip, p + EVENT_HDR_LEN + 8, 4);
+            memcpy(&probe_ip, p + EVENT_HDR_LEN + 12, 4);
             ip_to_str(probe_ip, probe_ip_str, sizeof(probe_ip_str));
 
             uint32_t resp_cnt;
-            memcpy(&resp_cnt, p + EVENT_HDR_LEN + 12, 4);
+            memcpy(&resp_cnt, p + EVENT_HDR_LEN + 16, 4);
             response_count = (int)resp_cnt;
         }
 
