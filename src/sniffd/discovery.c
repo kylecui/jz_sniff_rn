@@ -410,6 +410,8 @@ static int send_dhcp_discover(jz_discovery_t *disc)
     pkt.bootp[1] = 1;
     pkt.bootp[2] = 6;
     memcpy(pkt.bootp + 4, &xid, 4);
+    pkt.bootp[10] = 0x80;  /* BROADCAST flag — forces server to reply via
+                               broadcast so bg_collector can capture it */
     memcpy(pkt.bootp + 28, disc->arp_src_mac, ETH_ALEN);
 
     pkt.bootp[236] = 0x63;

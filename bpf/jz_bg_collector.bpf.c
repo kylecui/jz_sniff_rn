@@ -252,8 +252,15 @@ int jz_bg_collector_prog(struct xdp_md *xdp_ctx)
     if ((void *)(eth + 1) > data_end)
         return XDP_PASS;
 
-    if (!jz_is_broadcast_or_multicast(eth->h_dest))
-        return jz_tail_pass(xdp_ctx, ctx);
+    if (!jz_is_broadcast_or_multicast(eth->h_dest)) {
+        /* Allow unicast DHCP through — DHCP OFFERs use the client's
+           MAC as L2 dst even when the BROADCAST flag is set. */
+        __u16 et = bpf_ntohs(ctx->layers.eth_proto);
+        if (!(et == ETH_P_IP && ctx->layers.ip_proto == IPPROTO_UDP &&
+              (bpf_ntohs(ctx->layers.sport) == 67 ||
+               bpf_ntohs(ctx->layers.dport) == 67)))
+            return jz_tail_pass(xdp_ctx, ctx);
+    }
 
     pkt_bytes = (__u64)((__u8 *)data_end - (__u8 *)data);
 

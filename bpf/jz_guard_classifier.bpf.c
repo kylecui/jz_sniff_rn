@@ -276,6 +276,29 @@ jz_parse_packet(struct xdp_md *xdp_ctx, struct rs_ctx *ctx)
         if (ihl < 20)
             ihl = 20;
         ctx->layers.l4_offset = offset + ihl;
+
+        /* L4: Parse TCP/UDP ports so downstream modules (bg_collector,
+         * traffic_weaver, threat_detect) can classify by port. */
+        __u16 l4_off = offset + ihl;
+        if (iph->protocol == IPPROTO_UDP) {
+            struct udphdr *uh = data + l4_off;
+            if ((void *)(uh + 1) <= data_end) {
+                ctx->layers.sport = uh->source;
+                ctx->layers.dport = uh->dest;
+                ctx->layers.payload_offset = l4_off + sizeof(*uh);
+                ctx->layers.payload_len = bpf_ntohs(uh->len) > sizeof(*uh)
+                    ? bpf_ntohs(uh->len) - sizeof(*uh) : 0;
+            }
+        } else if (iph->protocol == IPPROTO_TCP) {
+            struct tcphdr *th = data + l4_off;
+            if ((void *)(th + 1) <= data_end) {
+                ctx->layers.sport = th->source;
+                ctx->layers.dport = th->dest;
+                __u16 tcp_hlen = (__u16)(th->doff) * 4;
+                if (tcp_hlen < 20) tcp_hlen = 20;
+                ctx->layers.payload_offset = l4_off + tcp_hlen;
+            }
+        }
     }
 
     ctx->parsed = 1;
