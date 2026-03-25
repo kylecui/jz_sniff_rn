@@ -2750,6 +2750,9 @@ static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http
         cJSON_AddStringToObject(obj, "name", iface->name);
         cJSON_AddStringToObject(obj, "role", iface->role);
         cJSON_AddStringToObject(obj, "subnet", iface->subnet);
+        cJSON_AddStringToObject(obj, "gateway", iface->gateway);
+        cJSON_AddStringToObject(obj, "dns1", iface->dns1);
+        cJSON_AddStringToObject(obj, "dns2", iface->dns2);
         cJSON_AddItemToArray(arr, obj);
     }
 
@@ -2810,9 +2813,14 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
             return;
         }
         if (strcmp(role->valuestring, "mirror") != 0) {
-            if (!subnet || !cJSON_IsString(subnet) || !strchr(subnet->valuestring, '/')) {
+            /* manage role accepts "dhcp" as a special subnet value */
+            bool manage_dhcp = strcmp(role->valuestring, "manage") == 0 &&
+                               subnet && cJSON_IsString(subnet) &&
+                               strcmp(subnet->valuestring, "dhcp") == 0;
+            if (!manage_dhcp &&
+                (!subnet || !cJSON_IsString(subnet) || !strchr(subnet->valuestring, '/'))) {
                 cJSON_Delete(body);
-                api_error_reply(c, 400, "monitor/manage role requires CIDR subnet");
+                api_error_reply(c, 400, "monitor/manage role requires CIDR subnet (or 'dhcp' for manage)");
                 return;
             }
         }
@@ -2834,6 +2842,27 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
                 snprintf(iface->subnet, sizeof(iface->subnet), "%s", subnet->valuestring);
             else
                 iface->subnet[0] = '\0';
+        }
+        {
+            cJSON *gw = cJSON_GetObjectItem(item, "gateway");
+            if (gw && cJSON_IsString(gw))
+                snprintf(iface->gateway, sizeof(iface->gateway), "%s", gw->valuestring);
+            else
+                iface->gateway[0] = '\0';
+        }
+        {
+            cJSON *d1 = cJSON_GetObjectItem(item, "dns1");
+            if (d1 && cJSON_IsString(d1))
+                snprintf(iface->dns1, sizeof(iface->dns1), "%s", d1->valuestring);
+            else
+                iface->dns1[0] = '\0';
+        }
+        {
+            cJSON *d2 = cJSON_GetObjectItem(item, "dns2");
+            if (d2 && cJSON_IsString(d2))
+                snprintf(iface->dns2, sizeof(iface->dns2), "%s", d2->valuestring);
+            else
+                iface->dns2[0] = '\0';
         }
     }
 

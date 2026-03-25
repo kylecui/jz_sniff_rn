@@ -49,6 +49,90 @@ const captureFiles = ref<CaptureFile[]>([])
 const captureMaxSizeMB = ref(100)
 const captureLoading = ref(false)
 
+/* -- Manage role helpers -- */
+interface ManageIpState {
+  mode: 'dhcp' | 'static'
+  ip: string
+  prefix: string
+  gateway: string
+  dns1: string
+  dns2: string
+}
+const manageIpStates = reactive<Record<string, ManageIpState>>({})
+
+function getManageState(ifName: string): ManageIpState {
+  if (!manageIpStates[ifName]) {
+    manageIpStates[ifName] = { mode: 'dhcp', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
+  }
+  return manageIpStates[ifName]
+}
+
+function initManageStates(ifaces: NetworkInterface[]) {
+  for (const iface of ifaces) {
+    if (iface.role !== 'manage') continue
+    if (iface.subnet === 'dhcp' || !iface.subnet) {
+      manageIpStates[iface.name] = { mode: 'dhcp', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
+    } else {
+      const parts = iface.subnet.split('/')
+      manageIpStates[iface.name] = {
+        mode: 'static',
+        ip: parts[0] || '',
+        prefix: parts[1] || '24',
+        gateway: iface.gateway || '',
+        dns1: iface.dns1 || '',
+        dns2: iface.dns2 || '',
+      }
+    }
+  }
+}
+
+function syncManageFields(row: NetworkInterface) {
+  const state = getManageState(row.name)
+  if (state.mode === 'dhcp') {
+    row.subnet = 'dhcp'
+    row.gateway = ''
+    row.dns1 = ''
+    row.dns2 = ''
+  } else {
+    row.subnet = state.ip && state.prefix ? `${state.ip}/${state.prefix}` : ''
+    row.gateway = state.gateway
+    row.dns1 = state.dns1
+    row.dns2 = state.dns2
+  }
+}
+
+function onManageModeChange(row: NetworkInterface) {
+  syncManageFields(row)
+}
+
+function onManageFieldChange(row: NetworkInterface) {
+  syncManageFields(row)
+}
+
+function onRoleChange(row: NetworkInterface) {
+  if (row.role === 'mirror') {
+    row.subnet = ''
+    row.gateway = ''
+    row.dns1 = ''
+    row.dns2 = ''
+  } else if (row.role === 'manage') {
+    const state = getManageState(row.name)
+    if (state.mode === 'dhcp') {
+      row.subnet = 'dhcp'
+      row.gateway = ''
+      row.dns1 = ''
+      row.dns2 = ''
+    }
+  } else if (row.role === 'monitor') {
+    if (row.subnet === 'dhcp') row.subnet = ''
+    row.gateway = ''
+    row.dns1 = ''
+    row.dns2 = ''
+  }
+}
+
+const prefixOptions = ['8', '16', '24', '25', '26', '27', '28', '29', '30']
+
 async function fetchAll() {
   loading.value = true
   try {
@@ -69,6 +153,7 @@ async function fetchAll() {
     history.value = hist.history
     interfaces.value = ifaces.interfaces
     systemMode.value = ifaces.mode
+    initManageStates(ifaces.interfaces)
     arpSpoofEnabled.value = arpSpoof.enabled
     arpSpoofInterval.value = arpSpoof.interval_sec
     arpSpoofTargets.value = arpSpoof.targets
@@ -277,19 +362,92 @@ onMounted(fetchAll)
             </div>
           </template>
           <el-table :data="interfaces" stripe>
-            <el-table-column prop="name" :label="t('config.interfaceName')" width="160" />
-            <el-table-column :label="t('config.interfaceRole')" width="160">
+            <el-table-column prop="name" :label="t('config.interfaceName')" width="140" />
+            <el-table-column :label="t('config.interfaceRole')" width="200">
               <template #default="{ row }">
-                <el-select v-model="row.role" size="small">
-                  <el-option label="monitor" value="monitor" />
-                  <el-option label="manage" value="manage" />
-                  <el-option label="mirror" value="mirror" />
+                <el-select v-model="row.role" size="small" @change="onRoleChange(row)">
+                  <el-option value="monitor">
+                    <div class="role-option">
+                      <span class="role-option-label">{{ t('config.roleMonitor') }}</span>
+                      <span class="role-option-hint">{{ t('config.roleMonitorHint') }}</span>
+                    </div>
+                  </el-option>
+                  <el-option value="manage">
+                    <div class="role-option">
+                      <span class="role-option-label">{{ t('config.roleManage') }}</span>
+                      <span class="role-option-hint">{{ t('config.roleManageHint') }}</span>
+                    </div>
+                  </el-option>
+                  <el-option value="mirror">
+                    <div class="role-option">
+                      <span class="role-option-label">{{ t('config.roleMirror') }}</span>
+                      <span class="role-option-hint">{{ t('config.roleMirrorHint') }}</span>
+                    </div>
+                  </el-option>
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column :label="t('config.interfaceSubnet')">
+            <el-table-column :label="t('config.interfaceSubnet')" min-width="360">
               <template #default="{ row }">
-                <el-input v-model="row.subnet" size="small" :disabled="row.role === 'mirror'" placeholder="e.g. 10.0.1.0/24" />
+                <!-- Monitor: subnet CIDR -->
+                <el-input
+                  v-if="row.role === 'monitor'"
+                  v-model="row.subnet"
+                  size="small"
+                  placeholder="e.g. 10.0.1.0/24"
+                />
+                <!-- Manage: DHCP / Static toggle -->
+                <div v-else-if="row.role === 'manage'" class="manage-ip-config">
+                  <el-radio-group
+                    v-model="getManageState(row.name).mode"
+                    size="small"
+                    @change="onManageModeChange(row)"
+                  >
+                    <el-radio-button value="dhcp">{{ t('config.manageIpDhcp') }}</el-radio-button>
+                    <el-radio-button value="static">{{ t('config.manageIpStatic') }}</el-radio-button>
+                  </el-radio-group>
+                  <div v-if="getManageState(row.name).mode === 'static'" class="manage-static-fields">
+                    <el-input
+                      v-model="getManageState(row.name).ip"
+                      size="small"
+                      :placeholder="t('config.manageIp')"
+                      style="width: 140px;"
+                      @input="onManageFieldChange(row)"
+                    />
+                    <span class="manage-slash">/</span>
+                    <el-select
+                      v-model="getManageState(row.name).prefix"
+                      size="small"
+                      style="width: 80px;"
+                      @change="onManageFieldChange(row)"
+                    >
+                      <el-option v-for="p in prefixOptions" :key="p" :label="'/' + p" :value="p" />
+                    </el-select>
+                    <el-input
+                      v-model="getManageState(row.name).gateway"
+                      size="small"
+                      :placeholder="t('config.manageGateway')"
+                      style="width: 140px;"
+                      @input="onManageFieldChange(row)"
+                    />
+                    <el-input
+                      v-model="getManageState(row.name).dns1"
+                      size="small"
+                      :placeholder="t('config.manageDns1')"
+                      style="width: 140px;"
+                      @input="onManageFieldChange(row)"
+                    />
+                    <el-input
+                      v-model="getManageState(row.name).dns2"
+                      size="small"
+                      :placeholder="t('config.manageDns2')"
+                      style="width: 140px;"
+                      @input="onManageFieldChange(row)"
+                    />
+                  </div>
+                </div>
+                <!-- Mirror: no config -->
+                <span v-else class="mirror-no-config">—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -581,5 +739,41 @@ onMounted(fetchAll)
 .capture-detail {
   font-size: 13px;
   color: #606266;
+}
+.role-option {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+  padding: 2px 0;
+}
+.role-option-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.role-option-hint {
+  font-size: 11px;
+  color: #909399;
+  white-space: normal;
+  line-height: 1.3;
+}
+.manage-ip-config {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.manage-static-fields {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.manage-slash {
+  font-size: 14px;
+  color: #606266;
+  font-weight: 600;
+}
+.mirror-no-config {
+  color: #c0c4cc;
+  font-size: 13px;
 }
 </style>

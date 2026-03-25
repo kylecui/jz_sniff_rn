@@ -55,7 +55,10 @@ typedef struct jz_config_errors {
 typedef struct jz_config_interface {
     char name[JZ_CONFIG_STR_SHORT];          /* e.g. "eth0", "ens33" */
     char role[JZ_CONFIG_STR_SHORT];          /* "monitor", "manage", "mirror" */
-    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.0.1.0/24" */
+    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.0.1.0/24" or "dhcp" */
+    char gateway[JZ_CONFIG_STR_SHORT];       /* e.g. "10.0.1.1" (manage+static) */
+    char dns1[JZ_CONFIG_STR_SHORT];          /* primary DNS server */
+    char dns2[JZ_CONFIG_STR_SHORT];          /* secondary DNS server (optional) */
 } jz_config_interface_t;
 
 typedef struct jz_config_system {

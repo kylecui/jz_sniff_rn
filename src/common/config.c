@@ -275,6 +275,15 @@ static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
             } else if (!strcmp(k, "subnet")) {
                 copy_scalar(iface->subnet, sizeof(iface->subnet), &v2);
                 yaml_event_delete(&v2);
+            } else if (!strcmp(k, "gateway")) {
+                copy_scalar(iface->gateway, sizeof(iface->gateway), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "dns1")) {
+                copy_scalar(iface->dns1, sizeof(iface->dns1), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "dns2")) {
+                copy_scalar(iface->dns2, sizeof(iface->dns2), &v2);
+                yaml_event_delete(&v2);
             } else {
                 add_error(errors, event_line(&k2), "system.interfaces", "unknown key '%s'", k);
                 if (skip_node(parser, &v2, errors) != 0) {
@@ -2573,7 +2582,9 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
             add_error(errors, 0, "system.interfaces[].name", "must not be empty");
         if (!in_set(iface->role, iface_roles))
             add_error(errors, 0, "system.interfaces[].role", "must be monitor/manage/mirror");
-        if (iface->subnet[0] != '\0' && !is_valid_cidr(iface->subnet))
+        if (iface->subnet[0] != '\0' &&
+            strcmp(iface->subnet, "dhcp") != 0 &&
+            !is_valid_cidr(iface->subnet))
             add_error(errors, 0, "system.interfaces[].subnet", "invalid CIDR '%s'", iface->subnet);
     }
 
@@ -2972,10 +2983,24 @@ char *jz_config_serialize(const jz_config_t *cfg)
     }
 
     for (i = 0; i < cfg->system.interface_count; i++) {
-        if (sb_appendf(&sb, "    - { name: %s, role: %s, subnet: %s }\n",
-                       cfg->system.interfaces[i].name,
-                       cfg->system.interfaces[i].role,
-                       cfg->system.interfaces[i].subnet) != 0) {
+        const jz_config_interface_t *iface = &cfg->system.interfaces[i];
+        if (sb_appendf(&sb, "    - name: %s\n      role: %s\n      subnet: %s\n",
+                       iface->name, iface->role, iface->subnet) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+        if (iface->gateway[0] != '\0' &&
+            sb_appendf(&sb, "      gateway: %s\n", iface->gateway) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+        if (iface->dns1[0] != '\0' &&
+            sb_appendf(&sb, "      dns1: %s\n", iface->dns1) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+        if (iface->dns2[0] != '\0' &&
+            sb_appendf(&sb, "      dns2: %s\n", iface->dns2) != 0) {
             free(sb.data);
             return NULL;
         }
