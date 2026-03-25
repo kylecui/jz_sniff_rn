@@ -9,6 +9,7 @@ import type { ModulesResponse } from '@/api/system'
 import type { DhcpAlert } from '@/api/dhcp'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const loading = ref(true)
 const stats = ref<Stats>({})
@@ -95,12 +96,12 @@ onMounted(fetchData)
 
         <el-row :gutter="16" class="stat-row">
           <el-col :span="6">
-            <el-card shadow="hover">
+            <el-card shadow="hover" class="stat-card" @click="router.push('/discovery')">
               <el-statistic :title="t('dashboard.onlineDevices')" :value="deviceTotal" />
             </el-card>
           </el-col>
           <el-col :span="6">
-            <el-card shadow="hover">
+            <el-card shadow="hover" class="stat-card" @click="router.push('/guards')">
               <el-statistic
                 :title="t('dashboard.activeGuards')"
                 :value="(stats.guards_static ?? 0) + (stats.guards_dynamic ?? 0)"
@@ -108,12 +109,12 @@ onMounted(fetchData)
             </el-card>
           </el-col>
           <el-col :span="6">
-            <el-card shadow="hover">
+            <el-card shadow="hover" class="stat-card" @click="router.push('/logs')">
               <el-statistic :title="t('dashboard.attacksToday')" :value="stats.attacks_today ?? 0" />
             </el-card>
           </el-col>
           <el-col :span="6">
-            <el-card shadow="hover">
+            <el-card shadow="hover" class="stat-card" @click="router.push('/logs')">
               <el-statistic :title="t('dashboard.threatsDetected')" :value="stats.attacks_total ?? 0" />
             </el-card>
           </el-col>
@@ -144,6 +145,13 @@ onMounted(fetchData)
 }
 .stat-row {
   margin-bottom: 20px;
+}
+.stat-card {
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.stat-card:hover {
+  border-color: #409eff;
 }
 .module-card {
   margin-top: 8px;

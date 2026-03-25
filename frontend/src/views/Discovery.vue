@@ -16,6 +16,11 @@ const discoveryConfig = ref<DiscoveryConfig>({
 })
 const configLoading = ref(false)
 
+function formatTime(ts?: number): string {
+  if (!ts) return '-'
+  return new Date(ts * 1000).toLocaleString()
+}
+
 async function fetchDevices() {
   loading.value = true
   try {
@@ -106,8 +111,13 @@ onMounted(() => {
           <el-table-column prop="vlan" :label="t('discovery.vlan')" width="80" />
           <el-table-column prop="hostname" :label="t('discovery.hostname')" />
           <el-table-column prop="vendor" :label="t('discovery.vendor')" />
-          <el-table-column prop="os_guess" :label="t('discovery.osGuess')" />
-          <el-table-column prop="last_seen" :label="t('discovery.lastSeen')" width="180" />
+          <el-table-column prop="os_class" :label="t('discovery.osClass')" />
+          <el-table-column prop="device_class" :label="t('discovery.deviceClass')" />
+          <el-table-column :label="t('discovery.lastSeen')" width="180">
+            <template #default="{ row }">
+              {{ formatTime(row.last_seen) }}
+            </template>
+          </el-table-column>
         </el-table>
       </template>
     </el-skeleton>
@@ -127,9 +137,11 @@ onMounted(() => {
               <el-descriptions-item :label="t('discovery.vlan')">{{ selectedDevice.vlan ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.hostname')">{{ selectedDevice.hostname ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.vendor')">{{ selectedDevice.vendor ?? '-' }}</el-descriptions-item>
-              <el-descriptions-item :label="t('discovery.osGuess')">{{ selectedDevice.os_guess ?? '-' }}</el-descriptions-item>
-              <el-descriptions-item :label="t('discovery.firstSeen')">{{ selectedDevice.first_seen ?? '-' }}</el-descriptions-item>
-              <el-descriptions-item :label="t('discovery.lastSeen')">{{ selectedDevice.last_seen ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.osClass')">{{ selectedDevice.os_class ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.deviceClass')">{{ selectedDevice.device_class ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.confidence')">{{ selectedDevice.confidence ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.firstSeen')">{{ formatTime(selectedDevice.first_seen) }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.lastSeen')">{{ formatTime(selectedDevice.last_seen) }}</el-descriptions-item>
             </el-descriptions>
 
             <h4 style="margin-top: 20px">{{ t('discovery.fingerprint') }}</h4>

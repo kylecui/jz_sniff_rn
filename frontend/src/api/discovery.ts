@@ -6,9 +6,12 @@ export interface Device {
   vlan?: number
   hostname?: string
   vendor?: string
-  os_guess?: string
-  first_seen?: string
-  last_seen?: string
+  os_class?: string
+  device_class?: string
+  confidence?: number
+  signals?: number
+  first_seen?: number
+  last_seen?: number
   fingerprint?: Record<string, unknown>
 }
 

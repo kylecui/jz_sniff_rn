@@ -147,7 +147,7 @@ async function fetchAll() {
       getCaptures(),
       getDiscoveredVlans(),
     ])
-    const json = JSON.stringify(cfg.config, null, 2)
+    const json = JSON.stringify(cfg, null, 2)
     configText.value = json
     editText.value = json
     hasStaged.value = staged.has_staged
@@ -403,13 +403,8 @@ onMounted(fetchAll)
             </el-table-column>
             <el-table-column :label="t('config.interfaceSubnet')" min-width="360">
               <template #default="{ row }">
-                <!-- Monitor: subnet CIDR -->
-                <el-input
-                  v-if="row.role === 'monitor'"
-                  v-model="row.subnet"
-                  size="small"
-                  placeholder="e.g. 10.0.1.0/24"
-                />
+                <!-- Monitor: subnet configured in VLAN section below -->
+                <span v-if="row.role === 'monitor'" class="mirror-no-config">{{ t('config.nativeVlan') }} ↓</span>
                 <!-- Manage: DHCP / Static toggle -->
                 <div v-else-if="row.role === 'manage'" class="manage-ip-config">
                   <el-radio-group
@@ -475,8 +470,25 @@ onMounted(fetchAll)
           <!-- Per-interface VLANs (monitor only) -->
           <template v-for="iface in interfaces" :key="iface.name + '-vlans'">
             <div v-if="iface.role === 'monitor'" class="vlan-section">
-              <div class="targets-header">
-                <span>{{ t('config.vlans') }} — {{ iface.name }}</span>
+              <!-- Native VLAN (untagged traffic subnet) -->
+              <div class="native-vlan-section">
+                <div class="targets-header">
+                  <span class="native-vlan-title">
+                    <el-tooltip :content="t('config.nativeVlanHint')" placement="top">
+                      <span style="cursor: help;">{{ t('config.nativeVlan') }} — {{ iface.name }} ⓘ</span>
+                    </el-tooltip>
+                  </span>
+                </div>
+                <el-input
+                  v-model="iface.subnet"
+                  size="small"
+                  placeholder="e.g. 10.0.1.0/24"
+                  style="max-width: 300px;"
+                />
+              </div>
+              <!-- Tagged VLANs -->
+              <div class="targets-header" style="margin-top: 16px;">
+                <span>{{ t('config.taggedVlans') }} — {{ iface.name }}</span>
                 <el-button type="primary" text size="small" @click="addVlan(iface)">
                   + {{ t('config.addVlan') }}
                 </el-button>
@@ -834,5 +846,13 @@ onMounted(fetchAll)
   font-size: 13px;
   color: #67c23a;
   font-weight: 600;
+}
+.native-vlan-section {
+  margin-bottom: 8px;
+}
+.native-vlan-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #409eff;
 }
 </style>

@@ -1,8 +1,6 @@
 import { get, post, put, del } from './request'
 
-export interface ConfigData {
-  config: Record<string, unknown>
-}
+export type ConfigData = Record<string, unknown>
 
 export interface StagedConfig {
   staged: Record<string, unknown> | null
