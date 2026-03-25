@@ -55,6 +55,15 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } jz_whitelist SEC(".maps");
 
+/* DHCP exception — DHCP servers exempt from guard ARP Probe responses only */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct jz_dhcp_exception_key);
+    __type(value, struct jz_whitelist_entry);
+    __uint(max_entries, JZ_MAX_DHCP_EXCEPTION);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} jz_dhcp_exception SEC(".maps");
+
 /* Guard classification result — per-CPU scratch for passing to next stage */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -73,7 +82,7 @@ jz_check_whitelist(struct rs_ctx *ctx, __u32 src_ip, const __u8 *src_mac)
 
     wl = bpf_map_lookup_elem(&jz_whitelist, &src_ip);
     if (!wl || !wl->enabled)
-        return false;
+        goto check_dhcp;
 
     /* IP-only match */
     if (!wl->match_mac)
@@ -82,6 +91,15 @@ jz_check_whitelist(struct rs_ctx *ctx, __u32 src_ip, const __u8 *src_mac)
     /* IP+MAC match — compare 6 bytes */
     if (__builtin_memcmp(src_mac, wl->mac, 6) == 0)
         return true;
+
+check_dhcp:
+    /* ARP Probe: src_ip == 0 — check DHCP exception by MAC */
+    if (src_ip == 0) {
+        struct jz_dhcp_exception_key dk = {};
+        __builtin_memcpy(dk.mac, src_mac, 6);
+        if (bpf_map_lookup_elem(&jz_dhcp_exception, &dk))
+            return true;
+    }
 
     return false;
 }
@@ -121,19 +139,19 @@ jz_classify_proto(struct rs_ctx *ctx)
 {
     __u16 eth_proto = ctx->layers.eth_proto;
 
-    if (eth_proto == bpf_htons(0x0806))  /* ETH_P_ARP */
-        return 1;  /* ARP */
+    if (eth_proto == bpf_htons(ETH_P_ARP))
+        return 1;
 
-    if (eth_proto == bpf_htons(0x0800)) {  /* ETH_P_IP */
-        if (ctx->layers.ip_proto == 1)     /* IPPROTO_ICMP */
-            return 2;  /* ICMP */
-        if (ctx->layers.ip_proto == 6)     /* IPPROTO_TCP */
-            return 3;  /* TCP */
-        if (ctx->layers.ip_proto == 17)    /* IPPROTO_UDP */
-            return 4;  /* UDP */
+    if (eth_proto == bpf_htons(ETH_P_IP)) {
+        if (ctx->layers.ip_proto == IPPROTO_ICMP)
+            return 2;
+        if (ctx->layers.ip_proto == IPPROTO_TCP)
+            return 3;
+        if (ctx->layers.ip_proto == IPPROTO_UDP)
+            return 4;
     }
 
-    return 0;  /* unknown */
+    return 0;
 }
 
 /* ── Helper: Store guard result in per-CPU map ── */
@@ -182,15 +200,111 @@ static __always_inline __be32 arp_read_be32(const void *p)
     return val;
 }
 
+/* ── Inline L2/L3 Parser ──
+ *
+ * When running without rSwitch core (ctx->parsed == 0), the per-CPU
+ * rs_ctx_map is zero-initialized and no upstream program populates
+ * the packet metadata.  This inline parser fills ctx->layers so the
+ * entire downstream pipeline (guard_classifier logic, arp_honeypot,
+ * icmp_honeypot, bg_collector, threat_detect, forensics) can work.
+ *
+ * The parser is a no-op when rSwitch core IS present (ctx->parsed != 0),
+ * satisfying the constraint "jz modules must not alter rs_ctx fields
+ * used by rSwitch core modules".
+ */
+static __always_inline void
+jz_parse_packet(struct xdp_md *xdp_ctx, struct rs_ctx *ctx)
+{
+    void *data     = (void *)(long)xdp_ctx->data;
+    void *data_end = (void *)(long)xdp_ctx->data_end;
+
+    /* Ethernet header */
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end)
+        return;
+
+    __u16 eth_proto = eth->h_proto;
+    __u16 offset = sizeof(struct ethhdr);  /* 14 bytes */
+
+    /* VLAN: peel up to RS_VLAN_MAX_DEPTH (2) tags — 802.1Q / 802.1AD */
+    __u8  vlan_depth = 0;
+
+#pragma unroll
+    for (int i = 0; i < RS_VLAN_MAX_DEPTH; i++) {
+        if (eth_proto != bpf_htons(ETH_P_8021Q) &&
+            eth_proto != bpf_htons(ETH_P_8021AD))
+            break;
+
+        /* Bounds check for 4-byte VLAN TCI + next ethertype */
+        if (data + offset + 4 > data_end)
+            return;
+
+        /* TCI is at data+offset: 16-bit (3-bit PCP, 1-bit DEI, 12-bit VID) */
+        __u16 tci;
+        __builtin_memcpy(&tci, data + offset, 2);
+        ctx->layers.vlan_ids[i] = bpf_ntohs(tci) & 0x0FFF;
+        vlan_depth++;
+
+        /* Next ethertype sits at offset+2 */
+        __builtin_memcpy(&eth_proto, data + offset + 2, 2);
+        offset += 4;
+    }
+
+    ctx->layers.vlan_depth = vlan_depth;
+    ctx->layers.eth_proto  = eth_proto;
+    ctx->layers.l2_offset  = 0;
+    ctx->layers.l3_offset  = offset;
+    ctx->ifindex           = xdp_ctx->ingress_ifindex;
+
+    /* Set ingress VLAN from outermost tag (0 if untagged) */
+    ctx->ingress_vlan = (vlan_depth > 0) ? ctx->layers.vlan_ids[0] : 0;
+
+    /* L3: Parse IPv4 header for saddr/daddr/ip_proto */
+    if (eth_proto == bpf_htons(ETH_P_IP)) {
+        if (data + offset + sizeof(struct iphdr) > data_end)
+            return;
+
+        struct iphdr *iph = data + offset;
+        if ((void *)(iph + 1) > data_end)
+            return;
+
+        ctx->layers.saddr    = iph->saddr;
+        ctx->layers.daddr    = iph->daddr;
+        ctx->layers.ip_proto = iph->protocol;
+
+        __u16 ihl = (__u16)(iph->ihl) * 4;
+        if (ihl < 20)
+            ihl = 20;
+        ctx->layers.l4_offset = offset + ihl;
+    }
+
+    ctx->parsed = 1;
+}
+
 /* ── Main XDP Program ── */
 
 SEC("xdp")
 int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
 {
-    /* Get per-CPU rSwitch context */
     struct rs_ctx *ctx = RS_GET_CTX();
     if (!ctx)
         return XDP_PASS;
+
+    /* As the first module in the pipeline, reset per-CPU context for
+     * each new packet.  In standalone mode (no rSwitch core upstream),
+     * the per-CPU rs_ctx_map retains stale data from the previous
+     * invocation — including parsed=1 — which would cause us to skip
+     * the inline parser and use stale L2/L3 metadata.
+     *
+     * When rSwitch core IS present, it resets ctx before us, so this
+     * is a harmless no-op (core will re-parse after us anyway via its
+     * own pipeline stage).
+     */
+    ctx->parsed = 0;
+    ctx->call_depth = 0;
+    ctx->next_prog_id = 0;
+
+    jz_parse_packet(xdp_ctx, ctx);
 
     /* Access packet data */
     void *data     = (void *)(long)xdp_ctx->data;
@@ -205,15 +319,16 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     __u8 *src_mac = eth->h_source;
 
     /* Determine src/dst IPs depending on protocol.
-     * For IP packets (ICMP, TCP, UDP), rSwitch parser populates
-     * ctx->layers.saddr/daddr from the IP header.
+     * For IP packets (ICMP, TCP, UDP), the parser (rSwitch core or
+     * our inline parser above) populates ctx->layers.saddr/daddr
+     * from the IP header.
      * For ARP packets, these fields are ZERO because there is no
      * IP header — we must extract from the ARP payload directly.
      */
     __u32 src_ip;
     __u32 dst_ip;
 
-    if (ctx->layers.eth_proto == bpf_htons(0x0806)) {
+    if (ctx->layers.eth_proto == bpf_htons(ETH_P_ARP)) {
         /* ARP: extract IPs from ARP payload (use l3_offset for VLAN support)
          * Mask offset with RS_L3_OFFSET_MASK so the BPF verifier can
          * prove the range after the subsequent bounds check.

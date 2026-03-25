@@ -266,7 +266,7 @@ install: all
 	# Config files
 	$(INSTALL) -d $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) -d $(DESTDIR)$(SYSCONFDIR)/profiles
-	$(INSTALL) -m 0640 $(CONFIG_DIR)/base.yaml $(DESTDIR)$(SYSCONFDIR)/
+	@test -f $(DESTDIR)$(SYSCONFDIR)/base.yaml || $(INSTALL) -m 0640 $(CONFIG_DIR)/base.yaml $(DESTDIR)$(SYSCONFDIR)/
 	-$(INSTALL) -m 0640 $(CONFIG_DIR)/profiles/*.yaml $(DESTDIR)$(SYSCONFDIR)/profiles/ 2>/dev/null || true
 	# Systemd services
 	$(INSTALL) -d $(DESTDIR)$(UNITDIR)

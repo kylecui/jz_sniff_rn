@@ -25,6 +25,9 @@ typedef struct jz_guard_auto {
     int                subnet_total;
     int                current_dynamic;
 
+    uint32_t           deploy_cursor;   /* next IP to consider (network order) */
+    uint32_t           host_ip;         /* our own IP — never deploy on self */
+
     uint64_t           last_eval_ns;
     bool               initialized;
 } jz_guard_auto_t;

@@ -21,6 +21,8 @@
 #define JZ_GUARD_DYNAMIC 2
 #endif
 
+#define JZ_GUARD_AUTO_DEPLOY_BATCH  32
+
 static uint64_t get_monotonic_ns(void)
 {
     struct timespec ts;
@@ -85,6 +87,94 @@ static void mac_to_text(const uint8_t mac[6], char *buf, size_t buf_size)
     (void)snprintf(buf, buf_size,
                    "%02x:%02x:%02x:%02x:%02x:%02x",
                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static void generate_fake_mac(const jz_guard_auto_t *ga, uint32_t ip, uint8_t mac[6])
+{
+    uint32_t h;
+    uint8_t oui[3] = { 0xaa, 0xbb, 0xcc };
+
+    if (ga && ga->config && ga->config->fake_mac_pool.prefix[0]) {
+        unsigned int a, b, c;
+
+        if (sscanf(ga->config->fake_mac_pool.prefix, "%x:%x:%x", &a, &b, &c) == 3) {
+            oui[0] = (uint8_t)a;
+            oui[1] = (uint8_t)b;
+            oui[2] = (uint8_t)c;
+        }
+    }
+
+    h = ntohl(ip) * 2654435761U;
+    mac[0] = oui[0];
+    mac[1] = oui[1];
+    mac[2] = oui[2];
+    mac[3] = (uint8_t)(h >> 16);
+    mac[4] = (uint8_t)(h >> 8);
+    mac[5] = (uint8_t)(h);
+    mac[0] &= 0xFE;
+    mac[0] |= 0x02;
+}
+
+static bool is_ip_online(const jz_guard_auto_t *ga, uint32_t ip)
+{
+    int i;
+
+    if (!ga || !ga->discovery)
+        return false;
+
+    for (i = 0; i < JZ_DISCOVERY_HASH_BUCKETS; i++) {
+        const jz_discovery_device_t *node = ga->discovery->buckets[i];
+
+        while (node) {
+            if (node->profile.ip == ip)
+                return true;
+            node = node->next;
+        }
+    }
+    return false;
+}
+
+static bool is_ip_existing_dynamic(const jz_guard_auto_t *ga, uint32_t ip)
+{
+    int i;
+
+    if (!ga || !ga->guard_mgr)
+        return false;
+
+    for (i = 0; i < JZ_GUARD_MGR_MAX_DYNAMIC; i++) {
+        if (ga->guard_mgr->dynamic_entries[i].enabled &&
+            ga->guard_mgr->dynamic_entries[i].ip == ip)
+            return true;
+    }
+    return false;
+}
+
+static uint32_t subnet_first_host(const jz_guard_auto_t *ga)
+{
+    uint32_t net_h = ntohl(ga->subnet_addr);
+
+    return htonl(net_h + 1);
+}
+
+static uint32_t subnet_last_host(const jz_guard_auto_t *ga)
+{
+    uint32_t net_h = ntohl(ga->subnet_addr);
+    uint32_t mask_h = ntohl(ga->subnet_mask);
+    uint32_t bcast_h = net_h | ~mask_h;
+
+    return htonl(bcast_h - 1);
+}
+
+static uint32_t next_host_ip(const jz_guard_auto_t *ga, uint32_t ip)
+{
+    uint32_t ip_h = ntohl(ip);
+    uint32_t last_h = ntohl(subnet_last_host(ga));
+    uint32_t first_h = ntohl(subnet_first_host(ga));
+
+    ip_h++;
+    if (ip_h > last_h)
+        ip_h = first_h;
+    return htonl(ip_h);
 }
 
 static int parse_monitor_subnet(jz_guard_auto_t *ga, const jz_config_t *cfg)
@@ -171,6 +261,7 @@ int jz_guard_auto_init(jz_guard_auto_t *ga, jz_guard_mgr_t *gm, const jz_config_
         return -1;
     }
 
+    ga->deploy_cursor = subnet_first_host(ga);
     ga->initialized = true;
     return 0;
 }
@@ -188,9 +279,14 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
     uint64_t now_ns;
     uint64_t interval_ns;
     int max_allowed;
+    int deployed;
+    int scanned;
 
     if (!ga || !ga->initialized)
         return -1;
+
+    if (!ga->config || !ga->config->guards.dynamic.auto_discover)
+        return 0;
 
     now_ns = get_monotonic_ns();
     interval_ns = (uint64_t)JZ_GUARD_AUTO_EVAL_INTERVAL * 1000000000ULL;
@@ -199,13 +295,49 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
 
     ga->last_eval_ns = now_ns;
 
+    if (ga->discovery && ga->discovery->arp_src_ip != 0)
+        ga->host_ip = ga->discovery->arp_src_ip;
+
     max_allowed = max_allowed_dynamic(ga);
     if (ga->current_dynamic >= max_allowed) {
         jz_log_debug("guard_auto ratio limit hit: current=%d allowed=%d",
                      ga->current_dynamic, max_allowed);
+        return 0;
     }
 
-    return 0;
+    if (ga->deploy_cursor == 0)
+        ga->deploy_cursor = subnet_first_host(ga);
+
+    deployed = 0;
+    scanned = 0;
+
+    while (deployed < JZ_GUARD_AUTO_DEPLOY_BATCH &&
+           ga->current_dynamic < max_allowed &&
+           scanned < ga->subnet_total) {
+
+        uint32_t ip = ga->deploy_cursor;
+
+        ga->deploy_cursor = next_host_ip(ga, ip);
+        scanned++;
+
+        if (ip == ga->host_ip)
+            continue;
+        if (jz_guard_auto_is_frozen(ga, ip))
+            continue;
+        if (is_ip_online(ga, ip))
+            continue;
+        if (is_ip_existing_dynamic(ga, ip))
+            continue;
+
+        if (jz_guard_auto_deploy(ga, ip) == 0)
+            deployed++;
+    }
+
+    if (deployed > 0)
+        jz_log_info("guard_auto: deployed %d dynamic guards (total=%d, max=%d)",
+                    deployed, ga->current_dynamic, max_allowed);
+
+    return deployed;
 }
 
 bool jz_guard_auto_is_frozen(const jz_guard_auto_t *ga, uint32_t ip)
@@ -237,6 +369,7 @@ int jz_guard_auto_deploy(jz_guard_auto_t *ga, uint32_t ip)
     int max_allowed;
     int ret;
     char reply[256];
+    uint8_t fake_mac[6];
 
     if (!ga || !ga->initialized || !ga->guard_mgr)
         return -1;
@@ -247,11 +380,13 @@ int jz_guard_auto_deploy(jz_guard_auto_t *ga, uint32_t ip)
     max_allowed = max_allowed_dynamic(ga);
     if (ga->current_dynamic >= max_allowed) {
         jz_log_warn("guard_auto deploy blocked by ratio: current=%d allowed=%d",
-                    ga->current_dynamic, max_allowed);
+                     ga->current_dynamic, max_allowed);
         return -1;
     }
 
-    ret = jz_guard_mgr_add(ga->guard_mgr, ip, NULL, JZ_GUARD_DYNAMIC, 0,
+    generate_fake_mac(ga, ip, fake_mac);
+
+    ret = jz_guard_mgr_add(ga->guard_mgr, ip, fake_mac, JZ_GUARD_DYNAMIC, 0,
                            reply, sizeof(reply));
     if (ret < 0)
         return -1;
@@ -363,4 +498,6 @@ void jz_guard_auto_set_discovery(jz_guard_auto_t *ga, const jz_discovery_t *disc
     if (!ga)
         return;
     ga->discovery = disc;
+    if (disc && disc->arp_src_ip != 0)
+        ga->host_ip = disc->arp_src_ip;
 }

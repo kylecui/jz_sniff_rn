@@ -77,6 +77,11 @@ struct jz_bpf_whitelist_entry {
     uint64_t created_at;
 };
 
+struct bpf_dhcp_exception_key {
+    uint8_t mac[6];
+    uint8_t _pad[2];
+};
+
 static time_t g_api_start_ts;
 
 static int read_file_to_pem(const char *path, char **out_buf)
@@ -1261,6 +1266,212 @@ static void handle_whitelist_del(struct mg_connection *c, struct mg_http_message
     api_json_reply(c, 200, cJSON_CreateObject());
 }
 
+/* ---------- DHCP Exception handlers ---------- */
+
+static void handle_dhcp_exception_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    struct bpf_dhcp_exception_key key;
+    struct bpf_dhcp_exception_key next_key;
+    const struct bpf_dhcp_exception_key *key_ptr = NULL;
+    int count = 0;
+    int fd;
+
+    (void) hm;
+    if (!api || !api->guard_mgr || api->guard_mgr->dhcp_exception_map_fd < 0) {
+        api_error_reply(c, 500, "dhcp exception map unavailable");
+        return;
+    }
+
+    fd = api->guard_mgr->dhcp_exception_map_fd;
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "exceptions");
+
+    while (bpf_map_get_next_key(fd, key_ptr, &next_key) == 0) {
+        struct jz_bpf_whitelist_entry val;
+        if (bpf_map_lookup_elem(fd, &next_key, &val) == 0) {
+            cJSON *obj = cJSON_CreateObject();
+            if (obj) {
+                char macbuf[18];
+                char ipbuf[INET_ADDRSTRLEN];
+                api_mac_to_text(next_key.mac, macbuf, sizeof(macbuf));
+                api_ip_to_text(val.ip_addr, ipbuf, sizeof(ipbuf));
+                cJSON_AddStringToObject(obj, "mac", macbuf);
+                cJSON_AddStringToObject(obj, "ip", ipbuf);
+                cJSON_AddNumberToObject(obj, "created_at_ns", (double) val.created_at);
+                cJSON_AddItemToArray(arr, obj);
+            }
+            count++;
+        }
+        key = next_key;
+        key_ptr = &key;
+    }
+
+    cJSON_AddNumberToObject(root, "count", count);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_dhcp_exception_add(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *ip_j;
+    uint32_t ip;
+    struct bpf_dhcp_exception_key dk;
+    struct jz_bpf_whitelist_entry val;
+    jz_discovery_device_t *dev;
+    char ip_buf[INET_ADDRSTRLEN];
+    int fd;
+
+    if (!api || !api->guard_mgr || api->guard_mgr->dhcp_exception_map_fd < 0) {
+        api_error_reply(c, 500, "dhcp exception map unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    ip_j = cJSON_GetObjectItemCaseSensitive(body, "ip");
+    if (!cJSON_IsString(ip_j) || !ip_j->valuestring ||
+        api_parse_ipv4(ip_j->valuestring, &ip) < 0) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "invalid ip");
+        return;
+    }
+
+    snprintf(ip_buf, sizeof(ip_buf), "%s", ip_j->valuestring);
+    cJSON_Delete(body);
+
+    if (!api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    dev = jz_discovery_lookup_by_ip(api->discovery, ip);
+    if (!dev) {
+        api_error_reply(c, 404, "device not found in discovery table - ensure DHCP server is online");
+        return;
+    }
+
+    memset(&dk, 0, sizeof(dk));
+    memcpy(dk.mac, dev->profile.mac, 6);
+
+    memset(&val, 0, sizeof(val));
+    val.ip_addr = ip;
+    memcpy(val.mac, dev->profile.mac, 6);
+    val.match_mac = 1;
+    val.enabled = 1;
+    val.created_at = (uint64_t) time(NULL) * 1000000000ULL;
+
+    fd = api->guard_mgr->dhcp_exception_map_fd;
+    if (bpf_map_update_elem(fd, &dk, &val, BPF_ANY) < 0) {
+        api_error_reply(c, 500, "failed to update dhcp exception map");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        char macbuf[18];
+        api_mac_to_text(dev->profile.mac, macbuf, sizeof(macbuf));
+        cJSON_AddStringToObject(result, "ip", ip_buf);
+        cJSON_AddStringToObject(result, "mac", macbuf);
+        cJSON_AddStringToObject(result, "status", "added");
+        api_audit_log(api, "dhcp_exception_add", ip_buf, macbuf, "success");
+        api_json_reply(c, 201, result);
+    }
+}
+
+static void handle_dhcp_exception_del(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                      struct mg_str mac_cap)
+{
+    char mac_str[64];
+    struct bpf_dhcp_exception_key dk;
+    int fd;
+
+    (void) hm;
+    if (!api || !api->guard_mgr || api->guard_mgr->dhcp_exception_map_fd < 0) {
+        api_error_reply(c, 500, "dhcp exception map unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(mac_cap, mac_str, sizeof(mac_str)) < 0) {
+        api_error_reply(c, 400, "invalid mac");
+        return;
+    }
+
+    memset(&dk, 0, sizeof(dk));
+    if (api_parse_mac(mac_str, dk.mac) < 0) {
+        api_error_reply(c, 400, "invalid mac format");
+        return;
+    }
+
+    fd = api->guard_mgr->dhcp_exception_map_fd;
+    if (bpf_map_delete_elem(fd, &dk) < 0) {
+        api_error_reply(c, 404, "dhcp exception not found");
+        return;
+    }
+
+    api_audit_log(api, "dhcp_exception_del", mac_str, NULL, "success");
+    api_json_reply(c, 200, cJSON_CreateObject());
+}
+
+static void handle_dhcp_alerts(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    jz_discovery_device_t *servers[32];
+    int count;
+    int i;
+    cJSON *root;
+    cJSON *arr;
+    int fd;
+
+    (void) hm;
+    if (!api || !api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    count = jz_discovery_find_dhcp_servers(api->discovery, servers, 32);
+
+    fd = (api->guard_mgr && api->guard_mgr->dhcp_exception_map_fd >= 0)
+         ? api->guard_mgr->dhcp_exception_map_fd : -1;
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "servers");
+
+    for (i = 0; i < count; i++) {
+        cJSON *obj = cJSON_CreateObject();
+        if (obj) {
+            char ipbuf[INET_ADDRSTRLEN];
+            char macbuf[18];
+            bool is_protected = false;
+
+            api_ip_to_text(servers[i]->profile.ip, ipbuf, sizeof(ipbuf));
+            api_mac_to_text(servers[i]->profile.mac, macbuf, sizeof(macbuf));
+
+            if (fd >= 0) {
+                struct bpf_dhcp_exception_key dk;
+                memset(&dk, 0, sizeof(dk));
+                memcpy(dk.mac, servers[i]->profile.mac, 6);
+                if (bpf_map_lookup_elem(fd, &dk, NULL) == 0)
+                    is_protected = true;
+            }
+
+            cJSON_AddStringToObject(obj, "ip", ipbuf);
+            cJSON_AddStringToObject(obj, "mac", macbuf);
+            cJSON_AddStringToObject(obj, "vendor", servers[i]->profile.vendor);
+            cJSON_AddNumberToObject(obj, "first_seen", (double) servers[i]->profile.first_seen);
+            cJSON_AddBoolToObject(obj, "protected", is_protected ? 1 : 0);
+            cJSON_AddItemToArray(arr, obj);
+        }
+    }
+
+    cJSON_AddNumberToObject(root, "total", count);
+    api_json_reply(c, 200, root);
+}
+
 static void handle_policies_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     char buf[8192];
@@ -1853,19 +2064,35 @@ static void handle_logs_heartbeat(struct mg_connection *c, struct mg_http_messag
 static void handle_stats(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
-    cJSON *guards;
-    cJSON *logs;
+    int static_count = 0;
+    int dynamic_count = 0;
+    int whitelist_count = 0;
+    int attacks_total;
+    int attacks_today;
 
     (void) hm;
     root = cJSON_CreateObject();
-    guards = cJSON_AddObjectToObject(root, "guards");
-    cJSON_AddNumberToObject(guards, "dynamic_count",
-                            (api && api->guard_mgr) ? api->guard_mgr->dynamic_count : 0);
-    logs = cJSON_AddObjectToObject(root, "logs");
-    cJSON_AddNumberToObject(logs, "attacks", api_query_db(api, "SELECT COUNT(*) FROM attack_log", NULL));
-    cJSON_AddNumberToObject(logs, "sniffers", api_query_db(api, "SELECT COUNT(*) FROM sniffer_log", NULL));
-    cJSON_AddNumberToObject(logs, "background", api_query_db(api, "SELECT COUNT(*) FROM bg_capture", NULL));
-    cJSON_AddNumberToObject(logs, "audit", api_query_db(api, "SELECT COUNT(*) FROM audit_log", NULL));
+
+    if (api && api->guard_mgr) {
+        cJSON *tmp = cJSON_CreateArray();
+        static_count = api_add_static_guards_to_array(api->guard_mgr, tmp);
+        dynamic_count = api->guard_mgr->dynamic_count;
+        whitelist_count = api->config
+            ? api->config->guards.whitelist_count : 0;
+        cJSON_Delete(tmp);
+    }
+
+    cJSON_AddNumberToObject(root, "guards_total", static_count + dynamic_count);
+    cJSON_AddNumberToObject(root, "guards_static", static_count);
+    cJSON_AddNumberToObject(root, "guards_dynamic", dynamic_count);
+    cJSON_AddNumberToObject(root, "whitelist_total", whitelist_count);
+
+    attacks_total = (int)api_query_db(api, "SELECT COUNT(*) FROM attack_log", NULL);
+    attacks_today = (int)api_query_db(api,
+        "SELECT COUNT(*) FROM attack_log WHERE timestamp >= strftime('%s','now','start of day')", NULL);
+    cJSON_AddNumberToObject(root, "attacks_total", attacks_total);
+    cJSON_AddNumberToObject(root, "attacks_today", attacks_today);
+
     api_json_reply(c, 200, root);
 }
 
@@ -2298,6 +2525,18 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
     }
 
     cJSON_Delete(body);
+
+    /* Evict from dynamic guards if this IP is currently an active guard */
+    if (api->guard_mgr) {
+        char reply[256];
+
+        if (jz_guard_mgr_remove(api->guard_mgr, ip_val, reply, sizeof(reply)) >= 0 &&
+            strncmp(reply, "guard_remove:ok", 15) == 0) {
+            jz_log_info("frozen_add: evicted dynamic guard %s", ip_buf);
+            if (api->guard_auto && api->guard_auto->current_dynamic > 0)
+                api->guard_auto->current_dynamic--;
+        }
+    }
 
     if (api_persist_config(api) < 0)
         jz_log_error("frozen_add: failed to persist config to configd");
@@ -3213,6 +3452,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_whitelist_list(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/dhcp_exceptions"), NULL)) {
+            handle_dhcp_exception_list(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/alerts/dhcp"), NULL)) {
+            handle_dhcp_alerts(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/policies"), NULL)) {
             handle_policies_list(c, hm, api);
             return;
@@ -3324,6 +3571,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_whitelist_add(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/dhcp_exceptions"), NULL)) {
+            handle_dhcp_exception_add(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/policies"), NULL)) {
             handle_policies_add(c, hm, api);
             return;
@@ -3385,6 +3636,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/whitelist/*"), caps)) {
             handle_whitelist_del(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/dhcp_exceptions/*"), caps)) {
+            handle_dhcp_exception_del(c, hm, api, caps[0]);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {

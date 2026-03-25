@@ -71,7 +71,7 @@ guards:
   #    vlan: 0                       # 0 = all VLANs
 
   dynamic:
-    auto_discover: false
+    auto_discover: true
     max_entries: 16384
     ttl_hours: 24                    # Auto-expire after 24h
     max_ratio: 30                    # Max % of subnet IPs as dynamic guards
