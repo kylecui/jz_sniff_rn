@@ -70,7 +70,11 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
                             int byte_count,
                             int unique_sources,
                             const char *sample_data,
-                            int vlan_id);
+                            int vlan_id,
+                            const char *src_ip,
+                            const char *dst_ip,
+                            const char *src_mac,
+                            const char *dst_mac);
 
 /* -- Config History -- */
 
@@ -152,6 +156,10 @@ typedef struct jz_bg_capture_row {
     int  byte_count;
     int  unique_sources;
     int  vlan_id;
+    char src_ip[16];
+    char dst_ip[16];
+    char src_mac[18];
+    char dst_mac[18];
     char sample_data[256];
 } jz_bg_capture_row_t;
 

@@ -167,6 +167,16 @@ int jz_db_open(jz_db_t *ctx, const char *path)
     exec_sql(ctx->db,
         "ALTER TABLE bg_capture ADD COLUMN vlan_id INTEGER DEFAULT 0;");
 
+    /* Schema migration: add IP/MAC columns to bg_capture */
+    exec_sql(ctx->db,
+        "ALTER TABLE bg_capture ADD COLUMN src_ip TEXT DEFAULT '';");
+    exec_sql(ctx->db,
+        "ALTER TABLE bg_capture ADD COLUMN dst_ip TEXT DEFAULT '';");
+    exec_sql(ctx->db,
+        "ALTER TABLE bg_capture ADD COLUMN src_mac TEXT DEFAULT '';");
+    exec_sql(ctx->db,
+        "ALTER TABLE bg_capture ADD COLUMN dst_mac TEXT DEFAULT '';");
+
     return 0;
 }
 
@@ -288,15 +298,20 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
                             int byte_count,
                             int unique_sources,
                             const char *sample_data,
-                            int vlan_id)
+                            int vlan_id,
+                            const char *src_ip,
+                            const char *dst_ip,
+                            const char *src_mac,
+                            const char *dst_mac)
 {
     if (!ctx || !ctx->initialized)
         return -1;
 
     const char *sql =
         "INSERT INTO bg_capture (period_start, period_end, protocol, "
-        "packet_count, byte_count, unique_sources, sample_data, vlan_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        "packet_count, byte_count, unique_sources, sample_data, vlan_id, "
+        "src_ip, dst_ip, src_mac, dst_mac) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -311,6 +326,10 @@ int jz_db_insert_bg_capture(jz_db_t *ctx,
     sqlite3_bind_int(stmt, 6, unique_sources);
     sqlite3_bind_text(stmt, 7, sample_data, -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 8, vlan_id);
+    sqlite3_bind_text(stmt, 9, src_ip ? src_ip : "", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 10, dst_ip ? dst_ip : "", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 11, src_mac ? src_mac : "", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 12, dst_mac ? dst_mac : "", -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -688,7 +707,9 @@ int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
 
     const char *sql =
         "SELECT id, period_start, period_end, protocol, packet_count, "
-        "byte_count, unique_sources, sample_data, COALESCE(vlan_id, 0) "
+        "byte_count, unique_sources, sample_data, COALESCE(vlan_id, 0), "
+        "COALESCE(src_ip, ''), COALESCE(dst_ip, ''), "
+        "COALESCE(src_mac, ''), COALESCE(dst_mac, '') "
         "FROM bg_capture WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
 
     sqlite3_stmt *stmt;
@@ -725,6 +746,10 @@ int jz_db_fetch_pending_bg_captures(jz_db_t *ctx, int max_rows,
         r->unique_sources = sqlite3_column_int(stmt, 6);
         snprintf(r->sample_data,  sizeof(r->sample_data),  "%s", safe_text(stmt, 7));
         r->vlan_id        = sqlite3_column_int(stmt, 8);
+        snprintf(r->src_ip,       sizeof(r->src_ip),       "%s", safe_text(stmt, 9));
+        snprintf(r->dst_ip,       sizeof(r->dst_ip),       "%s", safe_text(stmt, 10));
+        snprintf(r->src_mac,      sizeof(r->src_mac),      "%s", safe_text(stmt, 11));
+        snprintf(r->dst_mac,      sizeof(r->dst_mac),      "%s", safe_text(stmt, 12));
         n++;
     }
 

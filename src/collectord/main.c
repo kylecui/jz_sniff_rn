@@ -515,7 +515,9 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
         rc = jz_db_insert_bg_capture(&g_ctx.db, timestamp, timestamp,
                                       protocol, pkt_count, byte_count,
-                                      1, NULL, (int)vlan_id);
+                                      1, NULL, (int)vlan_id,
+                                      src_ip_str, dst_ip_str,
+                                      src_mac_str, dst_mac_str);
         break;
     }
 
@@ -654,6 +656,10 @@ static char *export_pending_json(int max_records)
         cJSON_AddNumberToObject(obj, "byte_count",     r->byte_count);
         cJSON_AddNumberToObject(obj, "unique_sources", r->unique_sources);
         cJSON_AddNumberToObject(obj, "vlan_id",        r->vlan_id);
+        cJSON_AddStringToObject(obj, "src_ip",         r->src_ip);
+        cJSON_AddStringToObject(obj, "dst_ip",         r->dst_ip);
+        cJSON_AddStringToObject(obj, "src_mac",        r->src_mac);
+        cJSON_AddStringToObject(obj, "dst_mac",        r->dst_mac);
         if (r->sample_data[0])
             cJSON_AddStringToObject(obj, "sample_data", r->sample_data);
         cJSON_AddItemToArray(arr_bg, obj);

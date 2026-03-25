@@ -1865,7 +1865,8 @@ static void handle_logs_background(struct mg_connection *c, struct mg_http_messa
 
     if (sqlite3_prepare_v2(db,
                            "SELECT id,period_start,period_end,protocol,packet_count,byte_count,"
-                           "unique_sources,sample_data FROM bg_capture ORDER BY id DESC LIMIT ? OFFSET ?",
+                           "unique_sources,sample_data,vlan_id,src_ip,dst_ip,src_mac,dst_mac "
+                           "FROM bg_capture ORDER BY id DESC LIMIT ? OFFSET ?",
                            -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
@@ -1881,13 +1882,24 @@ static void handle_logs_background(struct mg_connection *c, struct mg_http_messa
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         cJSON *o = cJSON_CreateObject();
         cJSON_AddNumberToObject(o, "id", sqlite3_column_int(stmt, 0));
-        cJSON_AddStringToObject(o, "period_start", (const char *) sqlite3_column_text(stmt, 1));
+        cJSON_AddStringToObject(o, "timestamp", (const char *) sqlite3_column_text(stmt, 1));
         cJSON_AddStringToObject(o, "period_end", (const char *) sqlite3_column_text(stmt, 2));
         cJSON_AddStringToObject(o, "protocol", (const char *) sqlite3_column_text(stmt, 3));
         cJSON_AddNumberToObject(o, "packet_count", sqlite3_column_int(stmt, 4));
         cJSON_AddNumberToObject(o, "byte_count", sqlite3_column_int(stmt, 5));
         cJSON_AddNumberToObject(o, "unique_sources", sqlite3_column_int(stmt, 6));
-        cJSON_AddStringToObject(o, "sample_data", (const char *) sqlite3_column_text(stmt, 7));
+        cJSON_AddStringToObject(o, "sample_data", sqlite3_column_text(stmt, 7) ? (const char *) sqlite3_column_text(stmt, 7) : "");
+        cJSON_AddNumberToObject(o, "vlan_id", sqlite3_column_int(stmt, 8));
+        cJSON_AddStringToObject(o, "src_ip", sqlite3_column_text(stmt, 9) ? (const char *) sqlite3_column_text(stmt, 9) : "");
+        cJSON_AddStringToObject(o, "dst_ip", sqlite3_column_text(stmt, 10) ? (const char *) sqlite3_column_text(stmt, 10) : "");
+        cJSON_AddStringToObject(o, "src_mac", sqlite3_column_text(stmt, 11) ? (const char *) sqlite3_column_text(stmt, 11) : "");
+        cJSON_AddStringToObject(o, "dst_mac", sqlite3_column_text(stmt, 12) ? (const char *) sqlite3_column_text(stmt, 12) : "");
+        {
+            char details[64];
+            snprintf(details, sizeof(details), "%d pkt / %d bytes",
+                     sqlite3_column_int(stmt, 4), sqlite3_column_int(stmt, 5));
+            cJSON_AddStringToObject(o, "details", details);
+        }
         cJSON_AddItemToArray(arr, o);
     }
 

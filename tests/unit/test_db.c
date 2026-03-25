@@ -115,7 +115,11 @@ static void test_db_insert_bg_capture(void **state)
         12000,                        /* byte_count */
         8,                            /* unique_sources */
         "[{\"src\":\"10.0.1.1\"}]",  /* sample_data */
-        0);                           /* vlan_id */
+        0,                            /* vlan_id */
+        "10.0.1.1",                   /* src_ip */
+        "10.0.1.255",                 /* dst_ip */
+        "aa:bb:cc:dd:ee:01",          /* src_mac */
+        "ff:ff:ff:ff:ff:ff");         /* dst_mac */
     assert_int_equal(0, rc);
 }
 
