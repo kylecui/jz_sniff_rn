@@ -26,6 +26,7 @@ export interface NetworkInterface {
   gateway: string
   dns1: string
   dns2: string
+  vlans: VlanConfig[]
 }
 
 export interface InterfacesData {

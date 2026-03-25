@@ -212,6 +212,75 @@ static int parse_module_common_map(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_interface_vlans(yaml_parser_t *parser, yaml_event_t *start,
+                                jz_config_interface_t *iface, jz_config_errors_t *errors)
+{
+    if (start->type != YAML_SEQUENCE_START_EVENT) {
+        add_error(errors, event_line(start), "system.interfaces[].vlans", "expected sequence");
+        return skip_node(parser, start, errors);
+    }
+    yaml_event_delete(start);
+    iface->vlan_count = 0;
+    for (;;) {
+        yaml_event_t item_ev;
+        if (next_event(parser, &item_ev, errors, "system.interfaces[].vlans") != 0)
+            return -1;
+        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+            yaml_event_delete(&item_ev);
+            break;
+        }
+        if (item_ev.type != YAML_MAPPING_START_EVENT) {
+            add_error(errors, event_line(&item_ev), "system.interfaces[].vlans", "entries must be mappings");
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+        if (iface->vlan_count >= JZ_CONFIG_MAX_VLANS) {
+            add_error(errors, event_line(&item_ev), "system.interfaces[].vlans",
+                      "too many entries (max %d)", JZ_CONFIG_MAX_VLANS);
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+        yaml_event_delete(&item_ev);
+        for (;;) {
+            yaml_event_t k2, v2;
+            const char *k;
+            jz_config_vlan_t *v = &iface->vlans[iface->vlan_count];
+            if (next_event(parser, &k2, errors, "system.interfaces[].vlans") != 0)
+                return -1;
+            if (k2.type == YAML_MAPPING_END_EVENT) {
+                yaml_event_delete(&k2);
+                iface->vlan_count++;
+                break;
+            }
+            if (k2.type != YAML_SCALAR_EVENT) {
+                add_error(errors, event_line(&k2), "system.interfaces[].vlans", "expected scalar key");
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            k = (const char *)k2.data.scalar.value;
+            if (next_event(parser, &v2, errors, "system.interfaces[].vlans") != 0) {
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            if (!strcmp(k, "id")) {
+                if (scalar_to_int(&v2, &v->id) != 0)
+                    add_error(errors, event_line(&v2), "system.interfaces[].vlans[].id", "must be int");
+            } else if (!strcmp(k, "name")) {
+                copy_scalar(v->name, sizeof(v->name), &v2);
+            } else if (!strcmp(k, "subnet")) {
+                copy_scalar(v->subnet, sizeof(v->subnet), &v2);
+            } else {
+                add_error(errors, event_line(&k2), "system.interfaces[].vlans", "unknown key '%s'", k);
+            }
+            yaml_event_delete(&v2);
+            yaml_event_delete(&k2);
+        }
+    }
+    return 0;
+}
+
 static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
                             jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -284,6 +353,11 @@ static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
             } else if (!strcmp(k, "dns2")) {
                 copy_scalar(iface->dns2, sizeof(iface->dns2), &v2);
                 yaml_event_delete(&v2);
+            } else if (!strcmp(k, "vlans")) {
+                if (parse_interface_vlans(parser, &v2, iface, errors) != 0) {
+                    yaml_event_delete(&k2);
+                    return -1;
+                }
             } else {
                 add_error(errors, event_line(&k2), "system.interfaces", "unknown key '%s'", k);
                 if (skip_node(parser, &v2, errors) != 0) {
@@ -2078,72 +2152,21 @@ static int parse_arp_spoof(yaml_parser_t *parser, yaml_event_t *start,
 static int parse_vlans(yaml_parser_t *parser, yaml_event_t *start,
                        jz_config_t *cfg, jz_config_errors_t *errors)
 {
-    if (start->type != YAML_SEQUENCE_START_EVENT) {
-        add_error(errors, event_line(start), "vlans", "expected sequence");
-        return skip_node(parser, start, errors);
-    }
-    yaml_event_delete(start);
-    cfg->vlan_count = 0;
-    for (;;) {
-        yaml_event_t item_ev;
-        if (next_event(parser, &item_ev, errors, "vlans") != 0)
-            return -1;
-        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
-            yaml_event_delete(&item_ev);
+    jz_config_interface_t *target = NULL;
+    int i;
+
+    for (i = 0; i < cfg->system.interface_count; i++) {
+        if (strcmp(cfg->system.interfaces[i].role, "monitor") == 0) {
+            target = &cfg->system.interfaces[i];
             break;
         }
-        if (item_ev.type != YAML_MAPPING_START_EVENT) {
-            add_error(errors, event_line(&item_ev), "vlans", "entries must be mappings");
-            if (skip_node(parser, &item_ev, errors) != 0)
-                return -1;
-            continue;
-        }
-
-        if (cfg->vlan_count >= JZ_CONFIG_MAX_VLANS) {
-            add_error(errors, event_line(&item_ev), "vlans", "too many entries (max %d)",
-                      JZ_CONFIG_MAX_VLANS);
-            if (skip_node(parser, &item_ev, errors) != 0)
-                return -1;
-            continue;
-        }
-
-        yaml_event_delete(&item_ev);
-        for (;;) {
-            yaml_event_t k2, v2;
-            const char *k;
-            jz_config_vlan_t *v = &cfg->vlans[cfg->vlan_count];
-            if (next_event(parser, &k2, errors, "vlans") != 0)
-                return -1;
-            if (k2.type == YAML_MAPPING_END_EVENT) {
-                yaml_event_delete(&k2);
-                cfg->vlan_count++;
-                break;
-            }
-            if (k2.type != YAML_SCALAR_EVENT) {
-                add_error(errors, event_line(&k2), "vlans", "expected scalar key");
-                yaml_event_delete(&k2);
-                return -1;
-            }
-            k = (const char *)k2.data.scalar.value;
-            if (next_event(parser, &v2, errors, "vlans") != 0) {
-                yaml_event_delete(&k2);
-                return -1;
-            }
-            if (!strcmp(k, "id")) {
-                if (scalar_to_int(&v2, &v->id) != 0)
-                    add_error(errors, event_line(&v2), "vlans[].id", "must be int");
-            } else if (!strcmp(k, "name")) {
-                copy_scalar(v->name, sizeof(v->name), &v2);
-            } else if (!strcmp(k, "subnet")) {
-                copy_scalar(v->subnet, sizeof(v->subnet), &v2);
-            } else {
-                add_error(errors, event_line(&k2), "vlans", "unknown key '%s'", k);
-            }
-            yaml_event_delete(&v2);
-            yaml_event_delete(&k2);
-        }
     }
-    return 0;
+
+    if (!target) {
+        return skip_node(parser, start, errors);
+    }
+
+    return parse_interface_vlans(parser, start, target, errors);
 }
 
 static int parse_api(yaml_parser_t *parser, yaml_event_t *start,
@@ -2586,6 +2609,28 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
             strcmp(iface->subnet, "dhcp") != 0 &&
             !is_valid_cidr(iface->subnet))
             add_error(errors, 0, "system.interfaces[].subnet", "invalid CIDR '%s'", iface->subnet);
+        {
+            int vi;
+            if (iface->vlan_count < 0)
+                add_error(errors, 0, "system.interfaces[].vlan_count", "must be non-negative");
+            for (vi = 0; vi < iface->vlan_count && vi < JZ_CONFIG_MAX_VLANS; vi++) {
+                const jz_config_vlan_t *vl = &iface->vlans[vi];
+                if (vl->id < 1 || vl->id > 4094)
+                    add_error(errors, 0, "system.interfaces[].vlans[].id",
+                              "must be 1-4094, got %d", vl->id);
+                if (vl->subnet[0] != '\0' && !is_valid_cidr(vl->subnet))
+                    add_error(errors, 0, "system.interfaces[].vlans[].subnet",
+                              "invalid CIDR '%s'", vl->subnet);
+                {
+                    int j;
+                    for (j = 0; j < vi; j++) {
+                        if (iface->vlans[j].id == vl->id)
+                            add_error(errors, 0, "system.interfaces[].vlans[].id",
+                                      "duplicate VLAN ID %d", vl->id);
+                    }
+                }
+            }
+        }
     }
 
     if (!is_valid_stage(cfg->modules.guard_classifier.stage))
@@ -2705,23 +2750,6 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
     if (cfg->discovery.dhcp_probe_interval_sec < 10)
         add_error(errors, 0, "discovery.dhcp_probe_interval_sec", "must be >= 10");
 
-    if (cfg->vlan_count < 0)
-        add_error(errors, 0, "vlan_count", "must be non-negative");
-    for (i = 0; i < cfg->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
-        const jz_config_vlan_t *vl = &cfg->vlans[i];
-        if (vl->id < 1 || vl->id > 4094)
-            add_error(errors, 0, "vlans[].id", "must be 1-4094, got %d", vl->id);
-        if (vl->subnet[0] != '\0' && !is_valid_cidr(vl->subnet))
-            add_error(errors, 0, "vlans[].subnet", "invalid CIDR '%s'", vl->subnet);
-        {
-            int j;
-            for (j = 0; j < i; j++) {
-                if (cfg->vlans[j].id == vl->id)
-                    add_error(errors, 0, "vlans[].id", "duplicate VLAN ID %d", vl->id);
-            }
-        }
-    }
-
     return (errors && errors->count > start_count) ? -1 : 0;
 }
 
@@ -2840,8 +2868,6 @@ void jz_config_defaults(jz_config_t *cfg)
 
     cfg->discovery.aggressive_mode = false;
     cfg->discovery.dhcp_probe_interval_sec = 120;
-
-    cfg->vlan_count = 0;
 }
 
 void jz_config_free(jz_config_t *cfg)
@@ -3003,6 +3029,22 @@ char *jz_config_serialize(const jz_config_t *cfg)
             sb_appendf(&sb, "      dns2: %s\n", iface->dns2) != 0) {
             free(sb.data);
             return NULL;
+        }
+        if (iface->vlan_count > 0) {
+            int vi;
+            if (sb_appendf(&sb, "      vlans:\n") != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            for (vi = 0; vi < iface->vlan_count; vi++) {
+                if (sb_appendf(&sb, "        - { id: %d, name: %s, subnet: %s }\n",
+                               iface->vlans[vi].id,
+                               iface->vlans[vi].name,
+                               iface->vlans[vi].subnet) != 0) {
+                    free(sb.data);
+                    return NULL;
+                }
+            }
         }
     }
 
@@ -3264,16 +3306,6 @@ char *jz_config_serialize(const jz_config_t *cfg)
     if (sb_appendf(&sb, "vlans:\n") != 0) {
         free(sb.data);
         return NULL;
-    }
-
-    for (i = 0; i < cfg->vlan_count; i++) {
-        if (sb_appendf(&sb, "  - { id: %d, name: %s, subnet: %s }\n",
-                       cfg->vlans[i].id,
-                       cfg->vlans[i].name,
-                       cfg->vlans[i].subnet) != 0) {
-            free(sb.data);
-            return NULL;
-        }
     }
 
     return sb.data;

@@ -12,15 +12,13 @@ import {
   updateInterfaces,
   getArpSpoof,
   updateArpSpoof,
-  getVlans,
-  updateVlans,
   getCaptures,
   startCapture,
   stopCapture,
   deleteCapture,
   downloadCaptureUrl,
 } from '@/api/config'
-import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, VlanConfig, CaptureFile } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, CaptureFile } from '@/api/config'
 
 const { t } = useI18n()
 
@@ -38,8 +36,6 @@ const arpSpoofEnabled = ref(false)
 const arpSpoofInterval = ref(5)
 const arpSpoofTargets = ref<ArpSpoofTarget[]>([])
 const arpSpoofSaving = ref(false)
-const vlans = ref<VlanConfig[]>([])
-const vlansSaving = ref(false)
 const captureActive = ref(false)
 const captureFilename = ref('')
 const captureBytesWritten = ref(0)
@@ -115,6 +111,7 @@ function onRoleChange(row: NetworkInterface) {
     row.gateway = ''
     row.dns1 = ''
     row.dns2 = ''
+    row.vlans = []
   } else if (row.role === 'manage') {
     const state = getManageState(row.name)
     if (state.mode === 'dhcp') {
@@ -123,11 +120,13 @@ function onRoleChange(row: NetworkInterface) {
       row.dns1 = ''
       row.dns2 = ''
     }
+    row.vlans = []
   } else if (row.role === 'monitor') {
     if (row.subnet === 'dhcp') row.subnet = ''
     row.gateway = ''
     row.dns1 = ''
     row.dns2 = ''
+    if (!row.vlans) row.vlans = []
   }
 }
 
@@ -136,13 +135,12 @@ const prefixOptions = ['8', '16', '24', '25', '26', '27', '28', '29', '30']
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces, arpSpoof, vlansData, captureData] = await Promise.all([
+    const [cfg, staged, hist, ifaces, arpSpoof, captureData] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
       getInterfaces(),
       getArpSpoof(),
-      getVlans(),
       getCaptures(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
@@ -151,13 +149,15 @@ async function fetchAll() {
     hasStaged.value = staged.has_staged
     stagedText.value = staged.staged ? JSON.stringify(staged.staged, null, 2) : ''
     history.value = hist.history
-    interfaces.value = ifaces.interfaces
+    interfaces.value = ifaces.interfaces.map(iface => ({
+      ...iface,
+      vlans: iface.vlans ?? [],
+    }))
     systemMode.value = ifaces.mode
     initManageStates(ifaces.interfaces)
     arpSpoofEnabled.value = arpSpoof.enabled
     arpSpoofInterval.value = arpSpoof.interval_sec
     arpSpoofTargets.value = arpSpoof.targets
-    vlans.value = vlansData.vlans ?? []
     captureActive.value = captureData.active
     captureFilename.value = captureData.filename ?? ''
     captureBytesWritten.value = captureData.bytes_written ?? 0
@@ -176,7 +176,10 @@ async function handleSaveInterfaces() {
     await ElMessageBox.confirm(t('config.confirmSaveInterfaces'), t('common.confirm'), { type: 'warning' })
     interfacesSaving.value = true
     const result = await updateInterfaces({ interfaces: interfaces.value, mode: systemMode.value })
-    interfaces.value = result.interfaces
+    interfaces.value = result.interfaces.map(iface => ({
+      ...iface,
+      vlans: iface.vlans ?? [],
+    }))
     systemMode.value = result.mode
     ElMessage.success(t('common.success'))
   } catch {
@@ -214,26 +217,13 @@ async function handleSaveArpSpoof() {
   }
 }
 
-function addVlan() {
-  vlans.value.push({ id: 0, name: '', subnet: '' })
+function addVlan(iface: NetworkInterface) {
+  if (!iface.vlans) iface.vlans = []
+  iface.vlans.push({ id: 0, name: '', subnet: '' })
 }
 
-function removeVlan(index: number) {
-  vlans.value.splice(index, 1)
-}
-
-async function handleSaveVlans() {
-  try {
-    await ElMessageBox.confirm(t('config.confirmSaveVlans'), t('common.confirm'), { type: 'warning' })
-    vlansSaving.value = true
-    const result = await updateVlans({ vlans: vlans.value })
-    vlans.value = result.vlans ?? []
-    ElMessage.success(t('common.success'))
-  } catch {
-    // cancelled or error
-  } finally {
-    vlansSaving.value = false
-  }
+function removeVlan(iface: NetworkInterface, index: number) {
+  iface.vlans.splice(index, 1)
 }
 
 async function handleStartCapture() {
@@ -458,6 +448,42 @@ onMounted(fetchAll)
               <el-option :label="t('config.modeInline')" value="inline" />
             </el-select>
           </div>
+          <!-- Per-interface VLANs (monitor only) -->
+          <template v-for="iface in interfaces" :key="iface.name + '-vlans'">
+            <div v-if="iface.role === 'monitor'" class="vlan-section">
+              <div class="targets-header">
+                <span>{{ t('config.vlans') }} — {{ iface.name }}</span>
+                <el-button type="primary" text size="small" @click="addVlan(iface)">
+                  + {{ t('config.addVlan') }}
+                </el-button>
+              </div>
+              <el-table v-if="iface.vlans && iface.vlans.length > 0" :data="iface.vlans" stripe size="small">
+                <el-table-column :label="t('config.vlanId')" width="140">
+                  <template #default="{ row }">
+                    <el-input-number v-model="row.id" :min="1" :max="4094" size="small" controls-position="right" style="width: 110px;" />
+                  </template>
+                </el-table-column>
+                <el-table-column :label="t('config.vlanName')">
+                  <template #default="{ row }">
+                    <el-input v-model="row.name" size="small" placeholder="e.g. VLAN10" />
+                  </template>
+                </el-table-column>
+                <el-table-column :label="t('config.vlanSubnet')">
+                  <template #default="{ row }">
+                    <el-input v-model="row.subnet" size="small" placeholder="e.g. 10.0.10.0/24" />
+                  </template>
+                </el-table-column>
+                <el-table-column :label="t('common.action')" width="80">
+                  <template #default="{ $index }">
+                    <el-button type="danger" text size="small" @click="removeVlan(iface, $index)">
+                      {{ t('common.delete') }}
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-else :description="t('common.noData')" :image-size="40" />
+            </div>
+          </template>
         </el-card>
 
         <!-- ARP Spoofing -->
@@ -500,48 +526,6 @@ onMounted(fetchAll)
             <el-table-column :label="t('common.action')" width="80">
               <template #default="{ $index }">
                 <el-button type="danger" text size="small" @click="removeArpSpoofTarget($index)">
-                  {{ t('common.delete') }}
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <!-- VLANs -->
-        <el-card class="section-card">
-          <template #header>
-            <div class="card-header">
-              <span>{{ t('config.vlans') }}</span>
-              <el-button type="primary" size="small" :loading="vlansSaving" @click="handleSaveVlans">
-                {{ t('common.save') }}
-              </el-button>
-            </div>
-          </template>
-          <div class="targets-header">
-            <span />
-            <el-button type="primary" text size="small" @click="addVlan">
-              + {{ t('config.addVlan') }}
-            </el-button>
-          </div>
-          <el-table :data="vlans" stripe>
-            <el-table-column :label="t('config.vlanId')" width="140">
-              <template #default="{ row }">
-                <el-input-number v-model="row.id" :min="1" :max="4094" size="small" controls-position="right" style="width: 110px;" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('config.vlanName')">
-              <template #default="{ row }">
-                <el-input v-model="row.name" size="small" placeholder="e.g. VLAN10" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('config.vlanSubnet')">
-              <template #default="{ row }">
-                <el-input v-model="row.subnet" size="small" placeholder="e.g. 10.0.10.0/24" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('common.action')" width="80">
-              <template #default="{ $index }">
-                <el-button type="danger" text size="small" @click="removeVlan($index)">
                   {{ t('common.delete') }}
                 </el-button>
               </template>
@@ -775,5 +759,10 @@ onMounted(fetchAll)
 .mirror-no-config {
   color: #c0c4cc;
   font-size: 13px;
+}
+.vlan-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
 }
 </style>

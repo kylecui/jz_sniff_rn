@@ -52,6 +52,12 @@ typedef struct jz_config_errors {
     int count;
 } jz_config_errors_t;
 
+typedef struct jz_config_vlan {
+    int  id;                                 /* 802.1Q VLAN ID (1-4094) */
+    char name[JZ_CONFIG_STR_SHORT];          /* human-readable label */
+    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.10.0.0/24" */
+} jz_config_vlan_t;
+
 typedef struct jz_config_interface {
     char name[JZ_CONFIG_STR_SHORT];          /* e.g. "eth0", "ens33" */
     char role[JZ_CONFIG_STR_SHORT];          /* "monitor", "manage", "mirror" */
@@ -59,6 +65,8 @@ typedef struct jz_config_interface {
     char gateway[JZ_CONFIG_STR_SHORT];       /* e.g. "10.0.1.1" (manage+static) */
     char dns1[JZ_CONFIG_STR_SHORT];          /* primary DNS server */
     char dns2[JZ_CONFIG_STR_SHORT];          /* secondary DNS server (optional) */
+    jz_config_vlan_t vlans[JZ_CONFIG_MAX_VLANS]; /* per-interface VLANs (monitor only) */
+    int vlan_count;
 } jz_config_interface_t;
 
 typedef struct jz_config_system {
@@ -294,12 +302,6 @@ typedef struct jz_config_discovery {
     int  dhcp_probe_interval_sec;           /* seconds between probe bursts (min 10) */
 } jz_config_discovery_t;
 
-typedef struct jz_config_vlan {
-    int  id;                                 /* 802.1Q VLAN ID (1-4094) */
-    char name[JZ_CONFIG_STR_SHORT];          /* human-readable label */
-    char subnet[JZ_CONFIG_STR_SHORT];        /* e.g. "10.10.0.0/24" */
-} jz_config_vlan_t;
-
 typedef struct jz_config {
     int version;
     jz_config_system_t system;
@@ -316,8 +318,6 @@ typedef struct jz_config {
     jz_config_api_t api;
     jz_config_arp_spoof_t arp_spoof;
     jz_config_discovery_t discovery;
-    jz_config_vlan_t vlans[JZ_CONFIG_MAX_VLANS];
-    int vlan_count;
 } jz_config_t;
 
 /* Load config from YAML file. Returns 0 on success, -1 on error.

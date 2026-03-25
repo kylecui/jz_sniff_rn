@@ -2753,6 +2753,19 @@ static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http
         cJSON_AddStringToObject(obj, "gateway", iface->gateway);
         cJSON_AddStringToObject(obj, "dns1", iface->dns1);
         cJSON_AddStringToObject(obj, "dns2", iface->dns2);
+
+        {
+            int vi;
+            cJSON *varr = cJSON_AddArrayToObject(obj, "vlans");
+            for (vi = 0; vi < iface->vlan_count && vi < JZ_CONFIG_MAX_VLANS; vi++) {
+                cJSON *vo = cJSON_CreateObject();
+                cJSON_AddNumberToObject(vo, "id", iface->vlans[vi].id);
+                cJSON_AddStringToObject(vo, "name", iface->vlans[vi].name);
+                cJSON_AddStringToObject(vo, "subnet", iface->vlans[vi].subnet);
+                cJSON_AddItemToArray(varr, vo);
+            }
+        }
+
         cJSON_AddItemToArray(arr, obj);
     }
 
@@ -2863,6 +2876,33 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
                 snprintf(iface->dns2, sizeof(iface->dns2), "%s", d2->valuestring);
             else
                 iface->dns2[0] = '\0';
+        }
+        {
+            cJSON *varr = cJSON_GetObjectItem(item, "vlans");
+            iface->vlan_count = 0;
+            if (varr && cJSON_IsArray(varr)) {
+                int vc = cJSON_GetArraySize(varr);
+                int vi;
+                if (vc > JZ_CONFIG_MAX_VLANS)
+                    vc = JZ_CONFIG_MAX_VLANS;
+                for (vi = 0; vi < vc; vi++) {
+                    cJSON *vitem = cJSON_GetArrayItem(varr, vi);
+                    cJSON *vid = cJSON_GetObjectItem(vitem, "id");
+                    cJSON *vname = cJSON_GetObjectItem(vitem, "name");
+                    cJSON *vsub = cJSON_GetObjectItem(vitem, "subnet");
+                    jz_config_vlan_t *v = &iface->vlans[vi];
+                    v->id = (vid && cJSON_IsNumber(vid)) ? vid->valueint : 0;
+                    if (vname && cJSON_IsString(vname))
+                        snprintf(v->name, sizeof(v->name), "%s", vname->valuestring);
+                    else
+                        v->name[0] = '\0';
+                    if (vsub && cJSON_IsString(vsub))
+                        snprintf(v->subnet, sizeof(v->subnet), "%s", vsub->valuestring);
+                    else
+                        v->subnet[0] = '\0';
+                }
+                iface->vlan_count = vc;
+            }
         }
     }
 
@@ -3003,11 +3043,23 @@ static void handle_config_arp_spoof_put(struct mg_connection *c, struct mg_http_
     handle_config_arp_spoof_get(c, hm, api);
 }
 
+static jz_config_interface_t *find_first_monitor_iface(jz_api_t *api)
+{
+    int i;
+    for (i = 0; i < api->config->system.interface_count &&
+                i < JZ_CONFIG_MAX_INTERFACES; i++) {
+        if (strcmp(api->config->system.interfaces[i].role, "monitor") == 0)
+            return &api->config->system.interfaces[i];
+    }
+    return NULL;
+}
+
 static void handle_config_vlans_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
     cJSON *arr;
     int i;
+    const jz_config_interface_t *iface;
 
     (void) hm;
     if (!api || !api->config) {
@@ -3015,16 +3067,20 @@ static void handle_config_vlans_get(struct mg_connection *c, struct mg_http_mess
         return;
     }
 
+    iface = find_first_monitor_iface(api);
+
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "vlans");
 
-    for (i = 0; i < api->config->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
-        const jz_config_vlan_t *v = &api->config->vlans[i];
-        cJSON *obj = cJSON_CreateObject();
-        cJSON_AddNumberToObject(obj, "id", v->id);
-        cJSON_AddStringToObject(obj, "name", v->name);
-        cJSON_AddStringToObject(obj, "subnet", v->subnet);
-        cJSON_AddItemToArray(arr, obj);
+    if (iface) {
+        for (i = 0; i < iface->vlan_count && i < JZ_CONFIG_MAX_VLANS; i++) {
+            const jz_config_vlan_t *v = &iface->vlans[i];
+            cJSON *obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(obj, "id", v->id);
+            cJSON_AddStringToObject(obj, "name", v->name);
+            cJSON_AddStringToObject(obj, "subnet", v->subnet);
+            cJSON_AddItemToArray(arr, obj);
+        }
     }
 
     api_json_reply(c, 200, root);
@@ -3036,9 +3092,16 @@ static void handle_config_vlans_put(struct mg_connection *c, struct mg_http_mess
     cJSON *arr;
     int i;
     int count;
+    jz_config_interface_t *iface;
 
     if (!api || !api->config) {
         api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    iface = find_first_monitor_iface(api);
+    if (!iface) {
+        api_error_reply(c, 404, "no monitor interface configured");
         return;
     }
 
@@ -3100,10 +3163,10 @@ static void handle_config_vlans_put(struct mg_connection *c, struct mg_http_mess
         }
     }
 
-    api->config->vlan_count = count;
+    iface->vlan_count = count;
     for (i = 0; i < count; i++) {
         cJSON *item = cJSON_GetArrayItem(arr, i);
-        jz_config_vlan_t *v = &api->config->vlans[i];
+        jz_config_vlan_t *v = &iface->vlans[i];
 
         v->id = cJSON_GetObjectItem(item, "id")->valueint;
         snprintf(v->name, sizeof(v->name), "%s",
