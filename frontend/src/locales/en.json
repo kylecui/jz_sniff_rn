@@ -213,5 +213,21 @@
     "running": "Running",
     "stopped": "Stopped",
     "confirmRestart": "Are you sure you want to restart {daemon}? This may cause a brief service interruption."
+  },
+  "dhcp": {
+    "title": "DHCP Exceptions",
+    "exceptions": "DHCP Exception List",
+    "addException": "Add DHCP Exception",
+    "serverIp": "Server IP",
+    "serverMac": "Server MAC",
+    "confirmDelete": "Are you sure you want to remove DHCP exception {mac}?",
+    "alertUnprotected": "Unprotected DHCP server detected",
+    "alertUnprotectedDesc": "The following DHCP servers have no exception configured. Guards may respond to their ARP Probes, causing IP allocation failures.",
+    "alertMultiple": "Multiple DHCP servers detected",
+    "alertMultipleDesc": "Multiple DHCP servers found on the network. Possible rogue DHCP server or misconfigured device.",
+    "addExemption": "Add Exception",
+    "vendor": "Vendor",
+    "tabWhitelist": "IP Whitelist",
+    "tabDhcp": "DHCP Exceptions"
   }
 }

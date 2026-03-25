@@ -49,6 +49,9 @@ int  jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
                              const uint8_t *payload, uint32_t payload_len,
                              uint16_t vlan_id);
 jz_discovery_device_t *jz_discovery_lookup(jz_discovery_t *disc, const uint8_t mac[6]);
+jz_discovery_device_t *jz_discovery_lookup_by_ip(jz_discovery_t *disc, uint32_t ip);
+int  jz_discovery_find_dhcp_servers(const jz_discovery_t *disc,
+                                    jz_discovery_device_t **out, int max_out);
 int  jz_discovery_list_json(const jz_discovery_t *disc, char *buf, size_t buf_size);
 void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg);
 

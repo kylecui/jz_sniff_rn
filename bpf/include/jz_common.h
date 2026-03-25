@@ -58,6 +58,7 @@
 #define JZ_EVENT_BG_CAPTURE         6
 #define JZ_EVENT_CONFIG_CHANGE      7
 #define JZ_EVENT_SYSTEM_STATUS      8
+#define JZ_EVENT_DHCP_UNPROTECTED   9
 
 /* ── Event Header (common to all events) ── */
 struct jz_event_hdr {
@@ -82,5 +83,6 @@ struct jz_event_hdr {
 #define JZ_MAX_PROBE_TARGETS       1024
 #define JZ_MAX_THREAT_PATTERNS     2048
 #define JZ_MAX_BG_FILTERS          64
+#define JZ_MAX_DHCP_EXCEPTION      256
 
 #endif /* __JZ_COMMON_H */

@@ -35,6 +35,7 @@ typedef struct jz_guard_mgr {
     int              static_map_fd;    /* fd for jz_static_guards */
     int              dynamic_map_fd;   /* fd for jz_dynamic_guards */
     int              whitelist_map_fd; /* fd for jz_whitelist */
+    int              dhcp_exception_map_fd; /* fd for jz_dhcp_exception */
 
     jz_guard_entry_user_t dynamic_entries[JZ_GUARD_MGR_MAX_DYNAMIC];
     int              dynamic_count;

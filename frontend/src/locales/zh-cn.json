@@ -213,5 +213,21 @@
     "running": "运行中",
     "stopped": "已停止",
     "confirmRestart": "确定要重启 {daemon} 吗？此操作可能导致短暂服务中断。"
+  },
+  "dhcp": {
+    "title": "DHCP 豁免",
+    "exceptions": "DHCP 豁免列表",
+    "addException": "添加 DHCP 豁免",
+    "serverIp": "DHCP 服务器 IP",
+    "serverMac": "MAC 地址",
+    "confirmDelete": "确定要移除 DHCP 豁免 {mac} 吗？",
+    "alertUnprotected": "检测到未受保护的 DHCP 服务器",
+    "alertUnprotectedDesc": "以下 DHCP 服务器未添加豁免，哨兵可能响应其 ARP Probe 导致 IP 分配异常。",
+    "alertMultiple": "检测到多个 DHCP 服务器",
+    "alertMultipleDesc": "网络中存在多个 DHCP 服务器，可能存在误接设备或恶意 DHCP 服务器。",
+    "addExemption": "一键添加豁免",
+    "vendor": "厂商",
+    "tabWhitelist": "白名单",
+    "tabDhcp": "DHCP 豁免"
   }
 }

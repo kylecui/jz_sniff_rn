@@ -22,6 +22,7 @@
 #define BPF_PIN_STATIC_GUARDS   "/sys/fs/bpf/jz/jz_static_guards"
 #define BPF_PIN_DYNAMIC_GUARDS  "/sys/fs/bpf/jz/jz_dynamic_guards"
 #define BPF_PIN_WHITELIST       "/sys/fs/bpf/jz/jz_whitelist"
+#define BPF_PIN_DHCP_EXCEPTION  "/sys/fs/bpf/jz/jz_dhcp_exception"
 
 /* ── BPF Value Mirrors ────────────────────────────────────────── */
 
@@ -43,6 +44,11 @@ struct bpf_whitelist_entry {
     uint8_t  match_mac;
     uint8_t  enabled;
     uint64_t created_at;
+};
+
+struct bpf_dhcp_exception_key {
+    uint8_t  mac[6];
+    uint8_t  _pad[2];
 };
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -177,10 +183,12 @@ int jz_guard_mgr_init(jz_guard_mgr_t *gm, const jz_config_t *cfg)
     gm->static_map_fd = -1;
     gm->dynamic_map_fd = -1;
     gm->whitelist_map_fd = -1;
+    gm->dhcp_exception_map_fd = -1;
 
     gm->static_map_fd = open_bpf_map(BPF_PIN_STATIC_GUARDS);
     gm->dynamic_map_fd = open_bpf_map(BPF_PIN_DYNAMIC_GUARDS);
     gm->whitelist_map_fd = open_bpf_map(BPF_PIN_WHITELIST);
+    gm->dhcp_exception_map_fd = open_bpf_map(BPF_PIN_DHCP_EXCEPTION);
 
     gm->auto_discover = cfg->guards.dynamic.auto_discover;
     gm->max_dynamic = cfg->guards.dynamic.max_entries;
@@ -214,6 +222,8 @@ int jz_guard_mgr_load_config(jz_guard_mgr_t *gm, const jz_config_t *cfg)
         gm->dynamic_map_fd = open_bpf_map(BPF_PIN_DYNAMIC_GUARDS);
     if (gm->whitelist_map_fd < 0)
         gm->whitelist_map_fd = open_bpf_map(BPF_PIN_WHITELIST);
+    if (gm->dhcp_exception_map_fd < 0)
+        gm->dhcp_exception_map_fd = open_bpf_map(BPF_PIN_DHCP_EXCEPTION);
 
     errors = 0;
     for (i = 0; i < cfg->guards.static_count; i++) {
@@ -492,6 +502,8 @@ void jz_guard_mgr_destroy(jz_guard_mgr_t *gm)
         close(gm->dynamic_map_fd);
     if (gm->whitelist_map_fd >= 0)
         close(gm->whitelist_map_fd);
+    if (gm->dhcp_exception_map_fd >= 0)
+        close(gm->dhcp_exception_map_fd);
 
     memset(gm, 0, sizeof(*gm));
     jz_log_info("Guard manager destroyed");

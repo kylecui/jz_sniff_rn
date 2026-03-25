@@ -31,6 +31,12 @@ struct jz_whitelist_entry {
     __u64 created_at;
 };
 
+/* DHCP exception key — MAC address with padding for alignment */
+struct jz_dhcp_exception_key {
+    __u8  mac[6];
+    __u8  _pad[2];
+};
+
 /* Guard classification result — per-CPU scratch for passing to next stage */
 struct jz_guard_result {
     __u8  guard_type;     /* JZ_GUARD_NONE / STATIC / DYNAMIC */

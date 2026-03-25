@@ -561,6 +561,49 @@ jz_discovery_device_t *jz_discovery_lookup(jz_discovery_t *disc, const uint8_t m
     return NULL;
 }
 
+jz_discovery_device_t *jz_discovery_lookup_by_ip(jz_discovery_t *disc, uint32_t ip)
+{
+    int i;
+    jz_discovery_device_t *node;
+
+    if (!disc || ip == 0)
+        return NULL;
+
+    for (i = 0; i < JZ_DISCOVERY_HASH_BUCKETS; i++) {
+        node = disc->buckets[i];
+        while (node) {
+            if (node->profile.ip == ip)
+                return node;
+            node = node->next;
+        }
+    }
+    return NULL;
+}
+
+int jz_discovery_find_dhcp_servers(const jz_discovery_t *disc,
+                                    jz_discovery_device_t **out, int max_out)
+{
+    int i;
+    int count = 0;
+    jz_discovery_device_t *node;
+
+    if (!disc || !out || max_out <= 0)
+        return 0;
+
+    for (i = 0; i < JZ_DISCOVERY_HASH_BUCKETS; i++) {
+        node = disc->buckets[i];
+        while (node) {
+            if (node->profile.signals & FP_SIG_DHCP) {
+                out[count++] = node;
+                if (count >= max_out)
+                    return count;
+            }
+            node = node->next;
+        }
+    }
+    return count;
+}
+
 int jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
                             const uint8_t *payload, uint32_t payload_len,
                             uint16_t vlan_id)
