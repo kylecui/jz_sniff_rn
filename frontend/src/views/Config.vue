@@ -19,6 +19,8 @@ import {
   downloadCaptureUrl,
 } from '@/api/config'
 import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, CaptureFile } from '@/api/config'
+import { getDiscoveredVlans } from '@/api/discovery'
+import type { DiscoveredVlan } from '@/api/discovery'
 
 const { t } = useI18n()
 
@@ -44,6 +46,7 @@ const captureMaxBytes = ref(0)
 const captureFiles = ref<CaptureFile[]>([])
 const captureMaxSizeMB = ref(100)
 const captureLoading = ref(false)
+const discoveredVlans = ref<DiscoveredVlan[]>([])
 
 /* -- Manage role helpers -- */
 interface ManageIpState {
@@ -135,13 +138,14 @@ const prefixOptions = ['8', '16', '24', '25', '26', '27', '28', '29', '30']
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces, arpSpoof, captureData] = await Promise.all([
+    const [cfg, staged, hist, ifaces, arpSpoof, captureData, vlansData] = await Promise.all([
       getConfig(),
       getStaged(),
       getConfigHistory(),
       getInterfaces(),
       getArpSpoof(),
       getCaptures(),
+      getDiscoveredVlans(),
     ])
     const json = JSON.stringify(cfg.config, null, 2)
     configText.value = json
@@ -164,6 +168,7 @@ async function fetchAll() {
     capturePktCount.value = captureData.pkt_count ?? 0
     captureMaxBytes.value = captureData.max_bytes ?? 0
     captureFiles.value = captureData.captures ?? []
+    discoveredVlans.value = vlansData.vlans ?? []
   } catch {
     // keep defaults
   } finally {
@@ -224,6 +229,25 @@ function addVlan(iface: NetworkInterface) {
 
 function removeVlan(iface: NetworkInterface, index: number) {
   iface.vlans.splice(index, 1)
+}
+
+function vlanAlreadyConfigured(iface: NetworkInterface, vlanId: number): boolean {
+  return iface.vlans.some(v => v.id === vlanId)
+}
+
+function importVlan(iface: NetworkInterface, vlan: DiscoveredVlan) {
+  if (!iface.vlans) iface.vlans = []
+  if (vlanAlreadyConfigured(iface, vlan.id)) return
+  iface.vlans.push({ id: vlan.id, name: `VLAN${vlan.id}`, subnet: '' })
+}
+
+function importAllVlans(iface: NetworkInterface) {
+  if (!iface.vlans) iface.vlans = []
+  for (const vlan of discoveredVlans.value) {
+    if (!vlanAlreadyConfigured(iface, vlan.id)) {
+      iface.vlans.push({ id: vlan.id, name: `VLAN${vlan.id}`, subnet: '' })
+    }
+  }
 }
 
 async function handleStartCapture() {
@@ -482,6 +506,41 @@ onMounted(fetchAll)
                 </el-table-column>
               </el-table>
               <el-empty v-else :description="t('common.noData')" :image-size="40" />
+              <!-- Auto-detected VLANs from traffic -->
+              <div v-if="discoveredVlans.length > 0" class="discovered-vlans-section">
+                <div class="targets-header">
+                  <span class="discovered-vlans-title">
+                    <el-tooltip :content="t('config.discoveredVlansHint')" placement="top">
+                      <span style="cursor: help;">{{ t('config.discoveredVlans') }} ⓘ</span>
+                    </el-tooltip>
+                  </span>
+                  <el-button type="success" text size="small" @click="importAllVlans(iface)">
+                    {{ t('config.importAllVlans') }}
+                  </el-button>
+                </div>
+                <el-table :data="discoveredVlans" stripe size="small">
+                  <el-table-column :label="t('config.vlanId')" prop="id" width="140" />
+                  <el-table-column :label="t('config.deviceCount')" prop="device_count" width="120" />
+                  <el-table-column :label="t('discovery.lastSeen')">
+                    <template #default="{ row }">
+                      {{ formatTime(row.last_seen) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('common.action')" width="100">
+                    <template #default="{ row }">
+                      <el-button
+                        type="success"
+                        text
+                        size="small"
+                        :disabled="vlanAlreadyConfigured(iface, row.id)"
+                        @click="importVlan(iface, row)"
+                      >
+                        {{ t('config.importVlan') }}
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
             </div>
           </template>
         </el-card>
@@ -764,5 +823,16 @@ onMounted(fetchAll)
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid #ebeef5;
+}
+.discovered-vlans-section {
+  margin-top: 12px;
+  padding: 10px;
+  background: #f0f9eb;
+  border-radius: 4px;
+}
+.discovered-vlans-title {
+  font-size: 13px;
+  color: #67c23a;
+  font-weight: 600;
 }
 </style>

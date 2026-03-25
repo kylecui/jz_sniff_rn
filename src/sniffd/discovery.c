@@ -947,6 +947,83 @@ int jz_discovery_list_json(const jz_discovery_t *disc, char *buf, size_t buf_siz
     return off;
 }
 
+int jz_discovery_list_vlans(const jz_discovery_t *disc, char *buf, size_t buf_size)
+{
+    struct vlan_entry {
+        uint16_t id;
+        int      device_count;
+        uint32_t last_seen;
+    };
+
+    struct vlan_entry seen[128];
+    int nseen = 0;
+    int off = 0;
+    int i, j;
+    bool first;
+
+    if (!disc || !buf || buf_size == 0)
+        return -1;
+
+    for (i = 0; i < JZ_DISCOVERY_HASH_BUCKETS; i++) {
+        const jz_discovery_device_t *node = disc->buckets[i];
+        while (node) {
+            uint16_t vid = node->profile.vlan;
+            if (vid > 0) {
+                int found = -1;
+                for (j = 0; j < nseen; j++) {
+                    if (seen[j].id == vid) {
+                        found = j;
+                        break;
+                    }
+                }
+                if (found >= 0) {
+                    seen[found].device_count++;
+                    if (node->profile.last_seen > seen[found].last_seen)
+                        seen[found].last_seen = node->profile.last_seen;
+                } else if (nseen < 128) {
+                    seen[nseen].id = vid;
+                    seen[nseen].device_count = 1;
+                    seen[nseen].last_seen = node->profile.last_seen;
+                    nseen++;
+                }
+            }
+            node = node->next;
+        }
+    }
+
+    /* insertion sort — at most 128 entries */
+    for (i = 1; i < nseen; i++) {
+        struct vlan_entry tmp = seen[i];
+        j = i - 1;
+        while (j >= 0 && seen[j].id > tmp.id) {
+            seen[j + 1] = seen[j];
+            j--;
+        }
+        seen[j + 1] = tmp;
+    }
+
+    if (buf_append(buf, buf_size, &off, "{\"vlans\":[") < 0)
+        return -1;
+
+    first = true;
+    for (i = 0; i < nseen; i++) {
+        if (!first) {
+            if (buf_append(buf, buf_size, &off, ",") < 0)
+                return -1;
+        }
+        first = false;
+        if (buf_append(buf, buf_size, &off,
+                       "{\"id\":%u,\"device_count\":%d,\"last_seen\":%u}",
+                       (unsigned)seen[i].id, seen[i].device_count,
+                       (unsigned)seen[i].last_seen) < 0)
+            return -1;
+    }
+
+    if (buf_append(buf, buf_size, &off, "],\"total\":%d}", nseen) < 0)
+        return -1;
+    return off;
+}
+
 void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
 {
     int new_max;

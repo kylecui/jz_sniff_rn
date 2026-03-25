@@ -211,7 +211,13 @@
     "manageNetmask": "子网掩码",
     "manageGateway": "网关",
     "manageDns1": "主 DNS",
-    "manageDns2": "备 DNS"
+    "manageDns2": "备 DNS",
+    "discoveredVlans": "流量中发现的 VLAN",
+    "discoveredVlansHint": "从背景流量和设备发现中自动检测到的 VLAN",
+    "importVlan": "导入",
+    "importAllVlans": "导入全部",
+    "deviceCount": "设备数",
+    "noDiscoveredVlans": "未检测到 VLAN"
   },
   "system": {
     "title": "系统设置",

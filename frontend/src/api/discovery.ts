@@ -29,3 +29,16 @@ export const getDevice = (mac: string) =>
 export const getDiscoveryConfig = () => get<DiscoveryConfig>('/discovery/config')
 export const setDiscoveryConfig = (data: Partial<DiscoveryConfig>) =>
   put<DiscoveryConfig>('/discovery/config', data)
+
+export interface DiscoveredVlan {
+  id: number
+  device_count: number
+  last_seen: number
+}
+
+export interface DiscoveredVlansResponse {
+  vlans: DiscoveredVlan[]
+  total: number
+}
+
+export const getDiscoveredVlans = () => get<DiscoveredVlansResponse>('/discovery/vlans')

@@ -2341,6 +2341,38 @@ static void handle_discovery_devices(struct mg_connection *c, struct mg_http_mes
     free(buf);
 }
 
+static void handle_discovery_vlans(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    char *buf;
+    int len;
+
+    (void) hm;
+    if (!api || !api->discovery) {
+        api_error_reply(c, 500, "discovery unavailable");
+        return;
+    }
+
+    buf = (char *) malloc(4096);
+    if (!buf) {
+        api_error_reply(c, 500, "oom");
+        return;
+    }
+
+    len = jz_discovery_list_vlans(api->discovery, buf, 4096);
+    if (len <= 0) {
+        free(buf);
+        mg_http_reply(c, 200,
+                      "Content-Type: application/json\r\n",
+                      "{\"vlans\":[],\"total\":0}\n");
+        return;
+    }
+
+    mg_http_reply(c, 200,
+                  "Content-Type: application/json\r\n",
+                  "%.*s\n", len, buf);
+    free(buf);
+}
+
 static void handle_discovery_device_by_mac(struct mg_connection *c, struct mg_http_message *hm,
                                            jz_api_t *api, struct mg_str mac_cap)
 {
@@ -3688,6 +3720,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config/staged"), NULL)) {
             handle_config_staged_get(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/discovery/vlans"), NULL)) {
+            handle_discovery_vlans(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/discovery/devices/*"), caps)) {

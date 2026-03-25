@@ -211,7 +211,13 @@
     "manageNetmask": "Netmask",
     "manageGateway": "Gateway",
     "manageDns1": "Primary DNS",
-    "manageDns2": "Secondary DNS"
+    "manageDns2": "Secondary DNS",
+    "discoveredVlans": "Auto-detected VLANs",
+    "discoveredVlansHint": "VLANs detected from background traffic and device discovery",
+    "importVlan": "Import",
+    "importAllVlans": "Import All",
+    "deviceCount": "Devices",
+    "noDiscoveredVlans": "No VLANs detected"
   },
   "system": {
     "title": "System Settings",
