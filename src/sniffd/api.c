@@ -46,6 +46,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <net/if.h>
 
 #define JZ_API_VERSION "0.8.0"
 
@@ -67,6 +68,11 @@ struct jz_bpf_guard_entry {
     uint64_t created_at;
     uint64_t last_hit;
     uint64_t hit_count;
+};
+
+struct bpf_guard_key {
+    uint32_t ip_addr;
+    uint32_t ifindex;
 };
 
 struct jz_bpf_whitelist_entry {
@@ -349,7 +355,8 @@ done:
 
 static cJSON *api_guard_entry_json(uint32_t ip, const uint8_t mac[6], uint8_t guard_type,
                                    uint8_t enabled, uint16_t vlan_id,
-                                   uint64_t created_at_ns, uint32_t ttl_sec)
+                                   uint64_t created_at_ns, uint32_t ttl_sec,
+                                   uint32_t ifindex)
 {
     cJSON *obj = cJSON_CreateObject();
     char ipbuf[INET_ADDRSTRLEN];
@@ -367,6 +374,12 @@ static cJSON *api_guard_entry_json(uint32_t ip, const uint8_t mac[6], uint8_t gu
     cJSON_AddBoolToObject(obj, "enabled", enabled ? 1 : 0);
     cJSON_AddNumberToObject(obj, "vlan", vlan_id);
     cJSON_AddNumberToObject(obj, "created_at_ns", (double) created_at_ns);
+    cJSON_AddNumberToObject(obj, "ifindex", ifindex);
+    if (ifindex > 0) {
+        char ifname[IF_NAMESIZE];
+        if (if_indextoname(ifindex, ifname))
+            cJSON_AddStringToObject(obj, "interface", ifname);
+    }
     if (ttl_sec > 0)
         cJSON_AddNumberToObject(obj, "ttl_sec", ttl_sec);
     return obj;
@@ -374,9 +387,9 @@ static cJSON *api_guard_entry_json(uint32_t ip, const uint8_t mac[6], uint8_t gu
 
 static int api_add_static_guards_to_array(const jz_guard_mgr_t *gm, cJSON *arr)
 {
-    uint32_t key;
-    uint32_t next_key;
-    const uint32_t *key_ptr = NULL;
+    struct bpf_guard_key key;
+    struct bpf_guard_key next_key;
+    const struct bpf_guard_key *key_ptr = NULL;
     int count = 0;
 
     if (!gm || !arr || gm->static_map_fd < 0)
@@ -385,9 +398,9 @@ static int api_add_static_guards_to_array(const jz_guard_mgr_t *gm, cJSON *arr)
     while (bpf_map_get_next_key(gm->static_map_fd, key_ptr, &next_key) == 0) {
         struct jz_bpf_guard_entry val;
         if (bpf_map_lookup_elem(gm->static_map_fd, &next_key, &val) == 0) {
-            cJSON *obj = api_guard_entry_json(next_key, val.fake_mac, val.guard_type,
+            cJSON *obj = api_guard_entry_json(next_key.ip_addr, val.fake_mac, val.guard_type,
                                               val.enabled, val.vlan_id,
-                                              val.created_at, 0);
+                                              val.created_at, 0, next_key.ifindex);
             if (obj)
                 cJSON_AddItemToArray(arr, obj);
             count++;
@@ -414,7 +427,7 @@ static int api_add_dynamic_guards_to_array(const jz_guard_mgr_t *gm, cJSON *arr)
             continue;
         obj = api_guard_entry_json(e->ip, e->mac, e->guard_type,
                                    e->enabled, e->vlan_id,
-                                   e->created_at, e->ttl_sec);
+                                   e->created_at, e->ttl_sec, e->ifindex);
         if (obj)
             cJSON_AddItemToArray(arr, obj);
         count++;
@@ -458,7 +471,7 @@ static int api_add_whitelist_to_array(const jz_guard_mgr_t *gm, cJSON *arr)
     return count;
 }
 
-static int api_guard_op_add(jz_api_t *api, uint32_t ip, const uint8_t mac[6],
+static int api_guard_op_add(jz_api_t *api, uint32_t ip, uint32_t ifindex, const uint8_t mac[6],
                             uint8_t guard_type, uint16_t vlan_id)
 {
     char reply[512];
@@ -467,7 +480,7 @@ static int api_guard_op_add(jz_api_t *api, uint32_t ip, const uint8_t mac[6],
     if (!api || !api->guard_mgr)
         return -1;
 
-    rc = jz_guard_mgr_add(api->guard_mgr, ip, mac, guard_type, vlan_id,
+    rc = jz_guard_mgr_add(api->guard_mgr, ip, ifindex, mac, guard_type, vlan_id,
                           reply, sizeof(reply));
     if (rc < 0)
         return -1;
@@ -476,7 +489,7 @@ static int api_guard_op_add(jz_api_t *api, uint32_t ip, const uint8_t mac[6],
     return 0;
 }
 
-static int api_guard_op_remove(jz_api_t *api, uint32_t ip)
+static int api_guard_op_remove(jz_api_t *api, uint32_t ip, uint32_t ifindex)
 {
     char reply[512];
     int rc;
@@ -484,7 +497,7 @@ static int api_guard_op_remove(jz_api_t *api, uint32_t ip)
     if (!api || !api->guard_mgr)
         return -1;
 
-    rc = jz_guard_mgr_remove(api->guard_mgr, ip, reply, sizeof(reply));
+    rc = jz_guard_mgr_remove(api->guard_mgr, ip, ifindex, reply, sizeof(reply));
     if (rc < 0)
         return -1;
     if (strstr(reply, "error"))
@@ -1082,7 +1095,7 @@ static void handle_guards_static_add(struct mg_connection *c, struct mg_http_mes
 
     cJSON_Delete(body);
 
-    if (api_guard_op_add(api, ip, mac, JZ_GUARD_STATIC, vlan) < 0) {
+    if (api_guard_op_add(api, ip, 0, mac, JZ_GUARD_STATIC, vlan) < 0) {
         api_error_reply(c, 500, "failed to add static guard");
         return;
     }
@@ -1111,7 +1124,7 @@ static void handle_guards_static_del(struct mg_connection *c, struct mg_http_mes
         return;
     }
 
-    if (api_guard_op_remove(api, ip) < 0) {
+    if (api_guard_op_remove(api, ip, 0) < 0) {
         api_error_reply(c, 404, "guard not found");
         return;
     }
@@ -1157,7 +1170,7 @@ static void handle_guards_dynamic_del(struct mg_connection *c, struct mg_http_me
         return;
     }
 
-    if (api_guard_op_remove(api, ip) < 0) {
+    if (api_guard_op_remove(api, ip, 0) < 0) {
         api_error_reply(c, 404, "guard not found");
         return;
     }
@@ -1350,7 +1363,7 @@ static void handle_dhcp_exception_add(struct mg_connection *c, struct mg_http_me
         return;
     }
 
-    dev = jz_discovery_lookup_by_ip(api->discovery, ip);
+    dev = jz_discovery_lookup_by_ip(api->discovery, ip, 0);
     if (!dev) {
         api_error_reply(c, 404, "device not found in discovery table - ensure DHCP server is online");
         return;
@@ -2394,7 +2407,7 @@ static void handle_discovery_device_by_mac(struct mg_connection *c, struct mg_ht
         return;
     }
 
-    dev = jz_discovery_lookup(api->discovery, mac);
+    dev = jz_discovery_lookup(api->discovery, mac, 0);
     if (!dev) {
         api_error_reply(c, 404, "device not found");
         return;
@@ -2575,11 +2588,9 @@ static void handle_guards_frozen_add(struct mg_connection *c, struct mg_http_mes
     if (api->guard_mgr) {
         char reply[256];
 
-        if (jz_guard_mgr_remove(api->guard_mgr, ip_val, reply, sizeof(reply)) >= 0 &&
+        if (jz_guard_mgr_remove(api->guard_mgr, ip_val, 0, reply, sizeof(reply)) >= 0 &&
             strncmp(reply, "guard_remove:ok", 15) == 0) {
             jz_log_info("frozen_add: evicted dynamic guard %s", ip_buf);
-            if (api->guard_auto && api->guard_auto->current_dynamic > 0)
-                api->guard_auto->current_dynamic--;
         }
     }
 

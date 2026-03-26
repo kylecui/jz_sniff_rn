@@ -140,6 +140,7 @@ typedef struct jz_config_modules {
 typedef struct jz_config_guard_static {
     char ip[JZ_CONFIG_STR_SHORT];
     char mac[JZ_CONFIG_STR_SHORT];
+    char interface[JZ_CONFIG_STR_SHORT];
     int  vlan;
 } jz_config_guard_static_t;
 

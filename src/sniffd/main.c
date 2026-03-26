@@ -486,7 +486,7 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
         if (gtype == 0)
             gtype = JZ_GUARD_DYNAMIC;
         char reply[512];
-        int rlen = jz_guard_mgr_add(&g_ctx.guard_mgr, ip, mac,
+        int rlen = jz_guard_mgr_add(&g_ctx.guard_mgr, ip, 0, mac,
                                      (uint8_t)gtype, (uint16_t)vlan,
                                      reply, sizeof(reply));
         if (rlen < 0) {
@@ -506,7 +506,7 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
                                       (uint32_t)strlen(err));
         }
         char reply[512];
-        int rlen = jz_guard_mgr_remove(&g_ctx.guard_mgr, ip,
+        int rlen = jz_guard_mgr_remove(&g_ctx.guard_mgr, ip, 0,
                                         reply, sizeof(reply));
         if (rlen < 0) {
             const char *err = "error: guard_remove failed";
@@ -551,13 +551,15 @@ static int event_callback(const void *data, uint32_t data_len, void *user_data)
     if (g_ctx.discovery.initialized && event_type == 6 && data_len >= 56) {
         const uint8_t *ev = (const uint8_t *)data;
         uint8_t bg_proto = ev[48];
+        uint32_t ifindex;
         uint16_t vlan_id;
         uint32_t plen;
+        memcpy(&ifindex, ev + 16, 4);
         memcpy(&vlan_id, ev + 20, 2);
         memcpy(&plen, ev + 52, 4);
         if (plen > 0 && data_len >= 56 + plen)
             jz_discovery_feed_event(&g_ctx.discovery, bg_proto,
-                                    ev + 56, plen, vlan_id);
+                                    ev + 56, plen, vlan_id, ifindex);
     }
 
     if (g_ctx.policy_auto.initialized &&

@@ -37,6 +37,11 @@
  * They are kept in user-space to avoid pulling kernel/BPF headers into
  * config translation modules.
  */
+struct jz_guard_map_key {
+    uint32_t ip_addr;
+    uint32_t ifindex;
+};
+
 struct jz_guard_entry {
     uint32_t ip_addr;
     uint8_t  fake_mac[6];
@@ -131,7 +136,7 @@ typedef struct jz_config jz_config_t;
 
 typedef struct jz_config_map_batch {
     struct {
-        uint32_t keys[4096];
+        struct jz_guard_map_key keys[4096];
         struct jz_guard_entry values[4096];
         int count;
     } static_guards;

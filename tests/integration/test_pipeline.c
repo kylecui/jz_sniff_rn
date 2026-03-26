@@ -276,32 +276,38 @@ static int read_guard_result(struct test_state *st, struct jz_guard_result *out)
 static int add_static_guard(struct test_state *st, uint32_t ip_he,
                             const uint8_t *fake_mac)
 {
-    uint32_t key = htonl(ip_he);
+    struct jz_guard_key gkey = {
+        .ip_addr = htonl(ip_he),
+        .ifindex = TEST_IFINDEX,
+    };
     struct jz_guard_entry entry = {
-        .ip_addr    = key,
+        .ip_addr    = gkey.ip_addr,
         .guard_type = JZ_GUARD_STATIC,
         .enabled    = 1,
         .hit_count  = 0,
     };
     if (fake_mac)
         memcpy(entry.fake_mac, fake_mac, 6);
-    return bpf_map_update_elem(st->jz_static_guards_fd, &key, &entry, BPF_ANY);
+    return bpf_map_update_elem(st->jz_static_guards_fd, &gkey, &entry, BPF_ANY);
 }
 
 /* Add a dynamic guard entry */
 static int add_dynamic_guard(struct test_state *st, uint32_t ip_he,
                              const uint8_t *fake_mac)
 {
-    uint32_t key = htonl(ip_he);
+    struct jz_guard_key gkey = {
+        .ip_addr = htonl(ip_he),
+        .ifindex = TEST_IFINDEX,
+    };
     struct jz_guard_entry entry = {
-        .ip_addr    = key,
+        .ip_addr    = gkey.ip_addr,
         .guard_type = JZ_GUARD_DYNAMIC,
         .enabled    = 1,
         .hit_count  = 0,
     };
     if (fake_mac)
         memcpy(entry.fake_mac, fake_mac, 6);
-    return bpf_map_update_elem(st->jz_dynamic_guards_fd, &key, &entry, BPF_ANY);
+    return bpf_map_update_elem(st->jz_dynamic_guards_fd, &gkey, &entry, BPF_ANY);
 }
 
 /* Add whitelist entry */
@@ -376,37 +382,36 @@ static int run_prog(int prog_fd, void *pkt, uint32_t pkt_size,
 /* Clear all guard/whitelist maps between tests */
 static void clear_maps(struct test_state *st)
 {
-    uint32_t key, next_key;
+    struct jz_guard_key gkey;
+    uint32_t wl_key;
 
-    while (bpf_map_get_next_key(st->jz_static_guards_fd, NULL, &key) == 0)
-        bpf_map_delete_elem(st->jz_static_guards_fd, &key);
+    while (bpf_map_get_next_key(st->jz_static_guards_fd, NULL, &gkey) == 0)
+        bpf_map_delete_elem(st->jz_static_guards_fd, &gkey);
 
-    while (bpf_map_get_next_key(st->jz_dynamic_guards_fd, NULL, &key) == 0)
-        bpf_map_delete_elem(st->jz_dynamic_guards_fd, &key);
+    while (bpf_map_get_next_key(st->jz_dynamic_guards_fd, NULL, &gkey) == 0)
+        bpf_map_delete_elem(st->jz_dynamic_guards_fd, &gkey);
 
-    while (bpf_map_get_next_key(st->jz_whitelist_fd, NULL, &key) == 0)
-        bpf_map_delete_elem(st->jz_whitelist_fd, &key);
+    while (bpf_map_get_next_key(st->jz_whitelist_fd, NULL, &wl_key) == 0)
+        bpf_map_delete_elem(st->jz_whitelist_fd, &wl_key);
 
     struct jz_guard_result *zero = calloc(st->ncpus, sizeof(struct jz_guard_result));
     if (zero) {
-        key = 0;
-        bpf_map_update_elem(st->jz_guard_result_map_fd, &key, zero, BPF_ANY);
+        uint32_t idx = 0;
+        bpf_map_update_elem(st->jz_guard_result_map_fd, &idx, zero, BPF_ANY);
         free(zero);
     }
 
     struct jz_rate_state *rate_zero = calloc(st->ncpus, sizeof(struct jz_rate_state));
     if (rate_zero) {
-        key = 0;
+        uint32_t idx = 0;
         int arp_rate_fd = bpf_object__find_map_fd_by_name(st->obj_arp, "jz_arp_rate");
         if (arp_rate_fd >= 0)
-            bpf_map_update_elem(arp_rate_fd, &key, rate_zero, BPF_ANY);
+            bpf_map_update_elem(arp_rate_fd, &idx, rate_zero, BPF_ANY);
         int icmp_rate_fd = bpf_object__find_map_fd_by_name(st->obj_icmp, "jz_icmp_rate");
         if (icmp_rate_fd >= 0)
-            bpf_map_update_elem(icmp_rate_fd, &key, rate_zero, BPF_ANY);
+            bpf_map_update_elem(icmp_rate_fd, &idx, rate_zero, BPF_ANY);
         free(rate_zero);
     }
-
-    (void)next_key;
 }
 
 /* ── Group Setup / Teardown ── */
@@ -836,12 +841,15 @@ static void test_guard_hit_counter(void **state)
 {
     struct test_state *st = *state;
 
-    uint32_t key = htonl(TEST_GUARDED_IP);
+    struct jz_guard_key gkey = {
+        .ip_addr = htonl(TEST_GUARDED_IP),
+        .ifindex = TEST_IFINDEX,
+    };
     add_static_guard(st, TEST_GUARDED_IP, TEST_FAKE_MAC);
 
     /* Verify initial hit_count = 0 */
     struct jz_guard_entry entry;
-    int lerr = bpf_map_lookup_elem(st->jz_static_guards_fd, &key, &entry);
+    int lerr = bpf_map_lookup_elem(st->jz_static_guards_fd, &gkey, &entry);
     assert_int_equal(lerr, 0);
     assert_int_equal(entry.hit_count, 0);
 
@@ -862,7 +870,7 @@ static void test_guard_hit_counter(void **state)
     run_prog(st->gc_prog_fd, &pkt, sizeof(pkt), out, &out_size, &retval);
 
     /* Read back guard entry — hit_count should be >= 1 */
-    lerr = bpf_map_lookup_elem(st->jz_static_guards_fd, &key, &entry);
+    lerr = bpf_map_lookup_elem(st->jz_static_guards_fd, &gkey, &entry);
     assert_int_equal(lerr, 0);
     assert_true(entry.hit_count >= 1);
 }

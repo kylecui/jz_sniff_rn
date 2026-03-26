@@ -4,6 +4,8 @@ export interface Device {
   ip: string
   mac: string
   vlan?: number
+  ifindex?: number
+  interface?: string
   hostname?: string
   vendor?: string
   os_class?: string

@@ -5,6 +5,8 @@ export interface Guard {
   mac?: string
   source?: string
   created_at?: string
+  ifindex?: number
+  interface?: string
 }
 
 export interface FrozenGuard {

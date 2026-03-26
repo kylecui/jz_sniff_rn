@@ -616,14 +616,17 @@ static int perf_setup(struct perf_state *st)
 
     /* Add a guard entry for benchmark */
     {
-        uint32_t key = htonl(TEST_GUARDED_IP);
+        struct jz_guard_key gkey = {
+            .ip_addr = htonl(TEST_GUARDED_IP),
+            .ifindex = TEST_IFINDEX,
+        };
         struct jz_guard_entry entry = {
-            .ip_addr    = key,
+            .ip_addr    = gkey.ip_addr,
             .guard_type = JZ_GUARD_STATIC,
             .enabled    = 1,
         };
         memcpy(entry.fake_mac, TEST_FAKE_MAC, 6);
-        bpf_map_update_elem(st->jz_static_guards_fd, &key, &entry, BPF_ANY);
+        bpf_map_update_elem(st->jz_static_guards_fd, &gkey, &entry, BPF_ANY);
     }
 
     fprintf(stderr, "[setup] Pipeline loaded: GC -> ARP(1) -> ICMP(2) -> SD(3) -> TW(4)\n");
@@ -810,7 +813,7 @@ static void bench_scalability(struct perf_state *st)
     fprintf(stderr, "\n[bench] Guard table scalability\n");
 
     /* Clear existing guard entries */
-    uint32_t key;
+    struct jz_guard_key key = {0};
     while (bpf_map_get_next_key(st->jz_static_guards_fd, NULL, &key) == 0)
         bpf_map_delete_elem(st->jz_static_guards_fd, &key);
 
@@ -827,13 +830,17 @@ static void bench_scalability(struct perf_state *st)
         for (int i = 0; i < target_size; i++) {
             uint32_t ip_he = 0x0A000100 + i;  /* 10.0.1.0 + i */
             uint32_t ip_ne = htonl(ip_he);
+            struct jz_guard_key gkey = {
+                .ip_addr = ip_ne,
+                .ifindex = TEST_IFINDEX,
+            };
             struct jz_guard_entry entry = {
                 .ip_addr    = ip_ne,
                 .guard_type = JZ_GUARD_STATIC,
                 .enabled    = 1,
             };
             memcpy(entry.fake_mac, TEST_FAKE_MAC, 6);
-            bpf_map_update_elem(st->jz_static_guards_fd, &ip_ne, &entry, BPF_ANY);
+            bpf_map_update_elem(st->jz_static_guards_fd, &gkey, &entry, BPF_ANY);
         }
 
         /* Benchmark a HIT (last entry in table) */
@@ -870,9 +877,12 @@ static void bench_scalability(struct perf_state *st)
     while (bpf_map_get_next_key(st->jz_static_guards_fd, NULL, &key) == 0)
         bpf_map_delete_elem(st->jz_static_guards_fd, &key);
     {
-        uint32_t gkey = htonl(TEST_GUARDED_IP);
+        struct jz_guard_key gkey = {
+            .ip_addr = htonl(TEST_GUARDED_IP),
+            .ifindex = TEST_IFINDEX,
+        };
         struct jz_guard_entry entry = {
-            .ip_addr    = gkey,
+            .ip_addr    = gkey.ip_addr,
             .guard_type = JZ_GUARD_STATIC,
             .enabled    = 1,
         };

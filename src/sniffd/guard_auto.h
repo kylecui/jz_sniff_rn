@@ -13,6 +13,17 @@ typedef struct jz_guard_mgr jz_guard_mgr_t;
 typedef struct jz_discovery jz_discovery_t;
 
 #define JZ_GUARD_AUTO_EVAL_INTERVAL  60
+#define JZ_GUARD_AUTO_MAX_SEGMENTS  JZ_CONFIG_MAX_INTERFACES
+
+typedef struct jz_guard_auto_segment {
+    uint32_t           ifindex;
+    uint32_t           subnet_addr;
+    uint32_t           subnet_mask;
+    int                subnet_total;
+    uint32_t           deploy_cursor;
+    uint32_t           host_ip;
+    int                current_dynamic;
+} jz_guard_auto_segment_t;
 
 typedef struct jz_guard_auto {
     jz_guard_mgr_t    *guard_mgr;
@@ -20,13 +31,9 @@ typedef struct jz_guard_auto {
     const jz_discovery_t *discovery;
 
     int                max_ratio;
-    uint32_t           subnet_addr;
-    uint32_t           subnet_mask;
-    int                subnet_total;
-    int                current_dynamic;
 
-    uint32_t           deploy_cursor;   /* next IP to consider (network order) */
-    uint32_t           host_ip;         /* our own IP — never deploy on self */
+    jz_guard_auto_segment_t segments[JZ_GUARD_AUTO_MAX_SEGMENTS];
+    int                segment_count;
 
     uint64_t           last_eval_ns;
     bool               initialized;

@@ -108,6 +108,11 @@ onMounted(() => {
         <el-table :data="devices" stripe @row-click="handleRowClick" style="cursor: pointer">
           <el-table-column prop="ip" :label="t('common.ip')" />
           <el-table-column prop="mac" :label="t('common.mac')" />
+          <el-table-column :label="t('discovery.interface')" width="120">
+            <template #default="{ row }">
+              {{ row.interface || '-' }}
+            </template>
+          </el-table-column>
           <el-table-column prop="vlan" :label="t('discovery.vlan')" width="80" />
           <el-table-column prop="hostname" :label="t('discovery.hostname')" />
           <el-table-column prop="vendor" :label="t('discovery.vendor')" />
@@ -134,6 +139,7 @@ onMounted(() => {
             <el-descriptions :column="1" border>
               <el-descriptions-item :label="t('common.ip')">{{ selectedDevice.ip }}</el-descriptions-item>
               <el-descriptions-item :label="t('common.mac')">{{ selectedDevice.mac }}</el-descriptions-item>
+              <el-descriptions-item :label="t('discovery.interface')">{{ selectedDevice.interface ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.vlan')">{{ selectedDevice.vlan ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.hostname')">{{ selectedDevice.hostname ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.vendor')">{{ selectedDevice.vendor ?? '-' }}</el-descriptions-item>

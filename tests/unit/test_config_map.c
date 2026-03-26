@@ -94,8 +94,10 @@ static void test_config_to_maps_static_guards(void **state)
     ip0 = ip_to_u32("10.0.1.50");
     ip1 = ip_to_u32("10.0.1.60");
 
-    assert_int_equal(ip0, test_batch->static_guards.keys[0]);
-    assert_int_equal(ip1, test_batch->static_guards.keys[1]);
+    assert_int_equal(ip0, test_batch->static_guards.keys[0].ip_addr);
+    assert_int_equal(0, test_batch->static_guards.keys[0].ifindex);
+    assert_int_equal(ip1, test_batch->static_guards.keys[1].ip_addr);
+    assert_int_equal(0, test_batch->static_guards.keys[1].ifindex);
 
     assert_int_equal(JZ_GUARD_STATIC, test_batch->static_guards.values[0].guard_type);
     assert_int_equal(JZ_GUARD_STATIC, test_batch->static_guards.values[1].guard_type);

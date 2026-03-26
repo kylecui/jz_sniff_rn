@@ -9,6 +9,12 @@
  * Section 3.2: Guard Classifier Maps
  * ═══════════════════════════════════════════════ */
 
+/* Guard map composite key — scoped by (IP, interface) */
+struct jz_guard_key {
+    __u32 ip_addr;        /* guarded IP address (network order) */
+    __u32 ifindex;        /* ingress interface index (0 = all interfaces) */
+};
+
 /* Static guard entries — manually configured honeypot IPs */
 struct jz_guard_entry {
     __u32 ip_addr;        /* guarded IP address */
@@ -45,6 +51,7 @@ struct jz_guard_result {
     __u32 guarded_ip;     /* the IP that was matched */
     __u8  fake_mac[6];    /* MAC to use for response (from entry or pool) */
     __u16 vlan_id;        /* ingress VLAN (0=untagged) */
+    __u32 ifindex;        /* ingress interface index */
 };
 
 /* ═══════════════════════════════════════════════

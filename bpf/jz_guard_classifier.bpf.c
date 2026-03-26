@@ -31,7 +31,7 @@ RS_DECLARE_MODULE("jz_guard_classifier",
 /* Static guard entries — manually configured honeypot IPs */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);                    /* IP address */
+    __type(key, struct jz_guard_key);
     __type(value, struct jz_guard_entry);
     __uint(max_entries, JZ_MAX_STATIC_GUARDS);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -40,7 +40,7 @@ struct {
 /* Dynamic guard entries — auto-discovered IPs (LRU for auto-eviction) */
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __type(key, __u32);
+    __type(key, struct jz_guard_key);
     __type(value, struct jz_guard_entry);
     __uint(max_entries, JZ_MAX_DYNAMIC_GUARDS);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -107,26 +107,47 @@ check_dhcp:
 /* ── Helper: Lookup guard entry (static first, then dynamic) ── */
 
 static __always_inline struct jz_guard_entry *
-jz_lookup_guard(__u32 dst_ip, __u16 ingress_vlan, __u8 *out_guard_type)
+jz_lookup_guard(__u32 dst_ip, __u16 ingress_vlan, __u32 ifindex,
+                __u8 *out_guard_type)
 {
     struct jz_guard_entry *entry;
+    struct jz_guard_key key;
 
-    /* Check static guards first */
-    entry = bpf_map_lookup_elem(&jz_static_guards, &dst_ip);
-    if (entry && entry->enabled) {
-        if (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan) {
-            *out_guard_type = JZ_GUARD_STATIC;
-            return entry;
-        }
+    /* Try exact match (ip + ifindex) on static guards */
+    key.ip_addr = dst_ip;
+    key.ifindex = ifindex;
+    entry = bpf_map_lookup_elem(&jz_static_guards, &key);
+    if (entry && entry->enabled &&
+        (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan)) {
+        *out_guard_type = JZ_GUARD_STATIC;
+        return entry;
     }
 
-    /* Check dynamic guards */
-    entry = bpf_map_lookup_elem(&jz_dynamic_guards, &dst_ip);
-    if (entry && entry->enabled) {
-        if (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan) {
-            *out_guard_type = JZ_GUARD_DYNAMIC;
-            return entry;
-        }
+    /* Wildcard fallback (ip + ifindex=0) on static guards */
+    key.ifindex = 0;
+    entry = bpf_map_lookup_elem(&jz_static_guards, &key);
+    if (entry && entry->enabled &&
+        (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan)) {
+        *out_guard_type = JZ_GUARD_STATIC;
+        return entry;
+    }
+
+    /* Try exact match on dynamic guards */
+    key.ifindex = ifindex;
+    entry = bpf_map_lookup_elem(&jz_dynamic_guards, &key);
+    if (entry && entry->enabled &&
+        (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan)) {
+        *out_guard_type = JZ_GUARD_DYNAMIC;
+        return entry;
+    }
+
+    /* Wildcard fallback on dynamic guards */
+    key.ifindex = 0;
+    entry = bpf_map_lookup_elem(&jz_dynamic_guards, &key);
+    if (entry && entry->enabled &&
+        (entry->vlan_id == 0 || entry->vlan_id == ingress_vlan)) {
+        *out_guard_type = JZ_GUARD_DYNAMIC;
+        return entry;
     }
 
     return NULL;
@@ -158,7 +179,8 @@ jz_classify_proto(struct rs_ctx *ctx)
 
 static __always_inline void
 jz_store_result(__u8 guard_type, __u8 proto, __u16 flags,
-                __u32 guarded_ip, const __u8 *fake_mac, __u16 vlan_id)
+                __u32 guarded_ip, const __u8 *fake_mac, __u16 vlan_id,
+                __u32 ifindex)
 {
     __u32 key = 0;
     struct jz_guard_result *result;
@@ -172,6 +194,7 @@ jz_store_result(__u8 guard_type, __u8 proto, __u16 flags,
     result->flags = flags;
     result->guarded_ip = guarded_ip;
     result->vlan_id = vlan_id;
+    result->ifindex = ifindex;
 
     if (fake_mac)
         __builtin_memcpy(result->fake_mac, fake_mac, 6);
@@ -379,7 +402,7 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     if (jz_check_whitelist(ctx, src_ip, src_mac)) {
         /* Store whitelist bypass result */
         jz_store_result(JZ_GUARD_NONE, 0, JZ_FLAG_WHITELIST_BYPASS, 0, NULL,
-                        ctx->ingress_vlan);
+                        ctx->ingress_vlan, ctx->ifindex);
 
         /* Tail-call to next stage in pipeline */
         RS_TAIL_CALL_NEXT(xdp_ctx, ctx);
@@ -389,11 +412,12 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
     /* Step 2: Lookup guard tables */
     __u8 guard_type = JZ_GUARD_NONE;
     struct jz_guard_entry *entry = jz_lookup_guard(dst_ip, ctx->ingress_vlan,
-                                                    &guard_type);
+                                                    ctx->ifindex, &guard_type);
 
     if (!entry) {
         /* No guard match — continue pipeline */
-        jz_store_result(JZ_GUARD_NONE, 0, 0, 0, NULL, ctx->ingress_vlan);
+        jz_store_result(JZ_GUARD_NONE, 0, 0, 0, NULL, ctx->ingress_vlan,
+                        ctx->ifindex);
         RS_TAIL_CALL_NEXT(xdp_ctx, ctx);
         return XDP_PASS;
     }
@@ -414,7 +438,7 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
         fake_mac = entry->fake_mac;
 
     jz_store_result(guard_type, proto, flags, dst_ip, fake_mac,
-                    ctx->ingress_vlan);
+                    ctx->ingress_vlan, ctx->ifindex);
 
     /* Step 5: Update guard entry stats (best-effort) */
     __sync_fetch_and_add(&entry->hit_count, 1);

@@ -181,6 +181,11 @@ onMounted(fetchAll)
             </el-button>
             <el-table :data="staticGuards" stripe>
               <el-table-column prop="ip" :label="t('guards.ip')" />
+              <el-table-column :label="t('guards.interface')" width="120">
+                <template #default="{ row }">
+                  {{ row.interface || '-' }}
+                </template>
+              </el-table-column>
               <el-table-column prop="mac" :label="t('guards.mac')" />
               <el-table-column prop="source" :label="t('guards.source')" />
               <el-table-column prop="created_at" :label="t('common.time')" />
@@ -198,6 +203,11 @@ onMounted(fetchAll)
           <el-tab-pane :label="t('guards.dynamic')" name="dynamic">
             <el-table :data="dynamicGuards" stripe>
               <el-table-column prop="ip" :label="t('guards.ip')" />
+              <el-table-column :label="t('guards.interface')" width="120">
+                <template #default="{ row }">
+                  {{ row.interface || '-' }}
+                </template>
+              </el-table-column>
               <el-table-column prop="mac" :label="t('guards.mac')" />
               <el-table-column prop="source" :label="t('guards.source')" />
               <el-table-column prop="created_at" :label="t('common.time')" />

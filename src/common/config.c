@@ -1133,6 +1133,9 @@ static int parse_guards(yaml_parser_t *parser, yaml_event_t *start,
                         if (scalar_to_int(&v2, &g->vlan) != 0)
                             add_error(errors, event_line(&v2), "guards.static[].vlan", "must be int");
                         yaml_event_delete(&v2);
+                    } else if (!strcmp(k, "interface")) {
+                        copy_scalar(g->interface, sizeof(g->interface), &v2);
+                        yaml_event_delete(&v2);
                     } else {
                         add_error(errors, event_line(&k2), "guards.static", "unknown key '%s'", k);
                         if (skip_node(parser, &v2, errors) != 0) {

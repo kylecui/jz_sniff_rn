@@ -8,6 +8,7 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <net/if.h>
 #include <netinet/in.h>
 
 #include "config.h"
@@ -379,6 +380,7 @@ static int translate_guards(const jz_config_t *cfg, jz_config_map_batch_t *batch
 
     for (i = 0; i < cfg->guards.static_count; i++) {
         const jz_config_guard_static_t *src = &cfg->guards.static_entries[i];
+        struct jz_guard_map_key *gk = &batch->static_guards.keys[batch->static_guards.count];
         struct jz_guard_entry *dst = &batch->static_guards.values[batch->static_guards.count];
         uint32_t ip;
 
@@ -404,7 +406,19 @@ static int translate_guards(const jz_config_t *cfg, jz_config_map_batch_t *batch
         dst->last_hit = 0;
         dst->hit_count = 0;
 
-        batch->static_guards.keys[batch->static_guards.count] = ip;
+        gk->ip_addr = ip;
+        gk->ifindex = 0;
+
+        if (src->interface[0] != '\0') {
+            unsigned int idx = if_nametoindex(src->interface);
+            if (idx == 0) {
+                jz_log_warn("translate_guards: unknown interface '%s' for guard %s, using wildcard",
+                            src->interface, src->ip);
+            } else {
+                gk->ifindex = (uint32_t)idx;
+            }
+        }
+
         batch->static_guards.count++;
     }
 

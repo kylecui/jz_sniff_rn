@@ -328,7 +328,7 @@ static int apply_config_to_maps(const jz_config_t *cfg)
 
     if (batch->static_guards.count > 0) {
         if (push_hash_map("jz_static_guards",
-                          batch->static_guards.keys, sizeof(uint32_t),
+                          batch->static_guards.keys, sizeof(struct jz_guard_map_key),
                           batch->static_guards.values, sizeof(struct jz_guard_entry),
                           batch->static_guards.count) < 0)
             warnings++;

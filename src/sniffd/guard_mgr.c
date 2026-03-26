@@ -38,6 +38,11 @@ struct bpf_guard_entry {
     uint64_t hit_count;
 };
 
+struct bpf_guard_key {
+    uint32_t ip_addr;
+    uint32_t ifindex;
+};
+
 struct bpf_whitelist_entry {
     uint32_t ip_addr;
     uint8_t  mac[6];
@@ -102,7 +107,7 @@ static int push_static_guard(jz_guard_mgr_t *gm, const jz_config_guard_static_t 
 {
     struct in_addr addr;
     struct bpf_guard_entry value;
-    uint32_t key;
+    struct bpf_guard_key key;
 
     if (!gm || !src || gm->static_map_fd < 0)
         return -1;
@@ -127,7 +132,8 @@ static int push_static_guard(jz_guard_mgr_t *gm, const jz_config_guard_static_t 
         }
     }
 
-    key = value.ip_addr;
+    key.ip_addr = addr.s_addr;
+    key.ifindex = 0;
     if (bpf_map_update_elem(gm->static_map_fd, &key, &value, BPF_ANY) < 0) {
         jz_log_error("bpf_map_update_elem(static:%s) failed: %s", src->ip, strerror(errno));
         return -1;
@@ -273,7 +279,11 @@ int jz_guard_mgr_tick(jz_guard_mgr_t *gm)
             continue;
 
         if (gm->dynamic_map_fd >= 0) {
-            if (bpf_map_delete_elem(gm->dynamic_map_fd, &entry->ip) < 0 && errno != ENOENT) {
+            struct bpf_guard_key key = {
+                .ip_addr = entry->ip,
+                .ifindex = entry->ifindex
+            };
+            if (bpf_map_delete_elem(gm->dynamic_map_fd, &key) < 0 && errno != ENOENT) {
                 jz_log_error("bpf_map_delete_elem(dynamic) failed: %s", strerror(errno));
                 continue;
             }
@@ -290,11 +300,12 @@ int jz_guard_mgr_tick(jz_guard_mgr_t *gm)
     return expired;
 }
 
-int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
+int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, uint32_t ifindex, const uint8_t *mac,
                      uint8_t guard_type, uint16_t vlan_id,
                      char *reply, size_t reply_size)
 {
     struct bpf_guard_entry value;
+    struct bpf_guard_key key;
     char ipbuf[INET_ADDRSTRLEN];
     int slot;
     int i;
@@ -311,6 +322,8 @@ int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
     value.enabled = 1;
     value.vlan_id = vlan_id;
     value.created_at = get_monotonic_ns();
+    key.ip_addr = ip;
+    key.ifindex = ifindex;
 
     if (guard_type == JZ_GUARD_DYNAMIC) {
         if (gm->dynamic_count >= gm->max_dynamic || gm->dynamic_count >= JZ_GUARD_MGR_MAX_DYNAMIC) {
@@ -325,7 +338,7 @@ int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
             return (n < 0) ? -1 : n;
         }
 
-        if (bpf_map_update_elem(gm->dynamic_map_fd, &ip, &value, BPF_ANY) < 0) {
+        if (bpf_map_update_elem(gm->dynamic_map_fd, &key, &value, BPF_ANY) < 0) {
             jz_log_error("bpf_map_update_elem(dynamic:%s) failed: %s", ipbuf, strerror(errno));
             n = snprintf(reply, reply_size, "guard_add:error map update failed");
             return (n < 0) ? -1 : n;
@@ -339,12 +352,13 @@ int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
             }
         }
         if (slot < 0) {
-            (void)bpf_map_delete_elem(gm->dynamic_map_fd, &ip);
+            (void)bpf_map_delete_elem(gm->dynamic_map_fd, &key);
             n = snprintf(reply, reply_size, "guard_add:error dynamic table full");
             return (n < 0) ? -1 : n;
         }
 
         gm->dynamic_entries[slot].ip = ip;
+        gm->dynamic_entries[slot].ifindex = ifindex;
         memcpy(gm->dynamic_entries[slot].mac, mac, sizeof(gm->dynamic_entries[slot].mac));
         gm->dynamic_entries[slot].guard_type = JZ_GUARD_DYNAMIC;
         gm->dynamic_entries[slot].enabled = 1;
@@ -369,7 +383,7 @@ int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
         return (n < 0) ? -1 : n;
     }
 
-    if (bpf_map_update_elem(gm->static_map_fd, &ip, &value, BPF_ANY) < 0) {
+    if (bpf_map_update_elem(gm->static_map_fd, &key, &value, BPF_ANY) < 0) {
         jz_log_error("bpf_map_update_elem(static:%s) failed: %s", ipbuf, strerror(errno));
         n = snprintf(reply, reply_size, "guard_add:error map update failed");
         return (n < 0) ? -1 : n;
@@ -379,9 +393,10 @@ int jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
     return (n < 0) ? -1 : n;
 }
 
-int jz_guard_mgr_remove(jz_guard_mgr_t *gm, uint32_t ip,
+int jz_guard_mgr_remove(jz_guard_mgr_t *gm, uint32_t ip, uint32_t ifindex,
                         char *reply, size_t reply_size)
 {
+    struct bpf_guard_key key;
     int i;
     int removed;
     int n;
@@ -391,23 +406,26 @@ int jz_guard_mgr_remove(jz_guard_mgr_t *gm, uint32_t ip,
         return -1;
 
     ip_to_text(ip, ipbuf, sizeof(ipbuf));
+    key.ip_addr = ip;
+    key.ifindex = ifindex;
     removed = 0;
 
     if (gm->static_map_fd >= 0) {
-        if (bpf_map_delete_elem(gm->static_map_fd, &ip) == 0)
+        if (bpf_map_delete_elem(gm->static_map_fd, &key) == 0)
             removed = 1;
         else if (errno != ENOENT)
             jz_log_error("bpf_map_delete_elem(static:%s) failed: %s", ipbuf, strerror(errno));
     }
     if (gm->dynamic_map_fd >= 0) {
-        if (bpf_map_delete_elem(gm->dynamic_map_fd, &ip) == 0)
+        if (bpf_map_delete_elem(gm->dynamic_map_fd, &key) == 0)
             removed = 1;
         else if (errno != ENOENT)
             jz_log_error("bpf_map_delete_elem(dynamic:%s) failed: %s", ipbuf, strerror(errno));
     }
 
     for (i = 0; i < JZ_GUARD_MGR_MAX_DYNAMIC; i++) {
-        if (gm->dynamic_entries[i].enabled && gm->dynamic_entries[i].ip == ip) {
+        if (gm->dynamic_entries[i].enabled && gm->dynamic_entries[i].ip == ip &&
+            gm->dynamic_entries[i].ifindex == ifindex) {
             memset(&gm->dynamic_entries[i], 0, sizeof(gm->dynamic_entries[i]));
             if (gm->dynamic_count > 0)
                 gm->dynamic_count--;
@@ -462,7 +480,8 @@ int jz_guard_mgr_list(const jz_guard_mgr_t *gm,
         }
 
         n = snprintf(reply + off, reply_size - (size_t)off,
-                     "ip=%s type=dynamic ttl_remaining=%us\n", ipbuf, ttl_left);
+                     "ip=%s ifindex=%u type=dynamic ttl_remaining=%us\n",
+                     ipbuf, entry->ifindex, ttl_left);
         if (n < 0)
             return -1;
         if ((size_t)n >= reply_size - (size_t)off)

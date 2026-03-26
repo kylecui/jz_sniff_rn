@@ -23,6 +23,7 @@
 
 typedef struct jz_guard_entry_user {
     uint32_t ip;
+    uint32_t ifindex;         /* 0 = all interfaces */
     uint8_t  mac[6];
     uint8_t  guard_type;      /* JZ_GUARD_STATIC=1, JZ_GUARD_DYNAMIC=2 */
     uint8_t  enabled;
@@ -58,10 +59,10 @@ int  jz_guard_mgr_load_config(jz_guard_mgr_t *gm, const jz_config_t *cfg);
 int  jz_guard_mgr_tick(jz_guard_mgr_t *gm);
 
 /* IPC command handlers — return reply string length, or -1 on error */
-int  jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, const uint8_t *mac,
-                      uint8_t guard_type, uint16_t vlan_id,
+int  jz_guard_mgr_add(jz_guard_mgr_t *gm, uint32_t ip, uint32_t ifindex,
+                      const uint8_t *mac, uint8_t guard_type, uint16_t vlan_id,
                       char *reply, size_t reply_size);
-int  jz_guard_mgr_remove(jz_guard_mgr_t *gm, uint32_t ip,
+int  jz_guard_mgr_remove(jz_guard_mgr_t *gm, uint32_t ip, uint32_t ifindex,
                          char *reply, size_t reply_size);
 int  jz_guard_mgr_list(const jz_guard_mgr_t *gm,
                        char *reply, size_t reply_size);
