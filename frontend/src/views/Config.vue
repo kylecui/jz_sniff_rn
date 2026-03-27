@@ -115,6 +115,7 @@ function onRoleChange(row: NetworkInterface) {
     row.dns1 = ''
     row.dns2 = ''
     row.vlans = []
+    row.dynamic = { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 }
   } else if (row.role === 'manage') {
     const state = getManageState(row.name)
     if (state.mode === 'dhcp') {
@@ -124,12 +125,14 @@ function onRoleChange(row: NetworkInterface) {
       row.dns2 = ''
     }
     row.vlans = []
+    row.dynamic = { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 }
   } else if (row.role === 'monitor') {
     if (row.subnet === 'dhcp') row.subnet = ''
     row.gateway = ''
     row.dns1 = ''
     row.dns2 = ''
     if (!row.vlans) row.vlans = []
+    if (!row.dynamic) row.dynamic = { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 }
   }
 }
 
@@ -156,6 +159,7 @@ async function fetchAll() {
     interfaces.value = ifaces.interfaces.map(iface => ({
       ...iface,
       vlans: iface.vlans ?? [],
+      dynamic: iface.dynamic ?? { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 },
     }))
     systemMode.value = ifaces.mode
     initManageStates(ifaces.interfaces)
@@ -375,107 +379,38 @@ onMounted(fetchAll)
               </el-button>
             </div>
           </template>
-          <el-table :data="interfaces" stripe>
-            <el-table-column prop="name" :label="t('config.interfaceName')" width="140" />
-            <el-table-column :label="t('config.interfaceRole')" width="200">
-              <template #default="{ row }">
-                <el-select v-model="row.role" size="small" @change="onRoleChange(row)">
-                  <el-option value="monitor">
-                    <div class="role-option">
-                      <span class="role-option-label">{{ t('config.roleMonitor') }}</span>
-                      <span class="role-option-hint">{{ t('config.roleMonitorHint') }}</span>
-                    </div>
-                  </el-option>
-                  <el-option value="manage">
-                    <div class="role-option">
-                      <span class="role-option-label">{{ t('config.roleManage') }}</span>
-                      <span class="role-option-hint">{{ t('config.roleManageHint') }}</span>
-                    </div>
-                  </el-option>
-                  <el-option value="mirror">
-                    <div class="role-option">
-                      <span class="role-option-label">{{ t('config.roleMirror') }}</span>
-                      <span class="role-option-hint">{{ t('config.roleMirrorHint') }}</span>
-                    </div>
-                  </el-option>
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('config.interfaceSubnet')" min-width="360">
-              <template #default="{ row }">
-                <!-- Monitor: subnet configured in VLAN section below -->
-                <span v-if="row.role === 'monitor'" class="mirror-no-config">{{ t('config.nativeVlan') }} ↓</span>
-                <!-- Manage: DHCP / Static toggle -->
-                <div v-else-if="row.role === 'manage'" class="manage-ip-config">
-                  <el-radio-group
-                    v-model="getManageState(row.name).mode"
-                    size="small"
-                    @change="onManageModeChange(row)"
-                  >
-                    <el-radio-button value="dhcp">{{ t('config.manageIpDhcp') }}</el-radio-button>
-                    <el-radio-button value="static">{{ t('config.manageIpStatic') }}</el-radio-button>
-                  </el-radio-group>
-                  <div v-if="getManageState(row.name).mode === 'static'" class="manage-static-fields">
-                    <el-input
-                      v-model="getManageState(row.name).ip"
-                      size="small"
-                      :placeholder="t('config.manageIp')"
-                      style="width: 140px;"
-                      @input="onManageFieldChange(row)"
-                    />
-                    <span class="manage-slash">/</span>
-                    <el-select
-                      v-model="getManageState(row.name).prefix"
-                      size="small"
-                      style="width: 80px;"
-                      @change="onManageFieldChange(row)"
-                    >
-                      <el-option v-for="p in prefixOptions" :key="p" :label="'/' + p" :value="p" />
-                    </el-select>
-                    <el-input
-                      v-model="getManageState(row.name).gateway"
-                      size="small"
-                      :placeholder="t('config.manageGateway')"
-                      style="width: 140px;"
-                      @input="onManageFieldChange(row)"
-                    />
-                    <el-input
-                      v-model="getManageState(row.name).dns1"
-                      size="small"
-                      :placeholder="t('config.manageDns1')"
-                      style="width: 140px;"
-                      @input="onManageFieldChange(row)"
-                    />
-                    <el-input
-                      v-model="getManageState(row.name).dns2"
-                      size="small"
-                      :placeholder="t('config.manageDns2')"
-                      style="width: 140px;"
-                      @input="onManageFieldChange(row)"
-                    />
+          <div v-for="iface in interfaces" :key="iface.name" class="iface-card">
+            <div class="iface-header">
+              <span class="iface-name">{{ iface.name }}</span>
+              <el-select v-model="iface.role" size="small" style="width: 180px;" @change="onRoleChange(iface)">
+                <el-option value="monitor">
+                  <div class="role-option">
+                    <span class="role-option-label">{{ t('config.roleMonitor') }}</span>
+                    <span class="role-option-hint">{{ t('config.roleMonitorHint') }}</span>
                   </div>
-                </div>
-                <!-- Mirror: no config -->
-                <span v-else class="mirror-no-config">—</span>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="mode-row">
-            <span>{{ t('config.mode') }}:</span>
-            <el-select v-model="systemMode" size="small" style="width: 140px; margin-left: 8px;">
-              <el-option :label="t('config.modeBypass')" value="bypass" />
-              <el-option :label="t('config.modeInline')" value="inline" />
-            </el-select>
-          </div>
-          <!-- Per-interface VLANs (monitor only) -->
-          <template v-for="iface in interfaces" :key="iface.name + '-vlans'">
-            <div v-if="iface.role === 'monitor'" class="vlan-section">
-              <!-- Native VLAN (untagged traffic subnet) -->
+                </el-option>
+                <el-option value="manage">
+                  <div class="role-option">
+                    <span class="role-option-label">{{ t('config.roleManage') }}</span>
+                    <span class="role-option-hint">{{ t('config.roleManageHint') }}</span>
+                  </div>
+                </el-option>
+                <el-option value="mirror">
+                  <div class="role-option">
+                    <span class="role-option-label">{{ t('config.roleMirror') }}</span>
+                    <span class="role-option-hint">{{ t('config.roleMirrorHint') }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+            </div>
+
+            <!-- Monitor: subnet + VLANs + dynamic guard config -->
+            <template v-if="iface.role === 'monitor'">
               <div class="native-vlan-section">
                 <div class="targets-header">
                   <span class="native-vlan-title">
                     <el-tooltip :content="t('config.nativeVlanHint')" placement="top">
-                      <span style="cursor: help;">{{ t('config.nativeVlan') }} — {{ iface.name }} ⓘ</span>
+                      <span style="cursor: help;">{{ t('config.nativeVlan') }} ⓘ</span>
                     </el-tooltip>
                   </span>
                 </div>
@@ -486,9 +421,8 @@ onMounted(fetchAll)
                   style="max-width: 300px;"
                 />
               </div>
-              <!-- Tagged VLANs -->
               <div class="targets-header" style="margin-top: 16px;">
-                <span>{{ t('config.taggedVlans') }} — {{ iface.name }}</span>
+                <span>{{ t('config.taggedVlans') }}</span>
                 <el-button type="primary" text size="small" @click="addVlan(iface)">
                   + {{ t('config.addVlan') }}
                 </el-button>
@@ -518,7 +452,7 @@ onMounted(fetchAll)
                 </el-table-column>
               </el-table>
               <el-empty v-else :description="t('common.noData')" :image-size="40" />
-              <!-- Auto-detected VLANs from traffic -->
+              <!-- Auto-detected VLANs -->
               <div v-if="discoveredVlans.length > 0" class="discovered-vlans-section">
                 <div class="targets-header">
                   <span class="discovered-vlans-title">
@@ -553,8 +487,105 @@ onMounted(fetchAll)
                   </el-table-column>
                 </el-table>
               </div>
+              <!-- Per-NIC dynamic guard settings -->
+              <el-divider />
+              <div class="dynamic-guard-section">
+                <span class="dynamic-guard-title">{{ t('config.dynamicGuard') }}</span>
+                <div class="dynamic-guard-row">
+                  <span class="dynamic-guard-label">{{ t('config.dynamicAutoDiscover') }}</span>
+                  <el-select v-model="iface.dynamic!.auto_discover" size="small" style="width: 200px;">
+                    <el-option :label="t('config.dynamicUseGlobal')" :value="-1" />
+                    <el-option :label="t('common.disabled')" :value="0" />
+                    <el-option :label="t('common.enabled')" :value="1" />
+                  </el-select>
+                </div>
+                <template v-if="iface.dynamic!.auto_discover !== -1">
+                  <div class="dynamic-guard-row">
+                    <span class="dynamic-guard-label">{{ t('config.dynamicMaxRatio') }}</span>
+                    <el-input-number v-model="iface.dynamic!.max_ratio" :min="-1" :max="100" :step="5" size="small" style="width: 160px;" />
+                  </div>
+                  <div class="dynamic-guard-row">
+                    <span class="dynamic-guard-label">{{ t('config.dynamicMaxEntries') }}</span>
+                    <el-input-number v-model="iface.dynamic!.max_entries" :min="-1" size="small" style="width: 160px;" />
+                  </div>
+                  <div class="dynamic-guard-row">
+                    <span class="dynamic-guard-label">{{ t('config.dynamicTtlHours') }}</span>
+                    <el-input-number v-model="iface.dynamic!.ttl_hours" :min="-1" :max="720" size="small" style="width: 160px;" />
+                  </div>
+                  <div class="dynamic-guard-row">
+                    <span class="dynamic-guard-label">{{ t('config.warmupMode') }}</span>
+                    <el-select v-model="iface.dynamic!.warmup_mode" size="small" style="width: 200px;">
+                      <el-option :label="t('config.dynamicUseGlobal')" :value="-1" />
+                      <el-option :label="t('config.warmupNormal')" :value="0" />
+                      <el-option :label="t('config.warmupFast')" :value="1" />
+                      <el-option :label="t('config.warmupBurst')" :value="2" />
+                    </el-select>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- Manage: DHCP / Static config -->
+            <div v-else-if="iface.role === 'manage'" class="manage-ip-config" style="margin-top: 12px;">
+              <el-radio-group
+                v-model="getManageState(iface.name).mode"
+                size="small"
+                @change="onManageModeChange(iface)"
+              >
+                <el-radio-button value="dhcp">{{ t('config.manageIpDhcp') }}</el-radio-button>
+                <el-radio-button value="static">{{ t('config.manageIpStatic') }}</el-radio-button>
+              </el-radio-group>
+              <div v-if="getManageState(iface.name).mode === 'static'" class="manage-static-fields">
+                <el-input
+                  v-model="getManageState(iface.name).ip"
+                  size="small"
+                  :placeholder="t('config.manageIp')"
+                  style="width: 140px;"
+                  @input="onManageFieldChange(iface)"
+                />
+                <span class="manage-slash">/</span>
+                <el-select
+                  v-model="getManageState(iface.name).prefix"
+                  size="small"
+                  style="width: 80px;"
+                  @change="onManageFieldChange(iface)"
+                >
+                  <el-option v-for="p in prefixOptions" :key="p" :label="'/' + p" :value="p" />
+                </el-select>
+                <el-input
+                  v-model="getManageState(iface.name).gateway"
+                  size="small"
+                  :placeholder="t('config.manageGateway')"
+                  style="width: 140px;"
+                  @input="onManageFieldChange(iface)"
+                />
+                <el-input
+                  v-model="getManageState(iface.name).dns1"
+                  size="small"
+                  :placeholder="t('config.manageDns1')"
+                  style="width: 140px;"
+                  @input="onManageFieldChange(iface)"
+                />
+                <el-input
+                  v-model="getManageState(iface.name).dns2"
+                  size="small"
+                  :placeholder="t('config.manageDns2')"
+                  style="width: 140px;"
+                  @input="onManageFieldChange(iface)"
+                />
+              </div>
             </div>
-          </template>
+
+            <!-- Mirror: no extra config -->
+            <div v-else class="mirror-no-config" style="margin-top: 8px;">—</div>
+          </div>
+          <div class="mode-row">
+            <span>{{ t('config.mode') }}:</span>
+            <el-select v-model="systemMode" size="small" style="width: 140px; margin-left: 8px;">
+              <el-option :label="t('config.modeBypass')" value="bypass" />
+              <el-option :label="t('config.modeInline')" value="inline" />
+            </el-select>
+          </div>
         </el-card>
 
         <!-- ARP Spoofing -->
@@ -854,5 +885,43 @@ onMounted(fetchAll)
   font-size: 13px;
   font-weight: 600;
   color: #409eff;
+}
+.iface-card {
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  background: #fafafa;
+}
+.iface-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.iface-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  min-width: 80px;
+}
+.dynamic-guard-section {
+  padding: 8px 0;
+}
+.dynamic-guard-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6a23c;
+}
+.dynamic-guard-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.dynamic-guard-label {
+  font-size: 13px;
+  color: #606266;
+  min-width: 130px;
 }
 </style>

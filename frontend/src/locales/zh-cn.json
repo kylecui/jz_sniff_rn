@@ -225,7 +225,21 @@
     "importVlan": "导入",
     "importAllVlans": "导入全部",
     "deviceCount": "设备数",
-    "noDiscoveredVlans": "未检测到 VLAN"
+    "noDiscoveredVlans": "未检测到 VLAN",
+    "dynamicGuard": "动态哨兵",
+    "dynamicAutoDiscover": "自动部署",
+    "dynamicMaxRatio": "子网占比 (%)",
+    "dynamicMaxEntries": "最大条目数",
+    "dynamicTtlHours": "存活时间（小时）",
+    "dynamicUseGlobal": "使用全局默认",
+    "dynamicOverride": "自定义",
+    "warmupMode": "上线模式",
+    "warmupNormal": "平稳上线",
+    "warmupFast": "快速上线",
+    "warmupBurst": "急速上线",
+    "warmupNormalDesc": "标准扫描节奏（/24 约 80 分钟）",
+    "warmupFastDesc": "加速首次扫描（/24 约 8 分钟）",
+    "warmupBurstDesc": "立即全量扫描（/24 约 5 秒）"
   },
   "system": {
     "title": "系统设置",

@@ -2809,6 +2809,15 @@ static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http
             }
         }
 
+        {
+            cJSON *dyn = cJSON_AddObjectToObject(obj, "dynamic");
+            cJSON_AddNumberToObject(dyn, "auto_discover", iface->guard_auto_discover);
+            cJSON_AddNumberToObject(dyn, "max_entries", iface->guard_max_entries);
+            cJSON_AddNumberToObject(dyn, "ttl_hours", iface->guard_ttl_hours);
+            cJSON_AddNumberToObject(dyn, "max_ratio", iface->guard_max_ratio);
+            cJSON_AddNumberToObject(dyn, "warmup_mode", iface->guard_warmup_mode);
+        }
+
         cJSON_AddItemToArray(arr, obj);
     }
 
@@ -2945,6 +2954,31 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
                         v->subnet[0] = '\0';
                 }
                 iface->vlan_count = vc;
+            }
+        }
+        {
+            cJSON *dyn = cJSON_GetObjectItem(item, "dynamic");
+            iface->guard_auto_discover = -1;
+            iface->guard_max_entries = -1;
+            iface->guard_ttl_hours = -1;
+            iface->guard_max_ratio = -1;
+            iface->guard_warmup_mode = -1;
+            if (dyn && cJSON_IsObject(dyn)) {
+                cJSON *ad = cJSON_GetObjectItem(dyn, "auto_discover");
+                cJSON *me = cJSON_GetObjectItem(dyn, "max_entries");
+                cJSON *th = cJSON_GetObjectItem(dyn, "ttl_hours");
+                cJSON *mr = cJSON_GetObjectItem(dyn, "max_ratio");
+                cJSON *wm = cJSON_GetObjectItem(dyn, "warmup_mode");
+                if (ad && cJSON_IsNumber(ad))
+                    iface->guard_auto_discover = ad->valueint;
+                if (me && cJSON_IsNumber(me))
+                    iface->guard_max_entries = me->valueint;
+                if (th && cJSON_IsNumber(th))
+                    iface->guard_ttl_hours = th->valueint;
+                if (mr && cJSON_IsNumber(mr))
+                    iface->guard_max_ratio = mr->valueint;
+                if (wm && cJSON_IsNumber(wm))
+                    iface->guard_warmup_mode = wm->valueint;
             }
         }
     }

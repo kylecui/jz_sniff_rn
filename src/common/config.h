@@ -67,6 +67,13 @@ typedef struct jz_config_interface {
     char dns2[JZ_CONFIG_STR_SHORT];          /* secondary DNS server (optional) */
     jz_config_vlan_t vlans[JZ_CONFIG_MAX_VLANS]; /* per-interface VLANs (monitor only) */
     int vlan_count;
+
+    /* per-interface dynamic guard overrides (monitor only, -1 = use global) */
+    int  guard_auto_discover;                /* 0=off, 1=on, -1=use global */
+    int  guard_max_entries;                  /* -1 = use global */
+    int  guard_ttl_hours;                    /* -1 = use global */
+    int  guard_max_ratio;                    /* -1 = use global */
+    int  guard_warmup_mode;                  /* -1 = use global default (normal) */
 } jz_config_interface_t;
 
 typedef struct jz_config_system {

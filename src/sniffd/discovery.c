@@ -242,6 +242,12 @@ static int find_monitor_interfaces(jz_discovery_t *disc, const jz_config_t *cfg)
         }
 
         set_scan_cursor_start(dst);
+
+        if (iface->guard_warmup_mode >= 0)
+            dst->warmup_mode = iface->guard_warmup_mode;
+        else
+            dst->warmup_mode = JZ_WARMUP_NORMAL;
+
         disc->iface_count++;
     }
 
@@ -689,16 +695,33 @@ int jz_discovery_tick(jz_discovery_t *disc)
     for (i = 0; i < disc->iface_count; i++) {
         jz_discovery_iface_t *iface = &disc->ifaces[i];
         uint32_t scan_end;
+        int batch_size;
         int j;
+        uint64_t iface_interval_ns;
 
         if (iface->arp_sock < 0 || iface->ifindex <= 0 || iface->scan_mask == 0)
             continue;
+
+        if (!iface->first_pass_done && iface->warmup_mode == JZ_WARMUP_BURST) {
+            batch_size = iface->scan_mask == 0 ? JZ_DISCOVERY_ARP_BATCH_SIZE
+                : (int)(~ntohl(iface->scan_mask)) + 1;
+            if (batch_size > 4096)
+                batch_size = 4096;
+        } else if (!iface->first_pass_done && iface->warmup_mode == JZ_WARMUP_FAST) {
+            iface_interval_ns = (uint64_t)JZ_DISCOVERY_ARP_FAST_INTERVAL * 1000000000ULL;
+            if (iface->last_scan_ns != 0 && now_ns > iface->last_scan_ns &&
+                (now_ns - iface->last_scan_ns) < iface_interval_ns)
+                continue;
+            batch_size = JZ_DISCOVERY_ARP_BATCH_SIZE;
+        } else {
+            batch_size = JZ_DISCOVERY_ARP_BATCH_SIZE;
+        }
 
         if (iface->scan_next_ip == 0)
             set_scan_cursor_start(iface);
         scan_end = get_scan_end_ip(iface);
 
-        for (j = 0; j < JZ_DISCOVERY_ARP_BATCH_SIZE; j++) {
+        for (j = 0; j < batch_size; j++) {
             uint32_t tip = iface->scan_next_ip;
             uint32_t tip_h;
             uint32_t end_h;
@@ -713,11 +736,23 @@ int jz_discovery_tick(jz_discovery_t *disc)
             if (end_h > start_h)
                 start_h += 1U;
 
-            if (tip_h >= end_h)
+            if (tip_h >= end_h) {
                 iface->scan_next_ip = htonl(start_h);
-            else
+                iface->scan_pass_count++;
+                if (!iface->first_pass_done) {
+                    iface->first_pass_done = true;
+                    jz_log_info("discovery ifindex=%d: first scan pass complete "
+                                "(mode=%d, passes=%d)",
+                                iface->ifindex, iface->warmup_mode,
+                                iface->scan_pass_count);
+                }
+                break;
+            } else {
                 iface->scan_next_ip = htonl(tip_h + 1U);
+            }
         }
+
+        iface->last_scan_ns = now_ns;
     }
 
     disc->last_arp_scan_ns = now_ns;
@@ -880,6 +915,9 @@ int jz_discovery_feed_event(jz_discovery_t *disc, uint8_t proto,
     src_ip = 0;
     if (extract_src_ip(proto, payload, payload_len, &src_ip) && device->profile.ip == 0)
         device->profile.ip = src_ip;
+
+    if (src_ip != 0 && disc->guard_auto)
+        (void)jz_guard_auto_evict_ip(disc->guard_auto, src_ip, ifindex);
 
     if (fp_update_profile(&device->profile, proto, payload, payload_len) < 0)
         return 0;
@@ -1065,6 +1103,22 @@ int jz_discovery_list_vlans(const jz_discovery_t *disc, char *buf, size_t buf_si
     if (buf_append(buf, buf_size, &off, "],\"total\":%d}", nseen) < 0)
         return -1;
     return off;
+}
+
+const jz_discovery_iface_t *jz_discovery_iface_by_ifindex(const jz_discovery_t *disc,
+                                                           uint32_t ifindex)
+{
+    int i;
+
+    if (!disc)
+        return NULL;
+
+    for (i = 0; i < disc->iface_count; i++) {
+        if ((uint32_t)disc->ifaces[i].ifindex == ifindex)
+            return &disc->ifaces[i];
+    }
+
+    return NULL;
 }
 
 void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)

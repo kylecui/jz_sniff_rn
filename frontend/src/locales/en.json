@@ -225,7 +225,21 @@
     "importVlan": "Import",
     "importAllVlans": "Import All",
     "deviceCount": "Devices",
-    "noDiscoveredVlans": "No VLANs detected"
+    "noDiscoveredVlans": "No VLANs detected",
+    "dynamicGuard": "Dynamic Guard",
+    "dynamicAutoDiscover": "Auto-deploy",
+    "dynamicMaxRatio": "Subnet ratio (%)",
+    "dynamicMaxEntries": "Max entries",
+    "dynamicTtlHours": "TTL (hours)",
+    "dynamicUseGlobal": "Use global default",
+    "dynamicOverride": "Override",
+    "warmupMode": "Warmup Mode",
+    "warmupNormal": "Normal",
+    "warmupFast": "Fast",
+    "warmupBurst": "Burst",
+    "warmupNormalDesc": "Standard scan pace (~80 min for /24)",
+    "warmupFastDesc": "Accelerated first scan (~8 min for /24)",
+    "warmupBurstDesc": "Immediate full scan (~5 sec for /24)"
   },
   "system": {
     "title": "System Settings",

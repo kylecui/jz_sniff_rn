@@ -14,8 +14,16 @@ typedef struct jz_guard_auto jz_guard_auto_t;
 
 #define JZ_DISCOVERY_MAX_DEVICES    4096
 #define JZ_DISCOVERY_ARP_INTERVAL   300   /* 300 seconds = 5 minutes */
+#define JZ_DISCOVERY_ARP_FAST_INTERVAL  30  /* 30 seconds for fast warmup */
 #define JZ_DISCOVERY_HASH_BUCKETS   256
 #define JZ_DISCOVERY_MAX_IFACES     JZ_CONFIG_MAX_INTERFACES
+
+/* Guard warmup modes — controls first-scan pace before guard deployment */
+enum jz_guard_warmup_mode {
+    JZ_WARMUP_NORMAL = 0,   /* 300s interval, ~80min for /24 */
+    JZ_WARMUP_FAST   = 1,   /* 30s interval first pass, ~8min */
+    JZ_WARMUP_BURST  = 2,   /* all probes immediately, ~5s */
+};
 
 typedef struct jz_discovery_device {
     device_profile_t   profile;
@@ -32,6 +40,10 @@ typedef struct jz_discovery_iface {
     uint32_t               scan_subnet;
     uint32_t               scan_mask;
     uint32_t               scan_next_ip;
+    int                    scan_pass_count;
+    bool                   first_pass_done;
+    int                    warmup_mode;
+    uint64_t               last_scan_ns;
 } jz_discovery_iface_t;
 
 typedef struct jz_discovery {
@@ -72,5 +84,7 @@ int  jz_discovery_find_dhcp_servers(const jz_discovery_t *disc,
 int  jz_discovery_list_json(const jz_discovery_t *disc, char *buf, size_t buf_size);
 int  jz_discovery_list_vlans(const jz_discovery_t *disc, char *buf, size_t buf_size);
 void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg);
+const jz_discovery_iface_t *jz_discovery_iface_by_ifindex(const jz_discovery_t *disc,
+                                                           uint32_t ifindex);
 
 #endif /* JZ_DISCOVERY_H */

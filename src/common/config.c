@@ -314,6 +314,14 @@ static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
         }
 
         yaml_event_delete(&item_ev);
+        {
+            jz_config_interface_t *init_iface = &cfg->system.interfaces[cfg->system.interface_count];
+            init_iface->guard_auto_discover = -1;
+            init_iface->guard_max_entries = -1;
+            init_iface->guard_ttl_hours = -1;
+            init_iface->guard_max_ratio = -1;
+            init_iface->guard_warmup_mode = -1;
+        }
         for (;;) {
             yaml_event_t k2, v2;
             const char *k;
@@ -357,6 +365,70 @@ static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
                 if (parse_interface_vlans(parser, &v2, iface, errors) != 0) {
                     yaml_event_delete(&k2);
                     return -1;
+                }
+            } else if (!strcmp(k, "dynamic")) {
+                if (v2.type != YAML_MAPPING_START_EVENT) {
+                    add_error(errors, event_line(&v2), "system.interfaces[].dynamic", "expected mapping");
+                    if (skip_node(parser, &v2, errors) != 0) {
+                        yaml_event_delete(&k2);
+                        return -1;
+                    }
+                } else {
+                    yaml_event_delete(&v2);
+                    for (;;) {
+                        yaml_event_t dk, dv;
+                        const char *dkey;
+                        if (next_event(parser, &dk, errors, "system.interfaces[].dynamic") != 0) {
+                            yaml_event_delete(&k2);
+                            return -1;
+                        }
+                        if (dk.type == YAML_MAPPING_END_EVENT) {
+                            yaml_event_delete(&dk);
+                            break;
+                        }
+                        dkey = (const char *)dk.data.scalar.value;
+                        if (next_event(parser, &dv, errors, "system.interfaces[].dynamic") != 0) {
+                            yaml_event_delete(&dk);
+                            yaml_event_delete(&k2);
+                            return -1;
+                        }
+                        if (!strcmp(dkey, "auto_discover")) {
+                            bool b;
+                            if (scalar_to_bool(&dv, &b) != 0)
+                                add_error(errors, event_line(&dv), "interfaces[].dynamic.auto_discover", "must be bool");
+                            else
+                                iface->guard_auto_discover = b ? 1 : 0;
+                        } else if (!strcmp(dkey, "max_entries")) {
+                            if (scalar_to_int(&dv, &iface->guard_max_entries) != 0)
+                                add_error(errors, event_line(&dv), "interfaces[].dynamic.max_entries", "must be int");
+                        } else if (!strcmp(dkey, "ttl_hours")) {
+                            if (scalar_to_int(&dv, &iface->guard_ttl_hours) != 0)
+                                add_error(errors, event_line(&dv), "interfaces[].dynamic.ttl_hours", "must be int");
+                        } else if (!strcmp(dkey, "max_ratio")) {
+                            if (scalar_to_int(&dv, &iface->guard_max_ratio) != 0)
+                                add_error(errors, event_line(&dv), "interfaces[].dynamic.max_ratio", "must be int");
+                        } else if (!strcmp(dkey, "warmup_mode")) {
+                            const char *wm = (const char *)dv.data.scalar.value;
+                            if (!strcmp(wm, "burst"))
+                                iface->guard_warmup_mode = 2;
+                            else if (!strcmp(wm, "fast"))
+                                iface->guard_warmup_mode = 1;
+                            else if (!strcmp(wm, "normal"))
+                                iface->guard_warmup_mode = 0;
+                            else
+                                add_error(errors, event_line(&dv), "interfaces[].dynamic.warmup_mode",
+                                          "must be 'normal', 'fast', or 'burst'");
+                        } else {
+                            add_error(errors, event_line(&dk), "interfaces[].dynamic", "unknown key '%s'", dkey);
+                            if (skip_node(parser, &dv, errors) != 0) {
+                                yaml_event_delete(&dk);
+                                yaml_event_delete(&k2);
+                                return -1;
+                            }
+                        }
+                        yaml_event_delete(&dv);
+                        yaml_event_delete(&dk);
+                    }
                 }
             } else {
                 add_error(errors, event_line(&k2), "system.interfaces", "unknown key '%s'", k);
@@ -3044,6 +3116,47 @@ char *jz_config_serialize(const jz_config_t *cfg)
                                iface->vlans[vi].id,
                                iface->vlans[vi].name,
                                iface->vlans[vi].subnet) != 0) {
+                    free(sb.data);
+                    return NULL;
+                }
+            }
+        }
+        if (iface->guard_auto_discover != -1 || iface->guard_max_entries != -1 ||
+            iface->guard_ttl_hours != -1 || iface->guard_max_ratio != -1 ||
+            iface->guard_warmup_mode != -1) {
+            if (sb_appendf(&sb, "      dynamic:\n") != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            if (iface->guard_auto_discover != -1 &&
+                sb_appendf(&sb, "        auto_discover: %s\n",
+                           iface->guard_auto_discover ? "true" : "false") != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            if (iface->guard_max_entries != -1 &&
+                sb_appendf(&sb, "        max_entries: %d\n", iface->guard_max_entries) != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            if (iface->guard_ttl_hours != -1 &&
+                sb_appendf(&sb, "        ttl_hours: %d\n", iface->guard_ttl_hours) != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            if (iface->guard_max_ratio != -1 &&
+                sb_appendf(&sb, "        max_ratio: %d\n", iface->guard_max_ratio) != 0) {
+                free(sb.data);
+                return NULL;
+            }
+            if (iface->guard_warmup_mode != -1) {
+                const char *wm;
+                switch (iface->guard_warmup_mode) {
+                case 2:  wm = "burst"; break;
+                case 1:  wm = "fast"; break;
+                default: wm = "normal"; break;
+                }
+                if (sb_appendf(&sb, "        warmup_mode: %s\n", wm) != 0) {
                     free(sb.data);
                     return NULL;
                 }

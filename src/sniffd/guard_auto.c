@@ -105,26 +105,17 @@ static int free_ips(const jz_guard_auto_t *ga)
     return (avail > 0) ? avail : 0;
 }
 
-static int max_allowed_dynamic(const jz_guard_auto_t *ga)
+static int max_allowed_dynamic_segment(const jz_guard_auto_segment_t *seg)
 {
     int64_t by_ratio;
-    int total_hosts;
-    int available;
 
-    if (!ga || ga->max_ratio <= 0)
+    if (!seg || seg->max_ratio <= 0 || seg->subnet_total <= 0)
         return 0;
 
-    total_hosts = total_subnet_hosts(ga);
-    if (total_hosts <= 0)
-        return 0;
-
-    available = free_ips(ga);
-    by_ratio = ((int64_t)total_hosts * (int64_t)ga->max_ratio) / 100;
+    by_ratio = ((int64_t)seg->subnet_total * (int64_t)seg->max_ratio) / 100;
 
     if (by_ratio <= 0)
         return 0;
-    if (by_ratio > (int64_t)available)
-        by_ratio = (int64_t)available;
     if (by_ratio > INT_MAX)
         return INT_MAX;
     return (int)by_ratio;
@@ -366,6 +357,39 @@ static int parse_monitor_subnets(jz_guard_auto_t *ga, const jz_config_t *cfg)
         seg->deploy_cursor = 0;
         seg->host_ip = 0;
         seg->current_dynamic = 0;
+
+        seg->auto_discover = (iface->guard_auto_discover != -1)
+            ? (iface->guard_auto_discover != 0)
+            : cfg->guards.dynamic.auto_discover;
+        seg->max_entries = (iface->guard_max_entries != -1)
+            ? iface->guard_max_entries
+            : cfg->guards.dynamic.max_entries;
+        seg->ttl_hours = (iface->guard_ttl_hours != -1)
+            ? iface->guard_ttl_hours
+            : cfg->guards.dynamic.ttl_hours;
+        seg->max_ratio = (iface->guard_max_ratio != -1)
+            ? clamp_ratio(iface->guard_max_ratio)
+            : clamp_ratio(cfg->guards.max_ratio);
+
+        seg->warmup_ready = false;
+        seg->warmup_logged = false;
+        seg->created_ns = get_monotonic_ns();
+        seg->warmup_mode = (iface->guard_warmup_mode >= 0)
+            ? iface->guard_warmup_mode
+            : JZ_WARMUP_NORMAL;
+
+        {
+            const char *mode_str;
+            switch (seg->warmup_mode) {
+            case JZ_WARMUP_FAST:  mode_str = "fast"; break;
+            case JZ_WARMUP_BURST: mode_str = "burst"; break;
+            default:              mode_str = "normal"; break;
+            }
+            jz_log_info("guard_auto seg ifindex=%u: warmup gate active "
+                        "(mode=%s), guards blocked until discovery completes",
+                        seg->ifindex, mode_str);
+        }
+
         seg_count++;
     }
 
@@ -403,7 +427,7 @@ static int jz_guard_auto_deploy_segment(jz_guard_auto_t *ga,
                                         jz_guard_auto_segment_t *seg,
                                         uint32_t ip)
 {
-    int max_allowed;
+    int seg_max;
     int ret;
     char reply[256];
     uint8_t fake_mac[6];
@@ -414,10 +438,10 @@ static int jz_guard_auto_deploy_segment(jz_guard_auto_t *ga,
     if (jz_guard_auto_is_frozen_segment(ga, seg, ip))
         return -1;
 
-    max_allowed = max_allowed_dynamic(ga);
-    if (total_current_dynamic(ga) >= max_allowed) {
-        jz_log_warn("guard_auto deploy blocked by ratio: current=%d allowed=%d",
-                    total_current_dynamic(ga), max_allowed);
+    seg_max = max_allowed_dynamic_segment(seg);
+    if (seg->current_dynamic >= seg_max) {
+        jz_log_warn("guard_auto deploy blocked by segment ratio: ifindex=%u current=%d allowed=%d",
+                    seg->ifindex, seg->current_dynamic, seg_max);
         return -1;
     }
 
@@ -472,7 +496,6 @@ int jz_guard_auto_init(jz_guard_auto_t *ga, jz_guard_mgr_t *gm, const jz_config_
     memset(ga, 0, sizeof(*ga));
     ga->guard_mgr = gm;
     ga->config = cfg;
-    ga->max_ratio = clamp_ratio(cfg->guards.max_ratio);
 
     if (parse_monitor_subnets(ga, cfg) < 0) {
         jz_log_error("guard_auto init failed: monitor subnet parse error");
@@ -500,15 +523,21 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
 {
     uint64_t now_ns;
     uint64_t interval_ns;
-    int max_allowed;
-    int total_dynamic;
     int total_deployed;
     int seg_i;
+    bool any_enabled;
 
     if (!ga || !ga->initialized)
         return -1;
 
-    if (!ga->config || !ga->config->guards.dynamic.auto_discover)
+    any_enabled = false;
+    for (seg_i = 0; seg_i < ga->segment_count && seg_i < JZ_GUARD_AUTO_MAX_SEGMENTS; seg_i++) {
+        if (ga->segments[seg_i].auto_discover) {
+            any_enabled = true;
+            break;
+        }
+    }
+    if (!any_enabled)
         return 0;
 
     now_ns = get_monotonic_ns();
@@ -520,24 +549,77 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
 
     refresh_segment_host_ips(ga);
     recount_dynamic_by_segment(ga);
-    max_allowed = max_allowed_dynamic(ga);
-    total_dynamic = total_current_dynamic(ga);
 
-    if (total_dynamic >= max_allowed) {
-        jz_log_debug("guard_auto ratio limit hit: current=%d allowed=%d",
-                     total_dynamic, max_allowed);
-        return 0;
+    /* Sweep: evict dynamic guards that now overlap with discovered devices */
+    for (seg_i = 0; seg_i < ga->segment_count && seg_i < JZ_GUARD_AUTO_MAX_SEGMENTS; seg_i++) {
+        int j;
+
+        for (j = 0; j < JZ_GUARD_MGR_MAX_DYNAMIC; j++) {
+            const jz_guard_entry_user_t *entry;
+
+            entry = &ga->guard_mgr->dynamic_entries[j];
+            if (!entry->enabled || entry->guard_type != JZ_GUARD_DYNAMIC)
+                continue;
+            if (entry->ifindex != ga->segments[seg_i].ifindex)
+                continue;
+            if (!ip_in_segment(&ga->segments[seg_i], entry->ip))
+                continue;
+            if (is_ip_online(ga, &ga->segments[seg_i], entry->ip))
+                jz_guard_auto_evict_ip(ga, entry->ip, entry->ifindex);
+        }
     }
+
+    recount_dynamic_by_segment(ga);
 
     total_deployed = 0;
     for (seg_i = 0; seg_i < ga->segment_count && seg_i < JZ_GUARD_AUTO_MAX_SEGMENTS; seg_i++) {
         jz_guard_auto_segment_t *seg;
+        int seg_max;
         int deployed;
         int scanned;
 
         seg = &ga->segments[seg_i];
-        if (seg->subnet_total <= 0)
+        if (!seg->auto_discover || seg->subnet_total <= 0)
             continue;
+
+        if (!seg->warmup_ready) {
+            const jz_discovery_iface_t *diface = NULL;
+
+            if (ga->discovery)
+                diface = jz_discovery_iface_by_ifindex(ga->discovery, seg->ifindex);
+
+            if (!diface) {
+                jz_log_warn("guard_auto seg ifindex=%u: no discovery interface "
+                            "(no IP assigned?), blocking guard deployment",
+                            seg->ifindex);
+                continue;
+            }
+            if (!diface->first_pass_done) {
+                if (!seg->warmup_logged) {
+                    jz_log_info("guard_auto seg ifindex=%u: waiting for discovery "
+                                "first pass (mode=%d, passes=%d)",
+                                seg->ifindex, diface->warmup_mode,
+                                diface->scan_pass_count);
+                    seg->warmup_logged = true;
+                } else {
+                    jz_log_debug("guard_auto seg ifindex=%u: still waiting for "
+                                 "discovery first pass (mode=%d, passes=%d)",
+                                 seg->ifindex, diface->warmup_mode,
+                                 diface->scan_pass_count);
+                }
+                continue;
+            }
+            seg->warmup_ready = true;
+            jz_log_info("guard_auto seg ifindex=%u: warmup complete, "
+                        "enabling guard deployment", seg->ifindex);
+        }
+
+        seg_max = max_allowed_dynamic_segment(seg);
+        if (seg->current_dynamic >= seg_max) {
+            jz_log_debug("guard_auto seg ifindex=%u ratio limit: current=%d allowed=%d",
+                         seg->ifindex, seg->current_dynamic, seg_max);
+            continue;
+        }
 
         if (seg->deploy_cursor == 0)
             seg->deploy_cursor = subnet_first_host(seg);
@@ -545,7 +627,7 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
         deployed = 0;
         scanned = 0;
         while (deployed < JZ_GUARD_AUTO_DEPLOY_BATCH &&
-               total_dynamic < max_allowed &&
+               seg->current_dynamic + deployed < seg_max &&
                scanned < seg->subnet_total) {
             uint32_t ip;
 
@@ -564,15 +646,14 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
 
             if (jz_guard_auto_deploy_segment(ga, seg, ip) == 0) {
                 deployed++;
-                total_dynamic++;
                 total_deployed++;
             }
         }
     }
 
     if (total_deployed > 0)
-        jz_log_info("guard_auto: deployed %d dynamic guards (total=%d, max=%d)",
-                    total_deployed, total_dynamic, max_allowed);
+        jz_log_info("guard_auto: deployed %d dynamic guards across %d segments",
+                    total_deployed, ga->segment_count);
 
     return total_deployed;
 }
@@ -662,29 +743,85 @@ int jz_guard_auto_check_conflict(jz_guard_auto_t *ga, uint32_t ip, const uint8_t
     return 0;
 }
 
+int jz_guard_auto_evict_ip(jz_guard_auto_t *ga, uint32_t ip, uint32_t ifindex)
+{
+    int i;
+    char reply[256];
+
+    if (!ga || !ga->initialized || !ga->guard_mgr || ip == 0 || ifindex == 0)
+        return 0;
+
+    for (i = 0; i < JZ_GUARD_MGR_MAX_DYNAMIC; i++) {
+        const jz_guard_entry_user_t *entry;
+        jz_guard_auto_segment_t *seg;
+
+        entry = &ga->guard_mgr->dynamic_entries[i];
+        if (!entry->enabled)
+            continue;
+        if (entry->guard_type != JZ_GUARD_DYNAMIC)
+            continue;
+        if (entry->ip != ip || entry->ifindex != ifindex)
+            continue;
+
+        seg = find_segment_for_ip(ga, ip, ifindex);
+
+        if (jz_guard_mgr_remove(ga->guard_mgr, ip, ifindex, reply, sizeof(reply)) < 0)
+            return -1;
+        if (strncmp(reply, "guard_remove:ok", strlen("guard_remove:ok")) != 0)
+            return -1;
+
+        if (seg && seg->current_dynamic > 0)
+            seg->current_dynamic--;
+
+        {
+            struct in_addr addr;
+            char ipbuf[INET_ADDRSTRLEN] = "0.0.0.0";
+
+            addr.s_addr = ip;
+            if (!inet_ntop(AF_INET, &addr, ipbuf, sizeof(ipbuf)))
+                snprintf(ipbuf, sizeof(ipbuf), "0.0.0.0");
+            jz_log_info("guard_auto: evicted dynamic guard ip=%s ifindex=%u (device discovered)",
+                        ipbuf, ifindex);
+        }
+
+        return 1;
+    }
+
+    return 0;
+}
+
 int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_size)
 {
     int n;
     int off;
     int i;
-    int max_allowed;
     int frozen_count;
     int online_devices;
     int static_count;
     int free;
     int total_dynamic;
     int total_subnet;
+    int total_max_allowed;
+    int global_ratio;
+    int global_ttl;
+    bool global_enabled;
 
     if (!ga || !buf || buf_size == 0)
         return -1;
 
-    max_allowed = max_allowed_dynamic(ga);
     frozen_count = ga->config ? ga->config->guards.frozen_ip_count : 0;
     static_count = ga->config ? ga->config->guards.static_count : 0;
     online_devices = ga->discovery ? ga->discovery->device_count : 0;
     free = free_ips(ga);
     total_dynamic = total_current_dynamic(ga);
     total_subnet = total_subnet_hosts(ga);
+    global_ratio = ga->config ? ga->config->guards.max_ratio : 0;
+    global_ttl = ga->config ? ga->config->guards.dynamic.ttl_hours : 24;
+    global_enabled = ga->config ? ga->config->guards.dynamic.auto_discover : false;
+
+    total_max_allowed = 0;
+    for (i = 0; i < ga->segment_count && i < JZ_GUARD_AUTO_MAX_SEGMENTS; i++)
+        total_max_allowed += max_allowed_dynamic_segment(&ga->segments[i]);
 
     off = 0;
     n = snprintf(buf + off, buf_size - (size_t)off,
@@ -692,11 +829,10 @@ int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_siz
                  "\"max_allowed\":%d,\"current_dynamic\":%d,\"frozen_count\":%d,"
                  "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d,"
                  "\"enabled\":%s,\"scan_interval\":%d,\"segments\":[",
-                 ga->max_ratio, ga->segment_count, total_subnet,
-                 max_allowed, total_dynamic, frozen_count,
+                 global_ratio, ga->segment_count, total_subnet,
+                 total_max_allowed, total_dynamic, frozen_count,
                  static_count, online_devices, free,
-                 (ga->config && ga->config->guards.dynamic.auto_discover) ? "true" : "false",
-                 ga->config ? ga->config->guards.dynamic.ttl_hours : 24);
+                 global_enabled ? "true" : "false", global_ttl);
     if (n < 0)
         return -1;
     if ((size_t)n >= buf_size - (size_t)off)
@@ -704,12 +840,41 @@ int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_siz
     off += n;
 
     for (i = 0; i < ga->segment_count && i < JZ_GUARD_AUTO_MAX_SEGMENTS; i++) {
+        const jz_guard_auto_segment_t *seg = &ga->segments[i];
+        const char *warmup_str;
+        int disc_passes = 0;
+
+        if (ga->discovery) {
+            const jz_discovery_iface_t *diface;
+            diface = jz_discovery_iface_by_ifindex(ga->discovery, seg->ifindex);
+            if (diface)
+                disc_passes = diface->scan_pass_count;
+        }
+
+        switch (seg->warmup_mode) {
+        case JZ_WARMUP_FAST:  warmup_str = "fast"; break;
+        case JZ_WARMUP_BURST: warmup_str = "burst"; break;
+        default:              warmup_str = "normal"; break;
+        }
+
         n = snprintf(buf + off, buf_size - (size_t)off,
-                     "%s{\"ifindex\":%u,\"subnet_total\":%d,\"current_dynamic\":%d}",
+                     "%s{\"ifindex\":%u,\"subnet_total\":%d,\"current_dynamic\":%d,"
+                     "\"max_allowed\":%d,\"auto_discover\":%s,"
+                     "\"max_ratio\":%d,\"max_entries\":%d,\"ttl_hours\":%d,"
+                     "\"warmup_ready\":%s,\"warmup_mode\":\"%s\","
+                     "\"discovery_passes\":%d}",
                      (i == 0) ? "" : ",",
-                     ga->segments[i].ifindex,
-                     ga->segments[i].subnet_total,
-                     ga->segments[i].current_dynamic);
+                     seg->ifindex,
+                     seg->subnet_total,
+                     seg->current_dynamic,
+                     max_allowed_dynamic_segment(seg),
+                     seg->auto_discover ? "true" : "false",
+                     seg->max_ratio,
+                     seg->max_entries,
+                     seg->ttl_hours,
+                     seg->warmup_ready ? "true" : "false",
+                     warmup_str,
+                     disc_passes);
         if (n < 0)
             return -1;
         if ((size_t)n >= buf_size - (size_t)off)
@@ -735,7 +900,6 @@ void jz_guard_auto_update_config(jz_guard_auto_t *ga, const jz_config_t *cfg)
         return;
 
     ga->config = cfg;
-    ga->max_ratio = clamp_ratio(cfg->guards.max_ratio);
     if (parse_monitor_subnets(ga, cfg) < 0) {
         jz_log_warn("guard_auto config update: monitor subnet parse error");
         return;

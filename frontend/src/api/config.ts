@@ -17,6 +17,14 @@ export interface ConfigHistory {
   history: ConfigHistoryEntry[]
 }
 
+export interface DynamicGuardConfig {
+  auto_discover: number   // 0=off, 1=on, -1=use global default
+  max_entries: number     // -1=use global default
+  ttl_hours: number       // -1=use global default
+  max_ratio: number       // -1=use global default
+  warmup_mode: number     // 0=normal, 1=fast, 2=burst, -1=use global default
+}
+
 export interface NetworkInterface {
   name: string
   role: 'monitor' | 'manage' | 'mirror'
@@ -25,6 +33,7 @@ export interface NetworkInterface {
   dns1: string
   dns2: string
   vlans: VlanConfig[]
+  dynamic?: DynamicGuardConfig
 }
 
 export interface InterfacesData {
