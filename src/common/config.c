@@ -352,6 +352,9 @@ static int parse_interfaces(yaml_parser_t *parser, yaml_event_t *start,
             } else if (!strcmp(k, "subnet")) {
                 copy_scalar(iface->subnet, sizeof(iface->subnet), &v2);
                 yaml_event_delete(&v2);
+            } else if (!strcmp(k, "address")) {
+                copy_scalar(iface->address, sizeof(iface->address), &v2);
+                yaml_event_delete(&v2);
             } else if (!strcmp(k, "gateway")) {
                 copy_scalar(iface->gateway, sizeof(iface->gateway), &v2);
                 yaml_event_delete(&v2);
@@ -3087,6 +3090,11 @@ char *jz_config_serialize(const jz_config_t *cfg)
         const jz_config_interface_t *iface = &cfg->system.interfaces[i];
         if (sb_appendf(&sb, "    - name: %s\n      role: %s\n      subnet: %s\n",
                        iface->name, iface->role, iface->subnet) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+        if (iface->address[0] != '\0' &&
+            sb_appendf(&sb, "      address: %s\n", iface->address) != 0) {
             free(sb.data);
             return NULL;
         }

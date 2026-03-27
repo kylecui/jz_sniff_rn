@@ -239,7 +239,11 @@
     "warmupBurst": "Burst",
     "warmupNormalDesc": "Standard scan pace (~80 min for /24)",
     "warmupFastDesc": "Accelerated first scan (~8 min for /24)",
-    "warmupBurstDesc": "Immediate full scan (~5 sec for /24)"
+    "warmupBurstDesc": "Immediate full scan (~5 sec for /24)",
+    "monitorIp": "Interface Address",
+    "monitorIpHint": "IP address for this monitor interface. Required for ARP-based device discovery.",
+    "monitorIpNone": "No IP",
+    "monitorIpNoneWarning": "No IP assigned. Device discovery cannot run on this interface — guards will be blocked until an IP is configured."
   },
   "system": {
     "title": "System Settings",

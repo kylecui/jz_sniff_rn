@@ -49,37 +49,63 @@ const captureLoading = ref(false)
 const discoveredVlans = ref<DiscoveredVlan[]>([])
 
 /* -- Manage role helpers -- */
-interface ManageIpState {
-  mode: 'dhcp' | 'static'
+interface IpConfigState {
+  mode: 'dhcp' | 'static' | 'none'
   ip: string
   prefix: string
   gateway: string
   dns1: string
   dns2: string
 }
-const manageIpStates = reactive<Record<string, ManageIpState>>({})
+const manageIpStates = reactive<Record<string, IpConfigState>>({})
+const monitorIpStates = reactive<Record<string, IpConfigState>>({})
 
-function getManageState(ifName: string): ManageIpState {
+function getManageState(ifName: string): IpConfigState {
   if (!manageIpStates[ifName]) {
     manageIpStates[ifName] = { mode: 'dhcp', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
   }
   return manageIpStates[ifName]
 }
 
+function getMonitorIpState(ifName: string): IpConfigState {
+  if (!monitorIpStates[ifName]) {
+    monitorIpStates[ifName] = { mode: 'none', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
+  }
+  return monitorIpStates[ifName]
+}
+
 function initManageStates(ifaces: NetworkInterface[]) {
   for (const iface of ifaces) {
-    if (iface.role !== 'manage') continue
-    if (iface.subnet === 'dhcp' || !iface.subnet) {
-      manageIpStates[iface.name] = { mode: 'dhcp', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
-    } else {
-      const parts = iface.subnet.split('/')
-      manageIpStates[iface.name] = {
-        mode: 'static',
-        ip: parts[0] || '',
-        prefix: parts[1] || '24',
-        gateway: iface.gateway || '',
-        dns1: iface.dns1 || '',
-        dns2: iface.dns2 || '',
+    if (iface.role === 'manage') {
+      if (iface.subnet === 'dhcp' || !iface.subnet) {
+        manageIpStates[iface.name] = { mode: 'dhcp', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
+      } else {
+        const parts = iface.subnet.split('/')
+        manageIpStates[iface.name] = {
+          mode: 'static',
+          ip: parts[0] || '',
+          prefix: parts[1] || '24',
+          gateway: iface.gateway || '',
+          dns1: iface.dns1 || '',
+          dns2: iface.dns2 || '',
+        }
+      }
+    } else if (iface.role === 'monitor') {
+      const addr = iface.address || ''
+      if (!addr) {
+        monitorIpStates[iface.name] = { mode: 'none', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
+      } else if (addr === 'dhcp') {
+        monitorIpStates[iface.name] = { mode: 'dhcp', ip: '', prefix: '24', gateway: iface.gateway || '', dns1: iface.dns1 || '', dns2: iface.dns2 || '' }
+      } else {
+        const parts = addr.split('/')
+        monitorIpStates[iface.name] = {
+          mode: 'static',
+          ip: parts[0] || '',
+          prefix: parts[1] || '24',
+          gateway: iface.gateway || '',
+          dns1: iface.dns1 || '',
+          dns2: iface.dns2 || '',
+        }
       }
     }
   }
@@ -100,6 +126,26 @@ function syncManageFields(row: NetworkInterface) {
   }
 }
 
+function syncMonitorIpFields(row: NetworkInterface) {
+  const state = getMonitorIpState(row.name)
+  if (state.mode === 'none') {
+    row.address = ''
+    row.gateway = ''
+    row.dns1 = ''
+    row.dns2 = ''
+  } else if (state.mode === 'dhcp') {
+    row.address = 'dhcp'
+    row.gateway = ''
+    row.dns1 = ''
+    row.dns2 = ''
+  } else {
+    row.address = state.ip && state.prefix ? `${state.ip}/${state.prefix}` : ''
+    row.gateway = state.gateway
+    row.dns1 = state.dns1
+    row.dns2 = state.dns2
+  }
+}
+
 function onManageModeChange(row: NetworkInterface) {
   syncManageFields(row)
 }
@@ -108,9 +154,18 @@ function onManageFieldChange(row: NetworkInterface) {
   syncManageFields(row)
 }
 
+function onMonitorIpModeChange(row: NetworkInterface) {
+  syncMonitorIpFields(row)
+}
+
+function onMonitorIpFieldChange(row: NetworkInterface) {
+  syncMonitorIpFields(row)
+}
+
 function onRoleChange(row: NetworkInterface) {
   if (row.role === 'mirror') {
     row.subnet = ''
+    row.address = ''
     row.gateway = ''
     row.dns1 = ''
     row.dns2 = ''
@@ -124,15 +179,18 @@ function onRoleChange(row: NetworkInterface) {
       row.dns1 = ''
       row.dns2 = ''
     }
+    row.address = ''
     row.vlans = []
     row.dynamic = { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 }
   } else if (row.role === 'monitor') {
     if (row.subnet === 'dhcp') row.subnet = ''
+    row.address = ''
     row.gateway = ''
     row.dns1 = ''
     row.dns2 = ''
     if (!row.vlans) row.vlans = []
     if (!row.dynamic) row.dynamic = { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 }
+    monitorIpStates[row.name] = { mode: 'none', ip: '', prefix: '24', gateway: '', dns1: '', dns2: '' }
   }
 }
 
@@ -158,6 +216,7 @@ async function fetchAll() {
     history.value = hist.history
     interfaces.value = ifaces.interfaces.map(iface => ({
       ...iface,
+      address: iface.address ?? '',
       vlans: iface.vlans ?? [],
       dynamic: iface.dynamic ?? { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 },
     }))
@@ -421,6 +480,59 @@ onMounted(fetchAll)
                   style="max-width: 300px;"
                 />
               </div>
+              <!-- Monitor interface IP configuration -->
+              <div class="monitor-ip-section">
+                <div class="targets-header">
+                  <span class="native-vlan-title">
+                    <el-tooltip :content="t('config.monitorIpHint')" placement="top">
+                      <span style="cursor: help;">{{ t('config.monitorIp') }} ⓘ</span>
+                    </el-tooltip>
+                  </span>
+                </div>
+                <el-radio-group
+                  v-model="getMonitorIpState(iface.name).mode"
+                  size="small"
+                  @change="onMonitorIpModeChange(iface)"
+                >
+                  <el-radio-button value="none">{{ t('config.monitorIpNone') }}</el-radio-button>
+                  <el-radio-button value="dhcp">{{ t('config.manageIpDhcp') }}</el-radio-button>
+                  <el-radio-button value="static">{{ t('config.manageIpStatic') }}</el-radio-button>
+                </el-radio-group>
+                <el-alert
+                  v-if="getMonitorIpState(iface.name).mode === 'none'"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  style="margin-top: 8px;"
+                >
+                  {{ t('config.monitorIpNoneWarning') }}
+                </el-alert>
+                <div v-if="getMonitorIpState(iface.name).mode === 'static'" class="manage-static-fields" style="margin-top: 8px;">
+                  <el-input
+                    v-model="getMonitorIpState(iface.name).ip"
+                    size="small"
+                    :placeholder="t('config.manageIp')"
+                    style="width: 140px;"
+                    @input="onMonitorIpFieldChange(iface)"
+                  />
+                  <span class="manage-slash">/</span>
+                  <el-select
+                    v-model="getMonitorIpState(iface.name).prefix"
+                    size="small"
+                    style="width: 80px;"
+                    @change="onMonitorIpFieldChange(iface)"
+                  >
+                    <el-option v-for="p in prefixOptions" :key="p" :label="'/' + p" :value="p" />
+                  </el-select>
+                  <el-input
+                    v-model="getMonitorIpState(iface.name).gateway"
+                    size="small"
+                    :placeholder="t('config.manageGateway')"
+                    style="width: 140px;"
+                    @input="onMonitorIpFieldChange(iface)"
+                  />
+                </div>
+              </div>
               <div class="targets-header" style="margin-top: 16px;">
                 <span>{{ t('config.taggedVlans') }}</span>
                 <el-button type="primary" text size="small" @click="addVlan(iface)">
@@ -499,6 +611,21 @@ onMounted(fetchAll)
                     <el-option :label="t('common.enabled')" :value="1" />
                   </el-select>
                 </div>
+                <div class="dynamic-guard-row">
+                  <span class="dynamic-guard-label">{{ t('config.warmupMode') }}</span>
+                  <el-select v-model="iface.dynamic!.warmup_mode" size="small" style="width: 200px;">
+                    <el-option :label="t('config.dynamicUseGlobal')" :value="-1" />
+                    <el-option :label="t('config.warmupNormal')" :value="0" />
+                    <el-option :label="t('config.warmupFast')" :value="1" />
+                    <el-option :label="t('config.warmupBurst')" :value="2" />
+                  </el-select>
+                  <span class="dynamic-guard-hint">
+                    {{ iface.dynamic!.warmup_mode === 2 ? t('config.warmupBurstDesc')
+                     : iface.dynamic!.warmup_mode === 1 ? t('config.warmupFastDesc')
+                     : iface.dynamic!.warmup_mode === 0 ? t('config.warmupNormalDesc')
+                     : '' }}
+                  </span>
+                </div>
                 <template v-if="iface.dynamic!.auto_discover !== -1">
                   <div class="dynamic-guard-row">
                     <span class="dynamic-guard-label">{{ t('config.dynamicMaxRatio') }}</span>
@@ -511,15 +638,6 @@ onMounted(fetchAll)
                   <div class="dynamic-guard-row">
                     <span class="dynamic-guard-label">{{ t('config.dynamicTtlHours') }}</span>
                     <el-input-number v-model="iface.dynamic!.ttl_hours" :min="-1" :max="720" size="small" style="width: 160px;" />
-                  </div>
-                  <div class="dynamic-guard-row">
-                    <span class="dynamic-guard-label">{{ t('config.warmupMode') }}</span>
-                    <el-select v-model="iface.dynamic!.warmup_mode" size="small" style="width: 200px;">
-                      <el-option :label="t('config.dynamicUseGlobal')" :value="-1" />
-                      <el-option :label="t('config.warmupNormal')" :value="0" />
-                      <el-option :label="t('config.warmupFast')" :value="1" />
-                      <el-option :label="t('config.warmupBurst')" :value="2" />
-                    </el-select>
                   </div>
                 </template>
               </div>
@@ -923,5 +1041,14 @@ onMounted(fetchAll)
   font-size: 13px;
   color: #606266;
   min-width: 130px;
+}
+.dynamic-guard-hint {
+  font-size: 12px;
+  color: #909399;
+  font-style: italic;
+}
+.monitor-ip-section {
+  margin-top: 12px;
+  margin-bottom: 8px;
 }
 </style>

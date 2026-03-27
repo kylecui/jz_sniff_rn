@@ -2793,6 +2793,7 @@ static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http
         cJSON_AddStringToObject(obj, "name", iface->name);
         cJSON_AddStringToObject(obj, "role", iface->role);
         cJSON_AddStringToObject(obj, "subnet", iface->subnet);
+        cJSON_AddStringToObject(obj, "address", iface->address);
         cJSON_AddStringToObject(obj, "gateway", iface->gateway);
         cJSON_AddStringToObject(obj, "dns1", iface->dns1);
         cJSON_AddStringToObject(obj, "dns2", iface->dns2);
@@ -2907,6 +2908,13 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
                 snprintf(iface->subnet, sizeof(iface->subnet), "%s", subnet->valuestring);
             else
                 iface->subnet[0] = '\0';
+        }
+        {
+            cJSON *addr = cJSON_GetObjectItem(item, "address");
+            if (addr && cJSON_IsString(addr))
+                snprintf(iface->address, sizeof(iface->address), "%s", addr->valuestring);
+            else
+                iface->address[0] = '\0';
         }
         {
             cJSON *gw = cJSON_GetObjectItem(item, "gateway");

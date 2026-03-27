@@ -239,7 +239,11 @@
     "warmupBurst": "急速上线",
     "warmupNormalDesc": "标准扫描节奏（/24 约 80 分钟）",
     "warmupFastDesc": "加速首次扫描（/24 约 8 分钟）",
-    "warmupBurstDesc": "立即全量扫描（/24 约 5 秒）"
+    "warmupBurstDesc": "立即全量扫描（/24 约 5 秒）",
+    "monitorIp": "接口地址",
+    "monitorIpHint": "该监控接口的 IP 地址。ARP 设备发现需要此地址才能工作。",
+    "monitorIpNone": "无 IP",
+    "monitorIpNoneWarning": "未分配 IP 地址。该接口无法进行设备发现，哨兵将被阻止部署，直到配置 IP 地址。"
   },
   "system": {
     "title": "系统设置",

@@ -29,6 +29,7 @@ export interface NetworkInterface {
   name: string
   role: 'monitor' | 'manage' | 'mirror'
   subnet: string
+  address: string
   gateway: string
   dns1: string
   dns2: string
