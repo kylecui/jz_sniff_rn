@@ -1910,10 +1910,19 @@ static int parse_log_syslog(yaml_parser_t *parser, yaml_event_t *start,
             copy_scalar(cfg->log.syslog.server, sizeof(cfg->log.syslog.server), &val_ev);
         else if (!strcmp(key, "port") && scalar_to_int(&val_ev, &cfg->log.syslog.port) != 0)
             add_error(errors, event_line(&val_ev), "log.syslog.port", "must be integer");
+        else if (!strcmp(key, "tls") && scalar_to_bool(&val_ev, &cfg->log.syslog.tls) != 0)
+            add_error(errors, event_line(&val_ev), "log.syslog.tls", "must be bool");
+        else if (!strcmp(key, "tls_ca"))
+            copy_scalar(cfg->log.syslog.tls_ca, sizeof(cfg->log.syslog.tls_ca), &val_ev);
+        else if (!strcmp(key, "tls_cert"))
+            copy_scalar(cfg->log.syslog.tls_cert, sizeof(cfg->log.syslog.tls_cert), &val_ev);
+        else if (!strcmp(key, "tls_key"))
+            copy_scalar(cfg->log.syslog.tls_key, sizeof(cfg->log.syslog.tls_key), &val_ev);
         else if (!strcmp(key, "facility"))
             copy_scalar(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), &val_ev);
         else if (strcmp(key, "enabled") && strcmp(key, "format") && strcmp(key, "facility")
-                 && strcmp(key, "server") && strcmp(key, "port"))
+                 && strcmp(key, "server") && strcmp(key, "port") && strcmp(key, "tls")
+                 && strcmp(key, "tls_ca") && strcmp(key, "tls_cert") && strcmp(key, "tls_key"))
             add_error(errors, event_line(&key_ev), "log.syslog", "unknown key '%s'", key);
 
         yaml_event_delete(&val_ev);
@@ -2938,6 +2947,10 @@ void jz_config_defaults(jz_config_t *cfg)
     snprintf(cfg->log.syslog.format, sizeof(cfg->log.syslog.format), "v1");
     cfg->log.syslog.server[0] = '\0';
     cfg->log.syslog.port = 514;
+    cfg->log.syslog.tls = false;
+    cfg->log.syslog.tls_ca[0] = '\0';
+    cfg->log.syslog.tls_cert[0] = '\0';
+    cfg->log.syslog.tls_key[0] = '\0';
     snprintf(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), "local0");
 
     cfg->log.mqtt.enabled = false;
@@ -3346,6 +3359,10 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    "    format: %s\n"
                    "    server: %s\n"
                    "    port: %d\n"
+                   "    tls: %s\n"
+                   "    tls_ca: %s\n"
+                   "    tls_cert: %s\n"
+                   "    tls_key: %s\n"
                    "    facility: %s\n"
                    "  mqtt:\n"
                    "    enabled: %s\n"
@@ -3390,6 +3407,10 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    cfg->log.syslog.format,
                    cfg->log.syslog.server,
                    cfg->log.syslog.port,
+                   cfg->log.syslog.tls ? "true" : "false",
+                   cfg->log.syslog.tls_ca,
+                   cfg->log.syslog.tls_cert,
+                   cfg->log.syslog.tls_key,
                    cfg->log.syslog.facility,
                    cfg->log.mqtt.enabled ? "true" : "false",
                    cfg->log.mqtt.format,

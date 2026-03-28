@@ -116,6 +116,10 @@ export interface LogSyslogConfig {
   format: string
   server: string
   port: number
+  tls: boolean
+  tls_ca: string
+  tls_cert: string
+  tls_key: string
   facility: string
 }
 

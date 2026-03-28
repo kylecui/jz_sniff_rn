@@ -57,6 +57,10 @@ const dataServerProtocol = ref<DataServerProtocol>('none')
 const dataServerSaving = ref(false)
 const syslogServer = ref('')
 const syslogPort = ref(514)
+const syslogTls = ref(false)
+const syslogTlsCa = ref('')
+const syslogTlsCert = ref('')
+const syslogTlsKey = ref('')
 const syslogFacility = ref('local0')
 const mqttBroker = ref('')
 const mqttTopicPrefix = ref('')
@@ -66,7 +70,6 @@ const mqttTlsCa = ref('')
 const mqttQos = ref(1)
 const mqttKeepalive = ref(60)
 
-const syslogFacilities = ['local0', 'local1', 'local2', 'local3', 'local4', 'local5', 'local6', 'local7', 'user', 'daemon']
 /* -- Manage role helpers -- */
 interface IpConfigState {
   mode: 'dhcp' | 'static' | 'none'
@@ -291,6 +294,10 @@ async function fetchAll() {
       const clean = (s: string) => s === 'null' ? '' : (s || '')
       syslogServer.value = clean(logData.syslog.server)
       syslogPort.value = logData.syslog.port || 514
+      syslogTls.value = logData.syslog.tls || false
+      syslogTlsCa.value = clean(logData.syslog.tls_ca)
+      syslogTlsCert.value = clean(logData.syslog.tls_cert)
+      syslogTlsKey.value = clean(logData.syslog.tls_key)
       mqttBroker.value = clean(logData.mqtt.broker)
       mqttTopicPrefix.value = clean(logData.mqtt.topic_prefix)
       mqttClientId.value = clean(logData.mqtt.client_id)
@@ -432,7 +439,7 @@ async function handleSaveDataServer() {
       payload.syslog = { enabled: false }
       payload.mqtt = { enabled: false }
     } else if (dataServerProtocol.value === 'v1') {
-      payload.syslog = { enabled: true, server: syslogServer.value, port: syslogPort.value, facility: syslogFacility.value }
+      payload.syslog = { enabled: true, server: syslogServer.value, port: syslogPort.value, tls: syslogTls.value, tls_ca: syslogTlsCa.value, tls_cert: syslogTlsCert.value, tls_key: syslogTlsKey.value }
       payload.mqtt = { enabled: false }
     } else {
       payload.syslog = { enabled: false }
@@ -851,10 +858,20 @@ onMounted(fetchAll)
               <el-input-number v-model="syslogPort" :min="1" :max="65535" size="small" style="width: 140px;" />
             </div>
             <div class="data-server-field">
-              <span class="data-server-label">{{ t('config.dataServerFacility') }}</span>
-              <el-select v-model="syslogFacility" size="small" style="width: 160px;">
-                <el-option v-for="f in syslogFacilities" :key="f" :label="f" :value="f" />
-              </el-select>
+              <span class="data-server-label">{{ t('config.dataServerSyslogTls') }}</span>
+              <el-switch v-model="syslogTls" />
+            </div>
+            <div v-if="syslogTls" class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerSyslogTlsCa') }}</span>
+              <el-input v-model="syslogTlsCa" size="small" :placeholder="t('config.dataServerSyslogTlsCaPlaceholder')" style="max-width: 360px;" />
+            </div>
+            <div v-if="syslogTls" class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerSyslogTlsCert') }}</span>
+              <el-input v-model="syslogTlsCert" size="small" :placeholder="t('config.dataServerSyslogTlsCertPlaceholder')" style="max-width: 360px;" />
+            </div>
+            <div v-if="syslogTls" class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerSyslogTlsKey') }}</span>
+              <el-input v-model="syslogTlsKey" size="small" :placeholder="t('config.dataServerSyslogTlsKeyPlaceholder')" style="max-width: 360px;" />
             </div>
           </template>
 

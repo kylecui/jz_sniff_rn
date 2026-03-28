@@ -259,10 +259,14 @@ typedef struct jz_config_api {
 
 typedef struct jz_config_log_syslog {
     bool enabled;
-    char format[JZ_CONFIG_STR_SHORT];      /* "v1" or "v2" */
-    char server[JZ_CONFIG_STR_LONG];       /* remote syslog server address */
-    int  port;                              /* remote syslog port (default 514) */
-    char facility[JZ_CONFIG_STR_SHORT];    /* "local0" through "local7" */
+    char format[JZ_CONFIG_STR_SHORT];
+    char server[JZ_CONFIG_STR_LONG];
+    int  port;
+    bool tls;
+    char tls_ca[JZ_CONFIG_STR_LONG];
+    char tls_cert[JZ_CONFIG_STR_LONG];
+    char tls_key[JZ_CONFIG_STR_LONG];
+    char facility[JZ_CONFIG_STR_SHORT];
 } jz_config_log_syslog_t;
 
 typedef struct jz_config_log_mqtt {

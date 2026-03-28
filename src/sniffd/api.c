@@ -3238,6 +3238,10 @@ static void handle_config_log_get(struct mg_connection *c, struct mg_http_messag
     cJSON_AddStringToObject(syslog_obj, "format", api->config->log.syslog.format);
     cJSON_AddStringToObject(syslog_obj, "server", api->config->log.syslog.server);
     cJSON_AddNumberToObject(syslog_obj, "port", api->config->log.syslog.port);
+    cJSON_AddBoolToObject(syslog_obj, "tls", api->config->log.syslog.tls);
+    cJSON_AddStringToObject(syslog_obj, "tls_ca", api->config->log.syslog.tls_ca);
+    cJSON_AddStringToObject(syslog_obj, "tls_cert", api->config->log.syslog.tls_cert);
+    cJSON_AddStringToObject(syslog_obj, "tls_key", api->config->log.syslog.tls_key);
     cJSON_AddStringToObject(syslog_obj, "facility", api->config->log.syslog.facility);
 
     /* mqtt transport */
@@ -3332,6 +3336,28 @@ static void handle_config_log_put(struct mg_connection *c, struct mg_http_messag
             if (val > 65535) val = 65535;
             api->config->log.syslog.port = val;
         }
+
+        item = cJSON_GetObjectItem(sub, "tls");
+        if (item && cJSON_IsBool(item))
+            api->config->log.syslog.tls = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItem(sub, "tls_ca");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.tls_ca,
+                     sizeof(api->config->log.syslog.tls_ca),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "tls_cert");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.tls_cert,
+                     sizeof(api->config->log.syslog.tls_cert),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "tls_key");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.tls_key,
+                     sizeof(api->config->log.syslog.tls_key),
+                     "%s", item->valuestring);
     }
 
     /* mqtt transport */
