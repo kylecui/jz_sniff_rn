@@ -71,6 +71,12 @@ sudo make install PREFIX=/usr  # Install to /usr
 sudo make uninstall       # Remove installed files
 ```
 
+One line install from zero. 
+```bash
+sudo apt-get update && sudo apt-get install -y git clang llvm libbpf-dev libelf-dev zlib1g-dev libsqlite3-dev libyaml-dev pkg-config linux-headers-$(uname -r) ethtool dhcpcd5 && git clone https://github.com/kylecui/rswitch /tmp/rswitch && cd /tmp/rswitch/rswitch && sudo ./scripts/install.sh && curl -sL https://github.com/kylecui/jz_sniff_rn/releases/download/v0.9.1/jz-sniff-0.9.1-linux-x86_64.tar.gz | tar xz -C /tmp && cd /tmp/jz-sniff-0.9.1-linux-x86_64 && sudo ./install.sh
+```
+
+
 ## Configuration
 
 Default config: `/etc/jz/base.yaml`
