@@ -47,6 +47,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <net/if.h>
+#include <ifaddrs.h>
+#include <sys/ioctl.h>
 
 #define JZ_API_VERSION "0.8.0"
 
@@ -944,8 +946,22 @@ static void handle_modules(struct mg_connection *c, struct mg_http_message *hm, 
         cJSON *ifaces = cJSON_AddArrayToObject(root, "interfaces");
         for (i = 0; i < api->loader->xdp_iface_count; i++) {
             cJSON *entry = cJSON_CreateObject();
-            cJSON_AddStringToObject(entry, "name", api->loader->xdp_iface_names[i]);
+            const char *ifname = api->loader->xdp_iface_names[i];
+            const char *role = "";
+            int j;
+
+            cJSON_AddStringToObject(entry, "name", ifname);
             cJSON_AddNumberToObject(entry, "ifindex", api->loader->xdp_ifindexes[i]);
+
+            if (api->config) {
+                for (j = 0; j < api->config->system.interface_count; j++) {
+                    if (strcmp(api->config->system.interfaces[j].name, ifname) == 0) {
+                        role = api->config->system.interfaces[j].role;
+                        break;
+                    }
+                }
+            }
+            cJSON_AddStringToObject(entry, "role", role);
             cJSON_AddItemToArray(ifaces, entry);
         }
     }
@@ -1478,6 +1494,14 @@ static void handle_dhcp_alerts(struct mg_connection *c, struct mg_http_message *
             cJSON_AddStringToObject(obj, "vendor", servers[i]->profile.vendor);
             cJSON_AddNumberToObject(obj, "first_seen", (double) servers[i]->profile.first_seen);
             cJSON_AddBoolToObject(obj, "protected", is_protected ? 1 : 0);
+            cJSON_AddNumberToObject(obj, "ifindex", (double) servers[i]->ifindex);
+            {
+                char ifname[IF_NAMESIZE];
+                if (if_indextoname(servers[i]->ifindex, ifname))
+                    cJSON_AddStringToObject(obj, "interface", ifname);
+                else
+                    cJSON_AddStringToObject(obj, "interface", "");
+            }
             cJSON_AddItemToArray(arr, obj);
         }
     }
@@ -2761,6 +2785,18 @@ static void handle_guards_auto_config_put(struct mg_connection *c, struct mg_htt
     if (item && cJSON_IsNumber(item) && item->valueint > 0)
         api->config->guards.dynamic.ttl_hours = item->valueint;
 
+    item = cJSON_GetObjectItem(body, "warmup_mode");
+    if (item && cJSON_IsString(item)) {
+        const char *ws = item->valuestring;
+        if (strcmp(ws, "normal") == 0)      api->config->guards.dynamic.warmup_mode = 0;
+        else if (strcmp(ws, "fast") == 0)    api->config->guards.dynamic.warmup_mode = 1;
+        else if (strcmp(ws, "burst") == 0)   api->config->guards.dynamic.warmup_mode = 2;
+    } else if (item && cJSON_IsNumber(item)) {
+        int wm = item->valueint;
+        if (wm >= 0 && wm <= 2)
+            api->config->guards.dynamic.warmup_mode = wm;
+    }
+
     jz_guard_auto_update_config(api->guard_auto, api->config);
 
     if (api_persist_config(api) < 0)
@@ -3423,6 +3459,120 @@ static void handle_system_daemons(struct mg_connection *c, struct mg_http_messag
     api_json_reply(c, 200, root);
 }
 
+/* ── Interface Runtime Status (getifaddrs) ─────────────────────── */
+
+static void handle_system_interfaces(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    struct ifaddrs *ifap = NULL, *ifa;
+    cJSON *root, *arr;
+    int sock_fd;
+
+    (void) hm;
+    (void) api;
+
+    if (getifaddrs(&ifap) < 0) {
+        api_error_reply(c, 500, "getifaddrs failed");
+        return;
+    }
+
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "interfaces");
+
+    /* Iterate: emit one entry per AF_INET address (skip loopback). */
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        char addr_buf[INET_ADDRSTRLEN];
+        char mask_buf[INET_ADDRSTRLEN];
+        struct ifreq ifr;
+        cJSON *obj;
+        int ifidx;
+
+        if (!ifa->ifa_addr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+
+        inet_ntop(AF_INET,
+                  &((struct sockaddr_in *) ifa->ifa_addr)->sin_addr,
+                  addr_buf, sizeof(addr_buf));
+        if (ifa->ifa_netmask)
+            inet_ntop(AF_INET,
+                      &((struct sockaddr_in *) ifa->ifa_netmask)->sin_addr,
+                      mask_buf, sizeof(mask_buf));
+        else
+            snprintf(mask_buf, sizeof(mask_buf), "0.0.0.0");
+
+        ifidx = (int) if_nametoindex(ifa->ifa_name);
+
+        obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "name", ifa->ifa_name);
+        cJSON_AddNumberToObject(obj, "ifindex", (double) ifidx);
+        cJSON_AddStringToObject(obj, "ip", addr_buf);
+        cJSON_AddStringToObject(obj, "netmask", mask_buf);
+        cJSON_AddBoolToObject(obj, "up", (ifa->ifa_flags & IFF_UP) ? 1 : 0);
+        cJSON_AddBoolToObject(obj, "running", (ifa->ifa_flags & IFF_RUNNING) ? 1 : 0);
+
+        /* MTU via ioctl */
+        if (sock_fd >= 0) {
+            memset(&ifr, 0, sizeof(ifr));
+            strncpy(ifr.ifr_name, ifa->ifa_name, IFNAMSIZ - 1);
+            if (ioctl(sock_fd, SIOCGIFMTU, &ifr) == 0)
+                cJSON_AddNumberToObject(obj, "mtu", (double) ifr.ifr_mtu);
+        }
+
+        cJSON_AddItemToArray(arr, obj);
+    }
+
+    /* Also emit interfaces with no IPv4 (link up but no address). */
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        int already = 0;
+        struct ifaddrs *check;
+
+        if (!ifa->ifa_addr) continue;
+        if (ifa->ifa_addr->sa_family != AF_PACKET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+
+        /* Check if we already emitted this interface (has AF_INET). */
+        for (check = ifap; check; check = check->ifa_next) {
+            if (!check->ifa_addr) continue;
+            if (check->ifa_addr->sa_family == AF_INET &&
+                strcmp(check->ifa_name, ifa->ifa_name) == 0) {
+                already = 1;
+                break;
+            }
+        }
+        if (already) continue;
+
+        {
+            struct ifreq ifr;
+            cJSON *obj;
+            int ifidx = (int) if_nametoindex(ifa->ifa_name);
+
+            obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(obj, "name", ifa->ifa_name);
+            cJSON_AddNumberToObject(obj, "ifindex", (double) ifidx);
+            cJSON_AddNullToObject(obj, "ip");
+            cJSON_AddNullToObject(obj, "netmask");
+            cJSON_AddBoolToObject(obj, "up", (ifa->ifa_flags & IFF_UP) ? 1 : 0);
+            cJSON_AddBoolToObject(obj, "running", (ifa->ifa_flags & IFF_RUNNING) ? 1 : 0);
+
+            if (sock_fd >= 0) {
+                memset(&ifr, 0, sizeof(ifr));
+                strncpy(ifr.ifr_name, ifa->ifa_name, IFNAMSIZ - 1);
+                if (ioctl(sock_fd, SIOCGIFMTU, &ifr) == 0)
+                    cJSON_AddNumberToObject(obj, "mtu", (double) ifr.ifr_mtu);
+            }
+
+            cJSON_AddItemToArray(arr, obj);
+        }
+    }
+
+    freeifaddrs(ifap);
+    if (sock_fd >= 0) close(sock_fd);
+
+    api_json_reply(c, 200, root);
+}
+
 static void handle_system_restart(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
                                   struct mg_str daemon_name)
 {
@@ -3801,6 +3951,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/system/daemons"), NULL)) {
             handle_system_daemons(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/system/interfaces"), NULL)) {
+            handle_system_interfaces(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/captures"), NULL)) {

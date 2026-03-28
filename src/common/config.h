@@ -156,6 +156,7 @@ typedef struct jz_config_guard_dynamic {
     bool auto_discover;
     int  max_entries;
     int  ttl_hours;
+    int  warmup_mode;           /* 0=normal, 1=fast, 2=burst (global default) */
 } jz_config_guard_dynamic_t;
 
 typedef struct jz_config_whitelist {

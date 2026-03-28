@@ -59,6 +59,7 @@ const autoConfigForm = reactive({
   enabled: false,
   max_ratio: 0,
   scan_interval: 24,
+  warmup_mode: 'normal' as string,
 })
 const savingConfig = ref(false)
 
@@ -66,6 +67,7 @@ function syncAutoConfigForm() {
   autoConfigForm.enabled = autoStatus.value.enabled
   autoConfigForm.max_ratio = autoStatus.value.max_ratio
   autoConfigForm.scan_interval = autoStatus.value.scan_interval
+  autoConfigForm.warmup_mode = autoStatus.value.warmup_mode ?? 'normal'
 }
 
 async function fetchAll() {
@@ -153,6 +155,7 @@ async function handleSaveAutoConfig() {
       enabled: autoConfigForm.enabled,
       max_ratio: autoConfigForm.max_ratio,
       scan_interval: autoConfigForm.scan_interval,
+      warmup_mode: autoConfigForm.warmup_mode,
     })
     autoStatus.value = result
     syncAutoConfigForm()
@@ -254,6 +257,18 @@ onMounted(fetchAll)
             <el-form-item :label="t('guards.scanInterval')">
               <el-input-number v-model="autoConfigForm.scan_interval" :min="1" :max="720" />
               <span class="unit-label">{{ t('guards.hours') }}</span>
+            </el-form-item>
+            <el-form-item :label="t('config.warmupMode')">
+              <el-select v-model="autoConfigForm.warmup_mode" style="width: 200px;">
+                <el-option :label="t('config.warmupNormal')" value="normal" />
+                <el-option :label="t('config.warmupFast')" value="fast" />
+                <el-option :label="t('config.warmupBurst')" value="burst" />
+              </el-select>
+              <span class="unit-label">
+                {{ autoConfigForm.warmup_mode === 'burst' ? t('config.warmupBurstDesc')
+                 : autoConfigForm.warmup_mode === 'fast' ? t('config.warmupFastDesc')
+                 : t('config.warmupNormalDesc') }}
+              </span>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="savingConfig" @click="handleSaveAutoConfig">

@@ -243,7 +243,9 @@
     "monitorIp": "接口地址",
     "monitorIpHint": "该监控接口的 IP 地址。ARP 设备发现需要此地址才能工作。",
     "monitorIpNone": "无 IP",
-    "monitorIpNoneWarning": "未分配 IP 地址。该接口无法进行设备发现，哨兵将被阻止部署，直到配置 IP 地址。"
+    "monitorIpNoneWarning": "未分配 IP 地址。该接口无法进行设备发现，哨兵将被阻止部署，直到配置 IP 地址。",
+    "dhcpExemptionHint": "如果该网络中有 DHCP 服务器，请将其添加到 DHCP 豁免列表以防止哨兵冲突。",
+    "dhcpExemptionLink": "前往 DHCP 豁免"
   },
   "system": {
     "title": "系统设置",
@@ -261,7 +263,11 @@
     "pid": "PID",
     "running": "运行中",
     "stopped": "已停止",
-    "confirmRestart": "确定要重启 {daemon} 吗？此操作可能导致短暂服务中断。"
+    "confirmRestart": "确定要重启 {daemon} 吗？此操作可能导致短暂服务中断。",
+    "ipAddress": "IP 地址",
+    "linkState": "链路",
+    "mtu": "MTU",
+    "noIp": "无 IP"
   },
   "dhcp": {
     "title": "DHCP 豁免",
@@ -273,7 +279,7 @@
     "alertUnprotected": "检测到未受保护的 DHCP 服务器",
     "alertUnprotectedDesc": "以下 DHCP 服务器未添加豁免，哨兵可能响应其 ARP Probe 导致 IP 分配异常。",
     "alertMultiple": "检测到多个 DHCP 服务器",
-    "alertMultipleDesc": "网络中存在多个 DHCP 服务器，可能存在误接设备或恶意 DHCP 服务器。",
+    "alertMultipleDesc": "同一网段中检测到多个 DHCP 服务器，可能存在恶意 DHCP 服务器。",
     "addExemption": "一键添加豁免",
     "vendor": "厂商",
     "tabWhitelist": "白名单",

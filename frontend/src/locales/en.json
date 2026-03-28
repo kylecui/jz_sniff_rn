@@ -243,7 +243,9 @@
     "monitorIp": "Interface Address",
     "monitorIpHint": "IP address for this monitor interface. Required for ARP-based device discovery.",
     "monitorIpNone": "No IP",
-    "monitorIpNoneWarning": "No IP assigned. Device discovery cannot run on this interface — guards will be blocked until an IP is configured."
+    "monitorIpNoneWarning": "No IP assigned. Device discovery cannot run on this interface — guards will be blocked until an IP is configured.",
+    "dhcpExemptionHint": "If you have DHCP servers on this network, add them to the DHCP Exception list to prevent guard conflicts.",
+    "dhcpExemptionLink": "Go to DHCP Exceptions"
   },
   "system": {
     "title": "System Settings",
@@ -261,7 +263,11 @@
     "pid": "PID",
     "running": "Running",
     "stopped": "Stopped",
-    "confirmRestart": "Are you sure you want to restart {daemon}? This may cause a brief service interruption."
+    "confirmRestart": "Are you sure you want to restart {daemon}? This may cause a brief service interruption.",
+    "ipAddress": "IP Address",
+    "linkState": "Link",
+    "mtu": "MTU",
+    "noIp": "No IP"
   },
   "dhcp": {
     "title": "DHCP Exceptions",
@@ -273,7 +279,7 @@
     "alertUnprotected": "Unprotected DHCP server detected",
     "alertUnprotectedDesc": "The following DHCP servers have no exception configured. Guards may respond to their ARP Probes, causing IP allocation failures.",
     "alertMultiple": "Multiple DHCP servers detected",
-    "alertMultipleDesc": "Multiple DHCP servers found on the network. Possible rogue DHCP server or misconfigured device.",
+    "alertMultipleDesc": "Multiple DHCP servers detected on the same network segment. This could indicate a rogue DHCP server.",
     "addExemption": "Add Exception",
     "vendor": "Vendor",
     "tabWhitelist": "IP Whitelist",

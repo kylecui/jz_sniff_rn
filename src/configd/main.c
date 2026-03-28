@@ -418,7 +418,7 @@ static int apply_config_to_maps(const jz_config_t *cfg)
                  warnings);
 
     free(batch);
-    return 0;
+    return warnings;
 }
 
 /* ── Config Reload ────────────────────────────────────────────── */
@@ -935,8 +935,25 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Apply initial config to BPF maps */
-    apply_config_to_maps(&g_ctx.config);
+    /* Apply initial config to BPF maps.
+     * sniffd may not have finished pinning maps yet (startup race),
+     * so retry with back-off if any maps fail to open. */
+    {
+        int map_warnings, attempt;
+        for (attempt = 0; attempt < 10; attempt++) {
+            map_warnings = apply_config_to_maps(&g_ctx.config);
+            if (map_warnings == 0)
+                break;
+            jz_log_warn("Initial map push: %d map(s) not ready, "
+                        "retry %d/10 in 2s (waiting for sniffd)...",
+                        map_warnings, attempt + 1);
+            sleep(2);
+        }
+        if (map_warnings > 0)
+            jz_log_error("Initial map push still has %d warnings after %d retries "
+                         "— some BPF maps may be unpopulated",
+                         map_warnings, attempt);
+    }
 
     /* Set up inotify watcher */
     setup_config_watch();

@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getModules, getDaemons, reloadModule, restartDaemon } from '@/api/system'
-import type { BpfModule, NetworkInterface, DaemonStatus } from '@/api/system'
+import { getModules, getDaemons, getInterfaceStatus, reloadModule, restartDaemon } from '@/api/system'
+import type { BpfModule, NetworkInterface, DaemonStatus, RuntimeInterface } from '@/api/system'
 
 const { t } = useI18n()
 
 const loading = ref(true)
 const modules = ref<BpfModule[]>([])
 const interfaces = ref<NetworkInterface[]>([])
+const runtimeInterfaces = ref<RuntimeInterface[]>([])
 const daemonList = ref<DaemonStatus[]>([])
 
 async function fetchData() {
   loading.value = true
   try {
-    const [modRes, daemonRes] = await Promise.all([getModules(), getDaemons()])
+    const [modRes, daemonRes, ifRes] = await Promise.all([getModules(), getDaemons(), getInterfaceStatus()])
     modules.value = modRes.modules
     interfaces.value = modRes.interfaces ?? []
     daemonList.value = daemonRes.daemons
+    runtimeInterfaces.value = ifRes.interfaces
   } catch {
     // keep empty
   } finally {
@@ -85,10 +87,35 @@ onMounted(fetchData)
         <!-- Interface Status -->
         <el-card class="section-card">
           <template #header>{{ t('system.interfaces') }}</template>
-          <el-table :data="interfaces" stripe>
-            <el-table-column prop="name" :label="t('system.interfaceName')" />
-            <el-table-column prop="ifindex" :label="t('system.ifindex')" width="100" />
-            <el-table-column prop="role" :label="t('system.role')" />
+          <el-table :data="runtimeInterfaces" stripe>
+            <el-table-column prop="name" :label="t('system.interfaceName')" width="120" />
+            <el-table-column prop="ifindex" :label="t('system.ifindex')" width="80" />
+            <el-table-column :label="t('system.role')" width="100">
+              <template #default="{ row }">
+                {{ interfaces.find(i => i.name === row.name)?.role || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('system.ipAddress')">
+              <template #default="{ row }">
+                <template v-if="row.ip">
+                  {{ row.ip }}
+                  <span v-if="row.netmask" class="text-secondary"> / {{ row.netmask }}</span>
+                </template>
+                <el-tag v-else type="warning" size="small">{{ t('system.noIp') }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('system.linkState')" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.up && row.running ? 'success' : 'danger'" size="small">
+                  {{ row.up && row.running ? 'UP' : 'DOWN' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('system.mtu')" width="80">
+              <template #default="{ row }">
+                {{ row.mtu ?? '-' }}
+              </template>
+            </el-table-column>
           </el-table>
         </el-card>
 
@@ -141,5 +168,9 @@ onMounted(fetchData)
   font-size: 12px;
   color: var(--el-text-color-secondary);
   font-variant-numeric: tabular-nums;
+}
+.text-secondary {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>

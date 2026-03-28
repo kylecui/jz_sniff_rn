@@ -12,6 +12,8 @@ export interface DhcpAlert {
   vendor: string
   first_seen: number
   protected: boolean
+  ifindex: number
+  interface: string
 }
 
 export const getDhcpExceptions = () =>

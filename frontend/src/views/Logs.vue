@@ -115,26 +115,26 @@ onMounted(fetchLogs)
     <el-skeleton :loading="loading" animated>
       <template #default>
         <el-table v-if="isAttackLike" :data="logs" stripe>
-          <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
-          <el-table-column prop="src_ip" :label="t('policies.srcIp')" />
-          <el-table-column prop="dst_ip" :label="t('policies.dstIp')" />
-          <el-table-column prop="src_mac" :label="t('common.mac')" />
-          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" />
-          <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" />
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" sortable />
+          <el-table-column prop="src_ip" :label="t('policies.srcIp')" sortable />
+          <el-table-column prop="dst_ip" :label="t('policies.dstIp')" sortable />
+          <el-table-column prop="src_mac" :label="t('common.mac')" sortable />
+          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
+          <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" sortable />
           <el-table-column prop="details" :label="t('common.description')" min-width="200" />
         </el-table>
 
         <el-table v-else-if="isAudit" :data="logs" stripe>
-          <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
-          <el-table-column prop="action" :label="t('logs.auditAction')" width="180" />
-          <el-table-column prop="actor" :label="t('logs.auditActor')" width="100" />
-          <el-table-column prop="target" :label="t('logs.auditTarget')" />
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" sortable />
+          <el-table-column prop="action" :label="t('logs.auditAction')" width="180" sortable />
+          <el-table-column prop="actor" :label="t('logs.auditActor')" width="100" sortable />
+          <el-table-column prop="target" :label="t('logs.auditTarget')" sortable />
           <el-table-column prop="details" :label="t('common.description')" min-width="200" />
-          <el-table-column prop="result" :label="t('logs.auditResult')" width="100" />
+          <el-table-column prop="result" :label="t('logs.auditResult')" width="100" sortable />
         </el-table>
 
         <el-table v-else-if="isHeartbeat" :data="logs" stripe>
-          <el-table-column prop="timestamp" :label="t('common.time')" width="180" />
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" sortable />
           <el-table-column :label="t('logs.heartbeatSummary')" min-width="400">
             <template #default="{ row }">
               {{ formatHeartbeatSummary(row.data) }}

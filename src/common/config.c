@@ -1264,6 +1264,14 @@ static int parse_guards(yaml_parser_t *parser, yaml_event_t *start,
                         if (scalar_to_int(&v2, &cfg->guards.max_ratio) != 0)
                             add_error(errors, event_line(&v2), "guards.dynamic.max_ratio", "must be int");
                         yaml_event_delete(&v2);
+                    } else if (!strcmp(k, "warmup_mode")) {
+                        const char *ws = (const char *)v2.data.scalar.value;
+                        if (!strcmp(ws, "normal"))       cfg->guards.dynamic.warmup_mode = 0;
+                        else if (!strcmp(ws, "fast"))    cfg->guards.dynamic.warmup_mode = 1;
+                        else if (!strcmp(ws, "burst"))   cfg->guards.dynamic.warmup_mode = 2;
+                        else if (scalar_to_int(&v2, &cfg->guards.dynamic.warmup_mode) != 0)
+                            add_error(errors, event_line(&v2), "guards.dynamic.warmup_mode", "must be normal/fast/burst or int");
+                        yaml_event_delete(&v2);
                     } else {
                         add_error(errors, event_line(&k2), "guards.dynamic", "unknown key '%s'", k);
                         if (skip_node(parser, &v2, errors) != 0) {
@@ -2892,6 +2900,7 @@ void jz_config_defaults(jz_config_t *cfg)
     cfg->guards.dynamic.auto_discover = false;
     cfg->guards.dynamic.max_entries = 16384;
     cfg->guards.dynamic.ttl_hours = 24;
+    cfg->guards.dynamic.warmup_mode = 0;
     cfg->guards.max_ratio = 30;
 
     snprintf(cfg->fake_mac_pool.prefix, sizeof(cfg->fake_mac_pool.prefix), "aa:bb:cc");
@@ -3236,15 +3245,24 @@ char *jz_config_serialize(const jz_config_t *cfg)
         }
     }
 
-    if (sb_appendf(&sb,
-                   "  dynamic: { auto_discover: %s, max_entries: %d, ttl_hours: %d, max_ratio: %d }\n"
-                   "  whitelist:\n",
-                   cfg->guards.dynamic.auto_discover ? "true" : "false",
-                   cfg->guards.dynamic.max_entries,
-                   cfg->guards.dynamic.ttl_hours,
-                   cfg->guards.max_ratio) != 0) {
-        free(sb.data);
-        return NULL;
+    {
+        const char *wm_str;
+        switch (cfg->guards.dynamic.warmup_mode) {
+        case 1:  wm_str = "fast"; break;
+        case 2:  wm_str = "burst"; break;
+        default: wm_str = "normal"; break;
+        }
+        if (sb_appendf(&sb,
+                       "  dynamic: { auto_discover: %s, max_entries: %d, ttl_hours: %d, max_ratio: %d, warmup_mode: %s }\n"
+                       "  whitelist:\n",
+                       cfg->guards.dynamic.auto_discover ? "true" : "false",
+                       cfg->guards.dynamic.max_entries,
+                       cfg->guards.dynamic.ttl_hours,
+                       cfg->guards.max_ratio,
+                       wm_str) != 0) {
+            free(sb.data);
+            return NULL;
+        }
     }
 
     for (i = 0; i < cfg->guards.whitelist_count; i++) {

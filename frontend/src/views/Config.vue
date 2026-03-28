@@ -23,6 +23,7 @@ import { getDiscoveredVlans } from '@/api/discovery'
 import type { DiscoveredVlan } from '@/api/discovery'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const loading = ref(true)
 const configText = ref('')
@@ -641,6 +642,14 @@ onMounted(fetchAll)
                   </div>
                 </template>
               </div>
+              <el-alert type="info" :closable="false" show-icon style="margin-top: 12px;">
+                <template #title>
+                  {{ t('config.dhcpExemptionHint') }}
+                  <el-link type="primary" :underline="false" style="margin-left: 8px; vertical-align: baseline;" @click="router.push('/whitelist')">
+                    {{ t('config.dhcpExemptionLink') }} →
+                  </el-link>
+                </template>
+              </el-alert>
             </template>
 
             <!-- Manage: DHCP / Static config -->

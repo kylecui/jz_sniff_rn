@@ -246,7 +246,7 @@ static int find_monitor_interfaces(jz_discovery_t *disc, const jz_config_t *cfg)
         if (iface->guard_warmup_mode >= 0)
             dst->warmup_mode = iface->guard_warmup_mode;
         else
-            dst->warmup_mode = JZ_WARMUP_NORMAL;
+            dst->warmup_mode = cfg->guards.dynamic.warmup_mode;
 
         disc->iface_count++;
     }

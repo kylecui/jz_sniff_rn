@@ -19,7 +19,16 @@ const dhcpServers = ref<DhcpAlert[]>([])
 
 const unprotectedDhcp = computed(() => dhcpServers.value.filter(s => !s.protected))
 const protectedDhcpCount = computed(() => dhcpServers.value.filter(s => s.protected).length)
-const hasMultipleDhcp = computed(() => dhcpServers.value.length > 1)
+const hasMultipleDhcpInSegment = computed(() => {
+  const bySegment = new Map<number, number>()
+  for (const s of dhcpServers.value) {
+    bySegment.set(s.ifindex, (bySegment.get(s.ifindex) ?? 0) + 1)
+  }
+  for (const count of bySegment.values()) {
+    if (count > 1) return true
+  }
+  return false
+})
 
 async function fetchData() {
   loading.value = true
@@ -85,7 +94,7 @@ onMounted(fetchData)
         </template>
 
         <el-alert
-          v-if="hasMultipleDhcp && protectedDhcpCount > 0"
+          v-if="hasMultipleDhcpInSegment && protectedDhcpCount > 0"
           type="error"
           :title="t('dhcp.alertMultiple')"
           :description="t('dhcp.alertMultipleDesc')"

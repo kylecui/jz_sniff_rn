@@ -197,22 +197,22 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         return -1;
     }
 
-    /* Reuse already-pinned maps (must happen before bpf_object__load) */
+    /* LIBBPF_PIN_BY_NAME maps get an internal pin_path derived from the
+     * object name.  If that path doesn't match what bpf_map__pin()
+     * receives, the pin call fails with -EINVAL.  Override every map's
+     * pin_path to our canonical directory before load so that post-load
+     * bpf_map__pin(map, NULL) always succeeds. */
     struct bpf_map *map;
     bpf_object__for_each_map(map, obj) {
         const char *map_name = bpf_map__name(map);
-        if (!map_name)
+        if (!map_name || strncmp(map_name, "jz_", 3) != 0)
             continue;
 
         char pin[512];
         snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+        bpf_map__set_pin_path(map, pin);
 
         int existing_fd = bpf_obj_get(pin);
-        if (existing_fd < 0) {
-            /* Fallback: LIBBPF_PIN_BY_NAME pins flat under /sys/fs/bpf/ */
-            snprintf(pin, sizeof(pin), "/sys/fs/bpf/%s", map_name);
-            existing_fd = bpf_obj_get(pin);
-        }
         if (existing_fd >= 0) {
             if (bpf_map__reuse_fd(map, existing_fd) < 0) {
                 jz_log_warn("Cannot reuse pinned map %s: %s",
@@ -220,6 +220,10 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
             }
             close(existing_fd);
         }
+
+        char flat[512];
+        snprintf(flat, sizeof(flat), "/sys/fs/bpf/%s", map_name);
+        unlink(flat);
     }
 
     /* Load (verify + load into kernel) */
@@ -245,24 +249,25 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         return -1;
     }
 
-    /* Pin any NEW maps that weren't reused */
+    /* Pin maps that aren't already pinned (reused maps are already on disk) */
     bpf_object__for_each_map(map, obj) {
         const char *map_name = bpf_map__name(map);
-        if (!map_name)
+        if (!map_name || strncmp(map_name, "jz_", 3) != 0)
             continue;
 
-        char pin[512];
-        snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+        const char *cur_pin = bpf_map__pin_path(map);
+        if (!cur_pin)
+            continue;
 
-        int check_fd = bpf_obj_get(pin);
+        int check_fd = bpf_obj_get(cur_pin);
         if (check_fd >= 0) {
             close(check_fd);
             continue;
         }
 
-        if (bpf_map__pin(map, pin) < 0) {
+        if (bpf_map__pin(map, NULL) < 0) {
             jz_log_warn("Failed to pin map %s at %s: %s",
-                         map_name, pin, strerror(errno));
+                         map_name, cur_pin, strerror(errno));
         }
     }
 

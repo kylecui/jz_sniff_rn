@@ -376,7 +376,7 @@ static int parse_monitor_subnets(jz_guard_auto_t *ga, const jz_config_t *cfg)
         seg->created_ns = get_monotonic_ns();
         seg->warmup_mode = (iface->guard_warmup_mode >= 0)
             ? iface->guard_warmup_mode
-            : JZ_WARMUP_NORMAL;
+            : cfg->guards.dynamic.warmup_mode;
 
         {
             const char *mode_str;
@@ -819,20 +819,32 @@ int jz_guard_auto_list_json(const jz_guard_auto_t *ga, char *buf, size_t buf_siz
     global_ttl = ga->config ? ga->config->guards.dynamic.ttl_hours : 24;
     global_enabled = ga->config ? ga->config->guards.dynamic.auto_discover : false;
 
-    total_max_allowed = 0;
-    for (i = 0; i < ga->segment_count && i < JZ_GUARD_AUTO_MAX_SEGMENTS; i++)
-        total_max_allowed += max_allowed_dynamic_segment(&ga->segments[i]);
+    {
+        const char *gwm_str;
+        int gwm = ga->config ? ga->config->guards.dynamic.warmup_mode : 0;
+        switch (gwm) {
+        case 1:  gwm_str = "fast"; break;
+        case 2:  gwm_str = "burst"; break;
+        default: gwm_str = "normal"; break;
+        }
 
-    off = 0;
-    n = snprintf(buf + off, buf_size - (size_t)off,
-                 "{\"max_ratio\":%d,\"segment_count\":%d,\"subnet_total\":%d,"
-                 "\"max_allowed\":%d,\"current_dynamic\":%d,\"frozen_count\":%d,"
-                 "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d,"
-                 "\"enabled\":%s,\"scan_interval\":%d,\"segments\":[",
-                 global_ratio, ga->segment_count, total_subnet,
-                 total_max_allowed, total_dynamic, frozen_count,
-                 static_count, online_devices, free,
-                 global_enabled ? "true" : "false", global_ttl);
+        total_max_allowed = 0;
+        for (i = 0; i < ga->segment_count && i < JZ_GUARD_AUTO_MAX_SEGMENTS; i++)
+            total_max_allowed += max_allowed_dynamic_segment(&ga->segments[i]);
+
+        off = 0;
+        n = snprintf(buf + off, buf_size - (size_t)off,
+                     "{\"max_ratio\":%d,\"segment_count\":%d,\"subnet_total\":%d,"
+                     "\"max_allowed\":%d,\"current_dynamic\":%d,\"frozen_count\":%d,"
+                     "\"static_count\":%d,\"online_devices\":%d,\"free_ips\":%d,"
+                     "\"enabled\":%s,\"scan_interval\":%d,\"warmup_mode\":\"%s\","
+                     "\"segments\":[",
+                     global_ratio, ga->segment_count, total_subnet,
+                     total_max_allowed, total_dynamic, frozen_count,
+                     static_count, online_devices, free,
+                     global_enabled ? "true" : "false", global_ttl,
+                     gwm_str);
+    }
     if (n < 0)
         return -1;
     if ((size_t)n >= buf_size - (size_t)off)

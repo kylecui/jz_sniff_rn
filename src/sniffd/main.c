@@ -17,6 +17,7 @@
 #include "discovery.h"
 #include "guard_auto.h"
 #include "guard_mgr.h"
+#include "ip_mgr.h"
 #include "policy_mgr.h"
 #include "policy_auto.h"
 #include "heartbeat.h"
@@ -100,6 +101,7 @@ static struct {
     jz_probe_gen_t    probe_gen;
     jz_guard_mgr_t    guard_mgr;
     jz_discovery_t    discovery;
+    jz_ip_mgr_t       ip_mgr;
     jz_guard_auto_t   guard_auto;
     jz_policy_mgr_t   policy_mgr;
     jz_policy_auto_t  policy_auto;
@@ -679,6 +681,9 @@ static int do_reload(void)
         jz_guard_mgr_load_config(&g_ctx.guard_mgr, &g_ctx.config);
     }
 
+    if (g_ctx.ip_mgr.initialized)
+        jz_ip_mgr_update_config(&g_ctx.ip_mgr, &g_ctx.config);
+
     if (g_ctx.discovery.initialized)
         jz_discovery_update_config(&g_ctx.discovery, &g_ctx.config);
 
@@ -1006,6 +1011,12 @@ int main(int argc, char *argv[])
         g_ctx.ktime_wall_offset = time(NULL) - ts.tv_sec;
     }
 
+    /* Initialize IP manager (DHCP/static) — must run before discovery
+     * so that get_interface_ip() succeeds on managed interfaces */
+    if (jz_ip_mgr_init(&g_ctx.ip_mgr, &g_ctx.config) < 0) {
+        jz_log_warn("IP manager init failed — monitor interfaces may lack IPs");
+    }
+
     /* Initialize passive device discovery + ARP scanner */
     if (jz_discovery_init(&g_ctx.discovery, &g_ctx.config) < 0) {
         jz_log_warn("Discovery init failed — device fingerprinting disabled");
@@ -1156,6 +1167,17 @@ int main(int argc, char *argv[])
         if (g_ctx.guard_mgr.initialized)
             jz_guard_mgr_tick(&g_ctx.guard_mgr);
 
+        if (g_ctx.ip_mgr.initialized)
+            jz_ip_mgr_tick(&g_ctx.ip_mgr);
+
+        /* When ip_mgr applies a new IP, re-scan monitor interfaces so
+         * discovery picks up NICs that previously had no address. */
+        if (g_ctx.ip_mgr.new_ip_applied) {
+            g_ctx.ip_mgr.new_ip_applied = false;
+            if (g_ctx.discovery.initialized)
+                jz_discovery_update_config(&g_ctx.discovery, &g_ctx.config);
+        }
+
         if (g_ctx.discovery.initialized) {
             jz_discovery_tick(&g_ctx.discovery);
             jz_discovery_recv_arp(&g_ctx.discovery);
@@ -1238,6 +1260,7 @@ cleanup:
     jz_policy_mgr_destroy(&g_ctx.policy_mgr);
     jz_guard_auto_destroy(&g_ctx.guard_auto);
     jz_discovery_destroy(&g_ctx.discovery);
+    jz_ip_mgr_destroy(&g_ctx.ip_mgr);
     jz_probe_gen_destroy(&g_ctx.probe_gen);
     jz_guard_mgr_destroy(&g_ctx.guard_mgr);
     jz_ringbuf_destroy(&g_ctx.ringbuf);

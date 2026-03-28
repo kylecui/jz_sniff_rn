@@ -16,6 +16,11 @@ const discoveryConfig = ref<DiscoveryConfig>({
 })
 const configLoading = ref(false)
 
+function ipToNum(ip: string): number {
+  const parts = ip.split('.')
+  return ((+parts[0]) << 24 | (+parts[1]) << 16 | (+parts[2]) << 8 | (+parts[3])) >>> 0
+}
+
 function formatTime(ts?: number): string {
   if (!ts) return '-'
   return new Date(ts * 1000).toLocaleString()
@@ -106,19 +111,19 @@ onMounted(() => {
     <el-skeleton :loading="loading" animated>
       <template #default>
         <el-table :data="devices" stripe @row-click="handleRowClick" style="cursor: pointer">
-          <el-table-column prop="ip" :label="t('common.ip')" />
-          <el-table-column prop="mac" :label="t('common.mac')" />
-          <el-table-column :label="t('discovery.interface')" width="120">
+          <el-table-column prop="ip" :label="t('common.ip')" sortable :sort-method="(a: Device, b: Device) => ipToNum(a.ip) - ipToNum(b.ip)" />
+          <el-table-column prop="mac" :label="t('common.mac')" sortable />
+          <el-table-column :label="t('discovery.interface')" width="120" sortable :sort-method="(a: Device, b: Device) => (a.interface || '').localeCompare(b.interface || '')">
             <template #default="{ row }">
               {{ row.interface || '-' }}
             </template>
           </el-table-column>
-          <el-table-column prop="vlan" :label="t('discovery.vlan')" width="80" />
-          <el-table-column prop="hostname" :label="t('discovery.hostname')" />
-          <el-table-column prop="vendor" :label="t('discovery.vendor')" />
-          <el-table-column prop="os_class" :label="t('discovery.osClass')" />
-          <el-table-column prop="device_class" :label="t('discovery.deviceClass')" />
-          <el-table-column :label="t('discovery.lastSeen')" width="180">
+          <el-table-column prop="vlan" :label="t('discovery.vlan')" width="80" sortable />
+          <el-table-column prop="hostname" :label="t('discovery.hostname')" sortable />
+          <el-table-column prop="vendor" :label="t('discovery.vendor')" sortable />
+          <el-table-column prop="os_class" :label="t('discovery.osClass')" sortable />
+          <el-table-column prop="device_class" :label="t('discovery.deviceClass')" sortable />
+          <el-table-column :label="t('discovery.lastSeen')" width="180" sortable :sort-method="(a: Device, b: Device) => (a.last_seen ?? 0) - (b.last_seen ?? 0)">
             <template #default="{ row }">
               {{ formatTime(row.last_seen) }}
             </template>

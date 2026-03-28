@@ -26,6 +26,7 @@ export interface AutoGuardStatus {
   free_ips: number
   enabled: boolean
   scan_interval: number
+  warmup_mode: string
 }
 
 export const getGuards = () => get<{ guards: Guard[] }>('/guards')
@@ -54,6 +55,7 @@ export interface AutoGuardConfig {
   max_ratio?: number
   enabled?: boolean
   scan_interval?: number
+  warmup_mode?: string
 }
 
 export const updateAutoGuardConfig = (data: AutoGuardConfig) =>

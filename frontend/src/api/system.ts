@@ -28,6 +28,20 @@ export interface DaemonsResponse {
   daemons: DaemonStatus[]
 }
 
+export interface RuntimeInterface {
+  name: string
+  ifindex: number
+  ip: string | null
+  netmask: string | null
+  up: boolean
+  running: boolean
+  mtu?: number
+}
+
+export interface RuntimeInterfacesResponse {
+  interfaces: RuntimeInterface[]
+}
+
 export interface HealthResponse {
   status: string
 }
@@ -43,6 +57,7 @@ export const getHealth = () => get<HealthResponse>('/health')
 export const getStatus = () => get<StatusResponse>('/status')
 export const getModules = () => get<ModulesResponse>('/modules')
 export const getDaemons = () => get<DaemonsResponse>('/system/daemons')
+export const getInterfaceStatus = () => get<RuntimeInterfacesResponse>('/system/interfaces')
 export const reloadModule = (name: string) =>
   post<void>(`/modules/${name}/reload`)
 export const restartDaemon = (name: string) =>
