@@ -110,3 +110,47 @@ export const deleteCapture = (filename: string) =>
   del<{ status: string; filename: string }>(`/captures/${filename}`)
 export const downloadCaptureUrl = (filename: string) =>
   `/api/v1/captures/${encodeURIComponent(filename)}/download`
+
+export interface LogSyslogConfig {
+  enabled: boolean
+  format: string
+  server: string
+  port: number
+  facility: string
+}
+
+export interface LogMqttConfig {
+  enabled: boolean
+  format: string
+  broker: string
+  tls: boolean
+  tls_ca: string
+  client_id: string
+  topic_prefix: string
+  qos: number
+  keepalive_sec: number
+  heartbeat_interval_sec: number
+  heartbeat_max_devices: number
+}
+
+export interface LogHttpsConfig {
+  enabled: boolean
+  url: string
+  tls_cert: string
+  tls_key: string
+  interval_sec: number
+  batch_size: number
+  compress: boolean
+}
+
+export interface LogTransportConfig {
+  format: string
+  heartbeat_interval_sec: number
+  syslog: LogSyslogConfig
+  mqtt: LogMqttConfig
+  https: LogHttpsConfig
+}
+
+export const getLogTransport = () => get<LogTransportConfig>('/config/log')
+export const updateLogTransport = (data: Partial<LogTransportConfig>) =>
+  put<LogTransportConfig>('/config/log', data)

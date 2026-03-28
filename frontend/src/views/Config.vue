@@ -17,8 +17,10 @@ import {
   stopCapture,
   deleteCapture,
   downloadCaptureUrl,
+  getLogTransport,
+  updateLogTransport,
 } from '@/api/config'
-import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, CaptureFile } from '@/api/config'
+import type { ConfigHistoryEntry, NetworkInterface, ArpSpoofTarget, CaptureFile, LogTransportConfig } from '@/api/config'
 import { getDiscoveredVlans } from '@/api/discovery'
 import type { DiscoveredVlan } from '@/api/discovery'
 
@@ -49,6 +51,22 @@ const captureMaxSizeMB = ref(100)
 const captureLoading = ref(false)
 const discoveredVlans = ref<DiscoveredVlan[]>([])
 
+/* -- Data Server state -- */
+type DataServerProtocol = 'none' | 'v1' | 'v2'
+const dataServerProtocol = ref<DataServerProtocol>('none')
+const dataServerSaving = ref(false)
+const syslogServer = ref('')
+const syslogPort = ref(514)
+const syslogFacility = ref('local0')
+const mqttBroker = ref('')
+const mqttTopicPrefix = ref('')
+const mqttClientId = ref('')
+const mqttTls = ref(false)
+const mqttTlsCa = ref('')
+const mqttQos = ref(1)
+const mqttKeepalive = ref(60)
+
+const syslogFacilities = ['local0', 'local1', 'local2', 'local3', 'local4', 'local5', 'local6', 'local7', 'user', 'daemon']
 /* -- Manage role helpers -- */
 interface IpConfigState {
   mode: 'dhcp' | 'static' | 'none'
@@ -208,6 +226,7 @@ async function fetchAll() {
       getArpSpoof(),
       getCaptures(),
       getDiscoveredVlans(),
+      getLogTransport(),
     ])
 
     const val = <T>(r: PromiseSettledResult<T>): T | null =>
@@ -220,6 +239,7 @@ async function fetchAll() {
     const arpSpoof = val(results[4]) as { enabled: boolean; interval_sec: number; targets: ArpSpoofTarget[] } | null
     const captureData = val(results[5]) as Record<string, unknown> | null
     const vlansData = val(results[6]) as { vlans: DiscoveredVlan[] } | null
+    const logData = val(results[7]) as LogTransportConfig | null
 
     if (cfg) {
       const json = JSON.stringify(cfg, null, 2)
@@ -258,6 +278,26 @@ async function fetchAll() {
     }
     if (vlansData) {
       discoveredVlans.value = vlansData.vlans ?? []
+    }
+    if (logData) {
+      if (logData.mqtt.enabled) {
+        dataServerProtocol.value = 'v2'
+      } else if (logData.syslog.enabled) {
+        dataServerProtocol.value = 'v1'
+      } else {
+        dataServerProtocol.value = 'none'
+      }
+      syslogFacility.value = logData.syslog.facility || 'local0'
+      const clean = (s: string) => s === 'null' ? '' : (s || '')
+      syslogServer.value = clean(logData.syslog.server)
+      syslogPort.value = logData.syslog.port || 514
+      mqttBroker.value = clean(logData.mqtt.broker)
+      mqttTopicPrefix.value = clean(logData.mqtt.topic_prefix)
+      mqttClientId.value = clean(logData.mqtt.client_id)
+      mqttTls.value = logData.mqtt.tls
+      mqttTlsCa.value = clean(logData.mqtt.tls_ca)
+      mqttQos.value = logData.mqtt.qos
+      mqttKeepalive.value = logData.mqtt.keepalive_sec
     }
   } catch {
     // unexpected error — keep defaults
@@ -380,6 +420,39 @@ async function handleDeleteCapture(filename: string) {
     await fetchAll()
   } catch {
     // cancelled or error
+  }
+}
+
+async function handleSaveDataServer() {
+  try {
+    await ElMessageBox.confirm(t('config.confirmSaveDataServer'), t('common.confirm'), { type: 'warning' })
+    dataServerSaving.value = true
+    const payload: Record<string, unknown> = {}
+    if (dataServerProtocol.value === 'none') {
+      payload.syslog = { enabled: false }
+      payload.mqtt = { enabled: false }
+    } else if (dataServerProtocol.value === 'v1') {
+      payload.syslog = { enabled: true, server: syslogServer.value, port: syslogPort.value, facility: syslogFacility.value }
+      payload.mqtt = { enabled: false }
+    } else {
+      payload.syslog = { enabled: false }
+      payload.mqtt = {
+        enabled: true,
+        broker: mqttBroker.value,
+        topic_prefix: mqttTopicPrefix.value,
+        client_id: mqttClientId.value,
+        tls: mqttTls.value,
+        tls_ca: mqttTlsCa.value,
+        qos: mqttQos.value,
+        keepalive_sec: mqttKeepalive.value,
+      }
+    }
+    await updateLogTransport(payload as Partial<LogTransportConfig>)
+    ElMessage.success(t('common.success'))
+  } catch {
+    // cancelled or error
+  } finally {
+    dataServerSaving.value = false
   }
 }
 
@@ -741,6 +814,88 @@ onMounted(fetchAll)
           </div>
         </el-card>
 
+        <!-- Data Server -->
+        <el-card class="section-card">
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('config.dataServer') }}</span>
+              <el-button type="primary" size="small" :loading="dataServerSaving" @click="handleSaveDataServer">
+                {{ t('common.save') }}
+              </el-button>
+            </div>
+          </template>
+          <p class="data-server-desc">{{ t('config.dataServerDesc') }}</p>
+          <div class="data-server-protocol">
+            <span class="data-server-label">{{ t('config.dataServerProtocol') }}</span>
+            <el-radio-group v-model="dataServerProtocol" size="small">
+              <el-radio-button value="none">{{ t('config.dataServerNone') }}</el-radio-button>
+              <el-radio-button value="v1">{{ t('config.dataServerV1') }}</el-radio-button>
+              <el-radio-button value="v2">{{ t('config.dataServerV2') }}</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="data-server-hint">
+            {{ dataServerProtocol === 'v1' ? t('config.dataServerV1Desc')
+             : dataServerProtocol === 'v2' ? t('config.dataServerV2Desc')
+             : t('config.dataServerNoneDesc') }}
+          </div>
+
+          <!-- V1: Syslog settings -->
+          <template v-if="dataServerProtocol === 'v1'">
+            <el-divider />
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerSyslogServer') }}</span>
+              <el-input v-model="syslogServer" size="small" :placeholder="t('config.dataServerSyslogServerPlaceholder')" style="max-width: 280px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerSyslogPort') }}</span>
+              <el-input-number v-model="syslogPort" :min="1" :max="65535" size="small" style="width: 140px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerFacility') }}</span>
+              <el-select v-model="syslogFacility" size="small" style="width: 160px;">
+                <el-option v-for="f in syslogFacilities" :key="f" :label="f" :value="f" />
+              </el-select>
+            </div>
+          </template>
+
+          <!-- V2: MQTT settings -->
+          <template v-if="dataServerProtocol === 'v2'">
+            <el-divider />
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerBroker') }}</span>
+              <el-input v-model="mqttBroker" size="small" :placeholder="t('config.dataServerBrokerPlaceholder')" style="max-width: 360px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerTopicPrefix') }}</span>
+              <el-input v-model="mqttTopicPrefix" size="small" :placeholder="t('config.dataServerTopicPrefixPlaceholder')" style="max-width: 260px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerClientId') }}</span>
+              <el-input v-model="mqttClientId" size="small" :placeholder="t('config.dataServerClientIdPlaceholder')" style="max-width: 260px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerQos') }}</span>
+              <el-select v-model="mqttQos" size="small" style="width: 100px;">
+                <el-option :label="'0'" :value="0" />
+                <el-option :label="'1'" :value="1" />
+                <el-option :label="'2'" :value="2" />
+              </el-select>
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerKeepalive') }}</span>
+              <el-input-number v-model="mqttKeepalive" :min="10" :max="3600" size="small" style="width: 140px;" />
+            </div>
+            <div class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerTls') }}</span>
+              <el-switch v-model="mqttTls" />
+            </div>
+            <div v-if="mqttTls" class="data-server-field">
+              <span class="data-server-label">{{ t('config.dataServerTlsCa') }}</span>
+              <el-input v-model="mqttTlsCa" size="small" placeholder="/etc/jz/ca.pem" style="max-width: 360px;" />
+            </div>
+          </template>
+        </el-card>
+
         <!-- ARP Spoofing -->
         <el-card class="section-card">
           <template #header>
@@ -1085,5 +1240,33 @@ onMounted(fetchAll)
 .monitor-ip-section {
   margin-top: 12px;
   margin-bottom: 8px;
+}
+.data-server-desc {
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 12px;
+}
+.data-server-protocol {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.data-server-label {
+  font-size: 13px;
+  color: #606266;
+  min-width: 150px;
+}
+.data-server-hint {
+  font-size: 12px;
+  color: #909399;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.data-server-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
 }
 </style>

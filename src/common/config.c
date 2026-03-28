@@ -1906,9 +1906,14 @@ static int parse_log_syslog(yaml_parser_t *parser, yaml_event_t *start,
             add_error(errors, event_line(&val_ev), "log.syslog.enabled", "must be bool");
         else if (!strcmp(key, "format"))
             copy_scalar(cfg->log.syslog.format, sizeof(cfg->log.syslog.format), &val_ev);
+        else if (!strcmp(key, "server"))
+            copy_scalar(cfg->log.syslog.server, sizeof(cfg->log.syslog.server), &val_ev);
+        else if (!strcmp(key, "port") && scalar_to_int(&val_ev, &cfg->log.syslog.port) != 0)
+            add_error(errors, event_line(&val_ev), "log.syslog.port", "must be integer");
         else if (!strcmp(key, "facility"))
             copy_scalar(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), &val_ev);
-        else if (strcmp(key, "enabled") && strcmp(key, "format") && strcmp(key, "facility"))
+        else if (strcmp(key, "enabled") && strcmp(key, "format") && strcmp(key, "facility")
+                 && strcmp(key, "server") && strcmp(key, "port"))
             add_error(errors, event_line(&key_ev), "log.syslog", "unknown key '%s'", key);
 
         yaml_event_delete(&val_ev);
@@ -2931,6 +2936,8 @@ void jz_config_defaults(jz_config_t *cfg)
 
     cfg->log.syslog.enabled = false;
     snprintf(cfg->log.syslog.format, sizeof(cfg->log.syslog.format), "v1");
+    cfg->log.syslog.server[0] = '\0';
+    cfg->log.syslog.port = 514;
     snprintf(cfg->log.syslog.facility, sizeof(cfg->log.syslog.facility), "local0");
 
     cfg->log.mqtt.enabled = false;
@@ -3337,6 +3344,8 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    "  syslog:\n"
                    "    enabled: %s\n"
                    "    format: %s\n"
+                   "    server: %s\n"
+                   "    port: %d\n"
                    "    facility: %s\n"
                    "  mqtt:\n"
                    "    enabled: %s\n"
@@ -3379,6 +3388,8 @@ char *jz_config_serialize(const jz_config_t *cfg)
                    cfg->log.heartbeat_interval_sec,
                    cfg->log.syslog.enabled ? "true" : "false",
                    cfg->log.syslog.format,
+                   cfg->log.syslog.server,
+                   cfg->log.syslog.port,
                    cfg->log.syslog.facility,
                    cfg->log.mqtt.enabled ? "true" : "false",
                    cfg->log.mqtt.format,

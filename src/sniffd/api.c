@@ -3212,6 +3212,260 @@ static void handle_config_arp_spoof_put(struct mg_connection *c, struct mg_http_
     handle_config_arp_spoof_get(c, hm, api);
 }
 
+/* ---------- Log transport config (syslog / mqtt / https) ---------- */
+
+static void handle_config_log_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *syslog_obj;
+    cJSON *mqtt_obj;
+    cJSON *https_obj;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "format", api->config->log.format);
+    cJSON_AddNumberToObject(root, "heartbeat_interval_sec",
+                            api->config->log.heartbeat_interval_sec);
+
+    /* syslog transport */
+    syslog_obj = cJSON_AddObjectToObject(root, "syslog");
+    cJSON_AddBoolToObject(syslog_obj, "enabled", api->config->log.syslog.enabled);
+    cJSON_AddStringToObject(syslog_obj, "format", api->config->log.syslog.format);
+    cJSON_AddStringToObject(syslog_obj, "server", api->config->log.syslog.server);
+    cJSON_AddNumberToObject(syslog_obj, "port", api->config->log.syslog.port);
+    cJSON_AddStringToObject(syslog_obj, "facility", api->config->log.syslog.facility);
+
+    /* mqtt transport */
+    mqtt_obj = cJSON_AddObjectToObject(root, "mqtt");
+    cJSON_AddBoolToObject(mqtt_obj, "enabled", api->config->log.mqtt.enabled);
+    cJSON_AddStringToObject(mqtt_obj, "format", api->config->log.mqtt.format);
+    cJSON_AddStringToObject(mqtt_obj, "broker", api->config->log.mqtt.broker);
+    cJSON_AddBoolToObject(mqtt_obj, "tls", api->config->log.mqtt.tls);
+    cJSON_AddStringToObject(mqtt_obj, "tls_ca", api->config->log.mqtt.tls_ca);
+    cJSON_AddStringToObject(mqtt_obj, "client_id", api->config->log.mqtt.client_id);
+    cJSON_AddStringToObject(mqtt_obj, "topic_prefix", api->config->log.mqtt.topic_prefix);
+    cJSON_AddNumberToObject(mqtt_obj, "qos", api->config->log.mqtt.qos);
+    cJSON_AddNumberToObject(mqtt_obj, "keepalive_sec", api->config->log.mqtt.keepalive_sec);
+    cJSON_AddNumberToObject(mqtt_obj, "heartbeat_interval_sec",
+                            api->config->log.mqtt.heartbeat_interval_sec);
+    cJSON_AddNumberToObject(mqtt_obj, "heartbeat_max_devices",
+                            api->config->log.mqtt.heartbeat_max_devices);
+
+    /* https transport */
+    https_obj = cJSON_AddObjectToObject(root, "https");
+    cJSON_AddBoolToObject(https_obj, "enabled", api->config->log.https.enabled);
+    cJSON_AddStringToObject(https_obj, "url", api->config->log.https.url);
+    cJSON_AddStringToObject(https_obj, "tls_cert", api->config->log.https.tls_cert);
+    cJSON_AddStringToObject(https_obj, "tls_key", api->config->log.https.tls_key);
+    cJSON_AddNumberToObject(https_obj, "interval_sec", api->config->log.https.interval_sec);
+    cJSON_AddNumberToObject(https_obj, "batch_size", api->config->log.https.batch_size);
+    cJSON_AddBoolToObject(https_obj, "compress", api->config->log.https.compress);
+
+    api_json_reply(c, 200, root);
+}
+
+static void handle_config_log_put(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *item;
+    cJSON *sub;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid JSON body");
+        return;
+    }
+
+    /* global log fields */
+    item = cJSON_GetObjectItem(body, "format");
+    if (item && cJSON_IsString(item))
+        snprintf(api->config->log.format, sizeof(api->config->log.format),
+                 "%s", item->valuestring);
+
+    item = cJSON_GetObjectItem(body, "heartbeat_interval_sec");
+    if (item && cJSON_IsNumber(item)) {
+        int val = item->valueint;
+        if (val < 60) val = 60;
+        if (val > 86400) val = 86400;
+        api->config->log.heartbeat_interval_sec = val;
+    }
+
+    /* syslog transport */
+    sub = cJSON_GetObjectItem(body, "syslog");
+    if (sub && cJSON_IsObject(sub)) {
+        item = cJSON_GetObjectItem(sub, "enabled");
+        if (item && cJSON_IsBool(item))
+            api->config->log.syslog.enabled = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItem(sub, "format");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.format,
+                     sizeof(api->config->log.syslog.format),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "facility");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.facility,
+                     sizeof(api->config->log.syslog.facility),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "server");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.syslog.server,
+                     sizeof(api->config->log.syslog.server),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "port");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 1) val = 514;
+            if (val > 65535) val = 65535;
+            api->config->log.syslog.port = val;
+        }
+    }
+
+    /* mqtt transport */
+    sub = cJSON_GetObjectItem(body, "mqtt");
+    if (sub && cJSON_IsObject(sub)) {
+        item = cJSON_GetObjectItem(sub, "enabled");
+        if (item && cJSON_IsBool(item))
+            api->config->log.mqtt.enabled = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItem(sub, "format");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.mqtt.format,
+                     sizeof(api->config->log.mqtt.format),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "broker");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.mqtt.broker,
+                     sizeof(api->config->log.mqtt.broker),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "tls");
+        if (item && cJSON_IsBool(item))
+            api->config->log.mqtt.tls = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItem(sub, "tls_ca");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.mqtt.tls_ca,
+                     sizeof(api->config->log.mqtt.tls_ca),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "client_id");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.mqtt.client_id,
+                     sizeof(api->config->log.mqtt.client_id),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "topic_prefix");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.mqtt.topic_prefix,
+                     sizeof(api->config->log.mqtt.topic_prefix),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "qos");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 0) val = 0;
+            if (val > 2) val = 2;
+            api->config->log.mqtt.qos = val;
+        }
+
+        item = cJSON_GetObjectItem(sub, "keepalive_sec");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 10) val = 10;
+            if (val > 3600) val = 3600;
+            api->config->log.mqtt.keepalive_sec = val;
+        }
+
+        item = cJSON_GetObjectItem(sub, "heartbeat_interval_sec");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 10) val = 10;
+            if (val > 86400) val = 86400;
+            api->config->log.mqtt.heartbeat_interval_sec = val;
+        }
+
+        item = cJSON_GetObjectItem(sub, "heartbeat_max_devices");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 0) val = 0;
+            if (val > 10000) val = 10000;
+            api->config->log.mqtt.heartbeat_max_devices = val;
+        }
+    }
+
+    /* https transport */
+    sub = cJSON_GetObjectItem(body, "https");
+    if (sub && cJSON_IsObject(sub)) {
+        item = cJSON_GetObjectItem(sub, "enabled");
+        if (item && cJSON_IsBool(item))
+            api->config->log.https.enabled = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItem(sub, "url");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.https.url,
+                     sizeof(api->config->log.https.url),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "tls_cert");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.https.tls_cert,
+                     sizeof(api->config->log.https.tls_cert),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "tls_key");
+        if (item && cJSON_IsString(item))
+            snprintf(api->config->log.https.tls_key,
+                     sizeof(api->config->log.https.tls_key),
+                     "%s", item->valuestring);
+
+        item = cJSON_GetObjectItem(sub, "interval_sec");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 5) val = 5;
+            if (val > 86400) val = 86400;
+            api->config->log.https.interval_sec = val;
+        }
+
+        item = cJSON_GetObjectItem(sub, "batch_size");
+        if (item && cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val < 1) val = 1;
+            if (val > 100000) val = 100000;
+            api->config->log.https.batch_size = val;
+        }
+
+        item = cJSON_GetObjectItem(sub, "compress");
+        if (item && cJSON_IsBool(item))
+            api->config->log.https.compress = cJSON_IsTrue(item);
+    }
+
+    if (api_persist_config(api) < 0) {
+        jz_log_error("config/log PUT: failed to persist config");
+        cJSON_Delete(body);
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    api_audit_log(api, "config_log_update", NULL, NULL, "success");
+    cJSON_Delete(body);
+    handle_config_log_get(c, hm, api);
+}
+
 static jz_config_interface_t *find_first_monitor_iface(jz_api_t *api)
 {
     int i;
@@ -3961,6 +4215,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_config_vlans_get(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/log"), NULL)) {
+            handle_config_log_get(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/config"), NULL)) {
             handle_config_get(c, hm, api);
             return;
@@ -4124,6 +4382,10 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/config/vlans"), NULL)) {
             handle_config_vlans_put(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/config/log"), NULL)) {
+            handle_config_log_put(c, hm, api);
             return;
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {

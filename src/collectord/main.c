@@ -1014,7 +1014,7 @@ int main(int argc, char *argv[])
                 dedup_window, rate_limit, g_ctx.max_db_size_mb);
 
     /* Initialize IPC server */
-    if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_COLLECTORD, 0660,
+    if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_COLLECTORD, 0666,
                            ipc_handler, &g_ctx.ipc) < 0) {
         jz_log_fatal("Failed to initialize IPC server");
         exit_code = 1;

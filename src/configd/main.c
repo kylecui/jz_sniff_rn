@@ -991,7 +991,7 @@ int main(int argc, char *argv[])
     setup_config_watch();
 
     /* Initialize IPC server */
-    if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_CONFIGD, 0660,
+    if (jz_ipc_server_init(&g_ctx.ipc, JZ_IPC_SOCK_CONFIGD, 0666,
                            ipc_handler, &g_ctx.ipc) < 0) {
         jz_log_fatal("Failed to initialize IPC server");
         exit_code = 1;
