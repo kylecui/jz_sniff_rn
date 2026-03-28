@@ -50,7 +50,7 @@
 #include <ifaddrs.h>
 #include <sys/ioctl.h>
 
-#define JZ_API_VERSION "0.8.0"
+#define JZ_API_VERSION "0.9.1"
 
 #ifndef JZ_WWW_ROOT
 #define JZ_WWW_ROOT "/usr/share/jz/www"

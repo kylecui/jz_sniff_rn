@@ -12,7 +12,7 @@
 
 .PHONY: all bpf user cli test clean install frontend frontend-install \
         test-unit test-bpf test-integration test-perf \
-        coverage lint format help
+        coverage lint format help release
 
 # ── Toolchain ──────────────────────────────────────────────────
 CLANG      ?= clang
@@ -44,6 +44,11 @@ RUNDIR     ?= /var/run/jz
 UNITDIR    ?= /etc/systemd/system
 WWWDIR     ?= /usr/share/jz/www
 FRONTEND   := $(TOPDIR)/frontend
+
+# Release packaging
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
+RELEASE_DIR := $(TOPDIR)/release
+ARCH       := $(shell uname -m)
 
 # ── BPF Build Flags ───────────────────────────────────────────
 # Kernel headers (auto-detect or override with KERNEL_HEADERS=)
@@ -287,6 +292,54 @@ uninstall:
 	      $(DESTDIR)$(UNITDIR)/collectord.service \
 	      $(DESTDIR)$(UNITDIR)/uploadd.service
 
+# ── Release Packaging ─────────────────────────────────────────
+
+RELEASE_NAME := jz-sniff-$(VERSION)-linux-$(ARCH)
+RELEASE_STAGE := $(RELEASE_DIR)/$(RELEASE_NAME)
+
+release: user cli frontend
+	@echo "=== Packaging release $(RELEASE_NAME) ==="
+	rm -rf $(RELEASE_STAGE)
+	mkdir -p $(RELEASE_STAGE)/sbin
+	mkdir -p $(RELEASE_STAGE)/bin
+	mkdir -p $(RELEASE_STAGE)/bpf
+	mkdir -p $(RELEASE_STAGE)/config/profiles
+	mkdir -p $(RELEASE_STAGE)/systemd
+	mkdir -p $(RELEASE_STAGE)/www
+	# Daemons
+	$(foreach d,$(DAEMONS),cp $(BUILD_DIR)/$(d)/$(d) $(RELEASE_STAGE)/sbin/;)
+	# CLI tools
+	$(foreach t,$(CLI_TOOLS),cp $(BUILD_DIR)/cli/$(t) $(RELEASE_STAGE)/bin/;)
+	# BPF modules (from build if available, otherwise from BPF_IMPORT_DIR)
+	@if ls $(BUILD_DIR)/bpf/*.bpf.o >/dev/null 2>&1; then \
+		cp $(BUILD_DIR)/bpf/*.bpf.o $(RELEASE_STAGE)/bpf/; \
+		echo "  BPF: from build/"; \
+	elif [ -n "$(BPF_IMPORT_DIR)" ] && ls $(BPF_IMPORT_DIR)/*.bpf.o >/dev/null 2>&1; then \
+		cp $(BPF_IMPORT_DIR)/*.bpf.o $(RELEASE_STAGE)/bpf/; \
+		echo "  BPF: from $(BPF_IMPORT_DIR)"; \
+	else \
+		echo "$(YLW)WARNING: No BPF modules found. Set BPF_IMPORT_DIR=/path/to/bpf/ or run 'make bpf' first$(RST)"; \
+		rmdir $(RELEASE_STAGE)/bpf; \
+	fi
+	# Config
+	cp $(CONFIG_DIR)/base.yaml $(RELEASE_STAGE)/config/
+	cp $(CONFIG_DIR)/50-jz-services.rules $(RELEASE_STAGE)/config/
+	-cp $(CONFIG_DIR)/profiles/*.yaml $(RELEASE_STAGE)/config/profiles/ 2>/dev/null || true
+	# Systemd
+	cp $(SYSTEMD_DIR)/*.service $(RELEASE_STAGE)/systemd/
+	# Frontend
+	cp -r $(FRONTEND)/dist/* $(RELEASE_STAGE)/www/
+	# Install script
+	cp $(SCRIPTS_DIR)/release-install.sh $(RELEASE_STAGE)/install.sh
+	chmod +x $(RELEASE_STAGE)/install.sh
+	# Tarball
+	cd $(RELEASE_DIR) && tar czf $(RELEASE_NAME).tar.gz $(RELEASE_NAME)
+	rm -rf $(RELEASE_STAGE)
+	@echo "=== Release: $(RELEASE_DIR)/$(RELEASE_NAME).tar.gz ==="
+
+YLW := \\033[0;33m
+RST := \\033[0m
+
 # ── Clean ─────────────────────────────────────────────────────
 
 clean:
@@ -312,6 +365,7 @@ help:
 	@echo "  format           Auto-format source code (clang-format)"
 	@echo "  install          Install to system paths"
 	@echo "  uninstall        Remove installed files"
+	@echo "  release          Build all + package release tarball"
 	@echo "  clean            Remove build artifacts"
 	@echo "  frontend         Build Vue 3 frontend SPA (requires bun)"
 	@echo "  frontend-install Build and install frontend to $(WWWDIR)"
@@ -321,3 +375,4 @@ help:
 	@echo "  CLANG=clang      Clang for BPF compilation"
 	@echo "  PREFIX=/usr/local Install prefix"
 	@echo "  DESTDIR=         Staging directory for packaging"
+	@echo "  VERSION=x.y.z    Release version (default: git describe)"

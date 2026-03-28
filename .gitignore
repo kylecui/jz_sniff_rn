@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+release/
 *.o
 *.d
 *.skel.h
