@@ -838,6 +838,54 @@ static cJSON *api_config_to_json(const jz_config_t *cfg)
     cJSON_AddStringToObject(system, "log_level", cfg->system.log_level);
     cJSON_AddStringToObject(system, "data_dir", cfg->system.data_dir);
     cJSON_AddStringToObject(system, "run_dir", cfg->system.run_dir);
+    cJSON_AddStringToObject(system, "mode", cfg->system.mode);
+
+    {
+        cJSON *ifaces = cJSON_AddArrayToObject(system, "interfaces");
+        int ii;
+        for (ii = 0; ii < cfg->system.interface_count &&
+             ii < JZ_CONFIG_MAX_INTERFACES; ii++) {
+            const jz_config_interface_t *iface = &cfg->system.interfaces[ii];
+            cJSON *obj = cJSON_CreateObject();
+
+            cJSON_AddStringToObject(obj, "name", iface->name);
+            cJSON_AddStringToObject(obj, "role", iface->role);
+            cJSON_AddStringToObject(obj, "subnet", iface->subnet);
+            cJSON_AddStringToObject(obj, "address", iface->address);
+            cJSON_AddStringToObject(obj, "gateway", iface->gateway);
+            cJSON_AddStringToObject(obj, "dns1", iface->dns1);
+            cJSON_AddStringToObject(obj, "dns2", iface->dns2);
+
+            {
+                int vi;
+                cJSON *varr = cJSON_AddArrayToObject(obj, "vlans");
+                for (vi = 0; vi < iface->vlan_count &&
+                     vi < JZ_CONFIG_MAX_VLANS; vi++) {
+                    cJSON *vo = cJSON_CreateObject();
+                    cJSON_AddNumberToObject(vo, "id", iface->vlans[vi].id);
+                    cJSON_AddStringToObject(vo, "name", iface->vlans[vi].name);
+                    cJSON_AddStringToObject(vo, "subnet", iface->vlans[vi].subnet);
+                    cJSON_AddItemToArray(varr, vo);
+                }
+            }
+
+            {
+                cJSON *dyn = cJSON_AddObjectToObject(obj, "dynamic");
+                cJSON_AddNumberToObject(dyn, "auto_discover",
+                                         iface->guard_auto_discover);
+                cJSON_AddNumberToObject(dyn, "max_entries",
+                                         iface->guard_max_entries);
+                cJSON_AddNumberToObject(dyn, "ttl_hours",
+                                         iface->guard_ttl_hours);
+                cJSON_AddNumberToObject(dyn, "max_ratio",
+                                         iface->guard_max_ratio);
+                cJSON_AddNumberToObject(dyn, "warmup_mode",
+                                         iface->guard_warmup_mode);
+            }
+
+            cJSON_AddItemToArray(ifaces, obj);
+        }
+    }
 
     api_add_config_modules_json(root, cfg);
     api_add_config_guards_json(root, cfg);

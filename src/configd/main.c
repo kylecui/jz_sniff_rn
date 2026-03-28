@@ -489,6 +489,22 @@ static int do_reload(void)
     jz_log_set_level(jz_log_level_from_str(g_ctx.config.system.log_level));
 
     jz_log_info("Configuration v%d applied successfully", g_ctx.config_version);
+
+    /* Notify sniffd to reload its in-memory config from base.yaml */
+    {
+        jz_ipc_client_t cli;
+        jz_ipc_msg_t reply;
+        if (jz_ipc_client_connect(&cli, JZ_IPC_SOCK_SNIFFD, 1000) == 0) {
+            if (jz_ipc_client_request(&cli, "reload", 6, &reply) == 0)
+                jz_log_info("Notified sniffd of config reload");
+            else
+                jz_log_warn("sniffd reload request failed");
+            jz_ipc_client_close(&cli);
+        } else {
+            jz_log_warn("Failed to connect to sniffd for reload notification");
+        }
+    }
+
     return 0;
 }
 
@@ -570,6 +586,22 @@ static int apply_config_body(const char *body, size_t body_len, const char *sour
         jz_log_set_level(jz_log_level_from_str(g_ctx.config.system.log_level));
 
     jz_log_info("Config push(%s) applied: version %d", source, g_ctx.config_version);
+
+    /* Notify sniffd to reload its in-memory config from base.yaml */
+    {
+        jz_ipc_client_t cli;
+        jz_ipc_msg_t reply;
+        if (jz_ipc_client_connect(&cli, JZ_IPC_SOCK_SNIFFD, 1000) == 0) {
+            if (jz_ipc_client_request(&cli, "reload", 6, &reply) == 0)
+                jz_log_info("Notified sniffd of config push");
+            else
+                jz_log_warn("sniffd reload request failed after config push");
+            jz_ipc_client_close(&cli);
+        } else {
+            jz_log_warn("Failed to connect to sniffd for push notification");
+        }
+    }
+
     return 0;
 }
 

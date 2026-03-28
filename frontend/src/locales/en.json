@@ -143,7 +143,8 @@
     "fingerprint": "Fingerprint",
     "aggressiveMode": "Active DHCP Probe",
     "aggressiveModeDesc": "Periodically send DHCP Discovery packets to actively detect DHCP servers",
-    "probeInterval": "Probe Interval (sec)"
+    "probeInterval": "Probe Interval (sec)",
+    "mergedInterfaces": "Merged Interfaces"
   },
   "config": {
     "title": "Configuration",

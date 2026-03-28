@@ -2,12 +2,16 @@
 import { getDevices, getDevice, getDiscoveryConfig, setDiscoveryConfig } from '@/api/discovery'
 import type { Device, DiscoveryConfig } from '@/api/discovery'
 
+interface ConsolidatedDevice extends Device {
+  _mergedMacs?: string[]
+}
+
 const { t } = useI18n()
 
 const loading = ref(true)
 const devices = ref<Device[]>([])
 const drawerVisible = ref(false)
-const selectedDevice = ref<Device | null>(null)
+const selectedDevice = ref<ConsolidatedDevice | null>(null)
 const detailLoading = ref(false)
 
 const discoveryConfig = ref<DiscoveryConfig>({
@@ -46,6 +50,59 @@ async function fetchConfig() {
   }
 }
 
+function macPrefix5(mac: string): string {
+  return mac.split(':').slice(0, 5).join(':')
+}
+
+function macLastByte(mac: string): number {
+  return parseInt(mac.split(':')[5], 16)
+}
+
+const consolidatedDevices = computed<ConsolidatedDevice[]>(() => {
+  const groups = new Map<string, Device[]>()
+  for (const d of devices.value) {
+    const vendor = (d.vendor ?? '').trim()
+    if (!vendor) {
+      groups.set('_solo_' + d.mac, [d])
+      continue
+    }
+    const key = vendor + '|' + (d.ifindex ?? d.interface ?? '') + '|' + macPrefix5(d.mac)
+    const group = groups.get(key)
+    if (group) {
+      const last = macLastByte(d.mac)
+      const adjacent = group.some(g => Math.abs(macLastByte(g.mac) - last) <= 4)
+      if (adjacent) {
+        group.push(d)
+      } else {
+        groups.set(key + '|' + d.mac, [d])
+      }
+    } else {
+      groups.set(key, [d])
+    }
+  }
+  return Array.from(groups.values()).map(group => {
+    if (group.length === 1) {
+      return { ...group[0], _mergedMacs: [group[0].mac] }
+    }
+    const primary = group.reduce((best, d) => {
+      if (d.ip !== '0.0.0.0' && best.ip === '0.0.0.0') return d
+      if (d.ip === '0.0.0.0' && best.ip !== '0.0.0.0') return best
+      return (d.confidence ?? 0) > (best.confidence ?? 0) ? d : best
+    })
+    return {
+      ...primary,
+      hostname: group.find(d => d.hostname)?.hostname ?? '',
+      os_class: group.find(d => d.os_class)?.os_class ?? '',
+      device_class: group.find(d => d.device_class)?.device_class ?? '',
+      confidence: Math.max(...group.map(d => d.confidence ?? 0)),
+      signals: group.reduce((s, d) => s + (d.signals ?? 0), 0),
+      first_seen: Math.min(...group.map(d => d.first_seen ?? Infinity)),
+      last_seen: Math.max(...group.map(d => d.last_seen ?? 0)),
+      _mergedMacs: group.map(d => d.mac),
+    }
+  })
+})
+
 async function handleConfigChange() {
   configLoading.value = true
   try {
@@ -57,11 +114,12 @@ async function handleConfigChange() {
   }
 }
 
-async function handleRowClick(row: Device) {
+async function handleRowClick(row: ConsolidatedDevice) {
   drawerVisible.value = true
   detailLoading.value = true
   try {
-    selectedDevice.value = await getDevice(row.mac)
+    const detail = await getDevice(row.mac)
+    selectedDevice.value = { ...detail, _mergedMacs: row._mergedMacs }
   } catch {
     selectedDevice.value = row
   } finally {
@@ -110,10 +168,17 @@ onMounted(() => {
 
     <el-skeleton :loading="loading" animated>
       <template #default>
-        <el-table :data="devices" stripe @row-click="handleRowClick" style="cursor: pointer">
-          <el-table-column prop="ip" :label="t('common.ip')" sortable :sort-method="(a: Device, b: Device) => ipToNum(a.ip) - ipToNum(b.ip)" />
-          <el-table-column prop="mac" :label="t('common.mac')" sortable />
-          <el-table-column :label="t('discovery.interface')" width="120" sortable :sort-method="(a: Device, b: Device) => (a.interface || '').localeCompare(b.interface || '')">
+        <el-table :data="consolidatedDevices" stripe @row-click="handleRowClick" style="cursor: pointer">
+          <el-table-column prop="ip" :label="t('common.ip')" sortable :sort-method="(a: ConsolidatedDevice, b: ConsolidatedDevice) => ipToNum(a.ip) - ipToNum(b.ip)" />
+          <el-table-column prop="mac" :label="t('common.mac')" sortable>
+            <template #default="{ row }">
+              {{ row.mac }}
+              <el-tag v-if="row._mergedMacs && row._mergedMacs.length > 1" size="small" type="info" style="margin-left: 4px;">
+                +{{ row._mergedMacs.length - 1 }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('discovery.interface')" width="120" sortable :sort-method="(a: ConsolidatedDevice, b: ConsolidatedDevice) => (a.interface || '').localeCompare(b.interface || '')">
             <template #default="{ row }">
               {{ row.interface || '-' }}
             </template>
@@ -123,7 +188,7 @@ onMounted(() => {
           <el-table-column prop="vendor" :label="t('discovery.vendor')" sortable />
           <el-table-column prop="os_class" :label="t('discovery.osClass')" sortable />
           <el-table-column prop="device_class" :label="t('discovery.deviceClass')" sortable />
-          <el-table-column :label="t('discovery.lastSeen')" width="180" sortable :sort-method="(a: Device, b: Device) => (a.last_seen ?? 0) - (b.last_seen ?? 0)">
+          <el-table-column :label="t('discovery.lastSeen')" width="180" sortable :sort-method="(a: ConsolidatedDevice, b: ConsolidatedDevice) => (a.last_seen ?? 0) - (b.last_seen ?? 0)">
             <template #default="{ row }">
               {{ formatTime(row.last_seen) }}
             </template>
@@ -143,7 +208,14 @@ onMounted(() => {
           <template v-if="selectedDevice">
             <el-descriptions :column="1" border>
               <el-descriptions-item :label="t('common.ip')">{{ selectedDevice.ip }}</el-descriptions-item>
-              <el-descriptions-item :label="t('common.mac')">{{ selectedDevice.mac }}</el-descriptions-item>
+              <el-descriptions-item :label="t('common.mac')">
+                <div>{{ selectedDevice.mac }}</div>
+                <div v-if="selectedDevice._mergedMacs && selectedDevice._mergedMacs.length > 1">
+                  <el-tag v-for="m in selectedDevice._mergedMacs.filter((x: string) => x !== selectedDevice!.mac)" :key="m" size="small" type="info" style="margin-top: 4px; margin-right: 4px;">
+                    {{ m }}
+                  </el-tag>
+                </div>
+              </el-descriptions-item>
               <el-descriptions-item :label="t('discovery.interface')">{{ selectedDevice.interface ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.vlan')">{{ selectedDevice.vlan ?? '-' }}</el-descriptions-item>
               <el-descriptions-item :label="t('discovery.hostname')">{{ selectedDevice.hostname ?? '-' }}</el-descriptions-item>

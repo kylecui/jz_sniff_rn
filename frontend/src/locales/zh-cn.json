@@ -143,7 +143,8 @@
     "fingerprint": "指纹信息",
     "aggressiveMode": "主动 DHCP 探测",
     "aggressiveModeDesc": "定期发送 DHCP Discovery 报文以主动发现 DHCP 服务器",
-    "probeInterval": "探测间隔（秒）"
+    "probeInterval": "探测间隔（秒）",
+    "mergedInterfaces": "合并接口"
   },
   "config": {
     "title": "配置管理",

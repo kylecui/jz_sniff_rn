@@ -200,7 +200,7 @@ const prefixOptions = ['8', '16', '24', '25', '26', '27', '28', '29', '30']
 async function fetchAll() {
   loading.value = true
   try {
-    const [cfg, staged, hist, ifaces, arpSpoof, captureData, vlansData] = await Promise.all([
+    const results = await Promise.allSettled([
       getConfig(),
       getStaged(),
       getConfigHistory(),
@@ -209,32 +209,58 @@ async function fetchAll() {
       getCaptures(),
       getDiscoveredVlans(),
     ])
-    const json = JSON.stringify(cfg, null, 2)
-    configText.value = json
-    editText.value = json
-    hasStaged.value = staged.has_staged
-    stagedText.value = staged.staged ? JSON.stringify(staged.staged, null, 2) : ''
-    history.value = hist.history
-    interfaces.value = ifaces.interfaces.map(iface => ({
-      ...iface,
-      address: iface.address ?? '',
-      vlans: iface.vlans ?? [],
-      dynamic: iface.dynamic ?? { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 },
-    }))
-    systemMode.value = ifaces.mode
-    initManageStates(ifaces.interfaces)
-    arpSpoofEnabled.value = arpSpoof.enabled
-    arpSpoofInterval.value = arpSpoof.interval_sec
-    arpSpoofTargets.value = arpSpoof.targets
-    captureActive.value = captureData.active
-    captureFilename.value = captureData.filename ?? ''
-    captureBytesWritten.value = captureData.bytes_written ?? 0
-    capturePktCount.value = captureData.pkt_count ?? 0
-    captureMaxBytes.value = captureData.max_bytes ?? 0
-    captureFiles.value = captureData.captures ?? []
-    discoveredVlans.value = vlansData.vlans ?? []
+
+    const val = <T>(r: PromiseSettledResult<T>): T | null =>
+      r.status === 'fulfilled' ? r.value : null
+
+    const cfg = val(results[0])
+    const staged = val(results[1]) as Record<string, unknown> | null
+    const hist = val(results[2]) as Record<string, unknown> | null
+    const ifaces = val(results[3]) as { interfaces: NetworkInterface[]; mode: string } | null
+    const arpSpoof = val(results[4]) as { enabled: boolean; interval_sec: number; targets: ArpSpoofTarget[] } | null
+    const captureData = val(results[5]) as Record<string, unknown> | null
+    const vlansData = val(results[6]) as { vlans: DiscoveredVlan[] } | null
+
+    if (cfg) {
+      const json = JSON.stringify(cfg, null, 2)
+      configText.value = json
+      editText.value = json
+    }
+    if (staged) {
+      hasStaged.value = (staged.count as number ?? 0) > 0
+      stagedText.value = hasStaged.value ? JSON.stringify(staged.changes, null, 2) : ''
+    }
+    if (hist) {
+      history.value = (hist.rows ?? hist.history ?? []) as ConfigHistoryEntry[]
+    }
+    if (ifaces) {
+      interfaces.value = ifaces.interfaces.map(iface => ({
+        ...iface,
+        address: iface.address ?? '',
+        vlans: iface.vlans ?? [],
+        dynamic: iface.dynamic ?? { auto_discover: -1, max_entries: -1, ttl_hours: -1, max_ratio: -1, warmup_mode: -1 },
+      }))
+      systemMode.value = ifaces.mode
+      initManageStates(ifaces.interfaces)
+    }
+    if (arpSpoof) {
+      arpSpoofEnabled.value = arpSpoof.enabled
+      arpSpoofInterval.value = arpSpoof.interval_sec
+      arpSpoofTargets.value = arpSpoof.targets
+    }
+    if (captureData) {
+      captureActive.value = captureData.active as boolean ?? false
+      captureFilename.value = captureData.filename as string ?? ''
+      captureBytesWritten.value = captureData.bytes_written as number ?? 0
+      capturePktCount.value = captureData.pkt_count as number ?? 0
+      captureMaxBytes.value = captureData.max_bytes as number ?? 0
+      captureFiles.value = captureData.captures as CaptureFile[] ?? []
+    }
+    if (vlansData) {
+      discoveredVlans.value = vlansData.vlans ?? []
+    }
   } catch {
-    // keep defaults
+    // unexpected error — keep defaults
   } finally {
     loading.value = false
   }
