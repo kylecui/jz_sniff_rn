@@ -5,6 +5,46 @@
 
 #include "jz_common.h"
 
+/*
+ * rSwitch pipeline maps — non-extern definitions for standalone loading.
+ *
+ * rswitch_helpers.h declares these as extern (guarded by __RSWITCH_MAPS_H).
+ * Our BPF files pre-define __RSWITCH_MAPS_H to suppress those externs and
+ * instead pick up these concrete instances, because bpf_loader.c uses plain
+ * bpf_object__open() which cannot resolve extern map references.
+ */
+#ifdef __bpf__
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct rs_ctx);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} rs_ctx_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+    __uint(max_entries, RS_MAX_PROGS);
+    __type(key, __u32);
+    __type(value, __u32);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} rs_progs SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, RS_MAX_PROGS);
+    __type(key, __u32);
+    __type(value, __u32);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} rs_prog_chain SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 1024 * 1024);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} rs_event_bus SEC(".maps");
+#endif /* __bpf__ */
+
 /* ═══════════════════════════════════════════════
  * Section 3.2: Guard Classifier Maps
  * ═══════════════════════════════════════════════ */

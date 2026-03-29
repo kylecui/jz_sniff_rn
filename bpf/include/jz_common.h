@@ -3,7 +3,7 @@
 #ifndef __JZ_COMMON_H
 #define __JZ_COMMON_H
 
-/* Kernel types and BPF helpers come from rswitch_bpf.h (vmlinux.h + libbpf).
+/* Kernel types and BPF helpers come from rswitch_module.h (vmlinux.h + libbpf).
  * Do NOT add <linux/bpf.h> — it redefines vmlinux.h symbols. */
 
 /* ── Stage Numbers ──

@@ -110,7 +110,7 @@ See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.
 | REST API (50+ endpoints, bearer auth, HTTPS/TLS) | 2+ | 3,000+ | ✅ Complete |
 | Frontend (Vue 3 + Vite + Element Plus + vue-i18n) | 20+ | 3,000+ | ✅ Complete (8-page SPA, zh/en i18n) |
 | Systemd services (sniffd, configd, collectord, uploadd) | 4 | 167 | ✅ Complete |
-| Vendored: rSwitch headers | 4 | 954 | ✅ |
+| Vendored: rSwitch SDK v2.1.0 headers | 9 | ~1,900 | ✅ |
 | Vendored: mongoose (TLS HTTP), cJSON | 4 | 33,781 | ✅ |
 | Build system, config, scripts | 3 | ~540 | ✅ |
 
@@ -141,7 +141,7 @@ jz_sniff_rn/
   tests/            Unit, BPF, integration, and perf tests
   scripts/          Build and deploy scripts
   docs/             Documentation (user manual, completion report)
-  include/rswitch/  rSwitch SDK headers (vendored)
+  include/rswitch/  rSwitch SDK v2.1.0 headers (vendored)
   third_party/      Vendored dependencies (mongoose v7.20, cJSON v1.7.18, Paho MQTT)
 ```
 

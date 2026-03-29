@@ -162,7 +162,8 @@ All services include: Restart=on-failure, NoNewPrivileges=yes, ProtectSystem=str
 - **scripts/gen_vmlinux.sh**: Vmlinux.h generation script. (152 lines)
 
 ### Vendored Headers (include/rswitch/)
-- **map_defs.h, module_abi.h, rswitch_bpf.h, uapi.h**: rSwitch SDK. (954 lines)
+- **rswitch_module.h, rswitch_abi.h, rswitch_helpers.h, rswitch_maps.h, rswitch_common.h**: rSwitch SDK v2.1.0 canonical headers.
+- **rswitch_bpf.h, uapi.h, module_abi.h, map_defs.h**: Deprecated compatibility wrappers (redirect to canonical headers).
 
 ### Vendored Libraries (third_party/)
 - **cjson/cJSON.c, cJSON.h**: cJSON v1.7.18 -- JSON parser/generator. (3,443 lines)
@@ -545,7 +546,7 @@ All BPF modules follow this standard boilerplate:
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
-#include "rswitch_bpf.h"
+#include "rswitch_module.h"
 #include "jz_common.h"
 #include "jz_maps.h"
 #include "jz_events.h"
@@ -584,7 +585,7 @@ All jz-specific maps must be pinned under the `/sys/fs/bpf/jz/` namespace to avo
 
 ### Integration Rules
 - Do not modify rSwitch core source code. All integration must happen through the module system and shared maps.
-- rSwitch headers are vendored in `include/rswitch/` -- include `rswitch_bpf.h` to get everything.
+- rSwitch SDK v2.1.0 headers are vendored in `include/rswitch/` -- include `rswitch_module.h` to get ABI types, CO-RE helpers, and pipeline macros.
 - Use `extern` map declarations to reference maps defined in other modules.
 
 ### Install Paths

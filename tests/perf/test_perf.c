@@ -109,7 +109,7 @@ struct rs_ctx {
     uint32_t drop_reason;
     uint32_t next_prog_id;
     uint32_t call_depth;
-    uint32_t reserved[4];
+    uint32_t reserved[16];
 };
 
 /* ── Packet Structures ── */

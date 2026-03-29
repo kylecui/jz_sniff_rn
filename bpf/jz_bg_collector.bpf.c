@@ -14,7 +14,8 @@
  *                        -> threat_detect(27)
  */
 
-#include "rswitch_bpf.h"       /* vmlinux.h, CO-RE helpers, map_defs.h, uapi.h */
+#define  __RSWITCH_MAPS_H      /* non-extern pipeline maps defined in jz_maps.h */
+#include "rswitch_module.h"    /* rSwitch SDK v2.1.0: ABI types, CO-RE helpers, pipeline macros */
 #include "jz_common.h"
 #include "jz_maps.h"
 #include "jz_events.h"

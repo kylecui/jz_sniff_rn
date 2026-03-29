@@ -9,6 +9,8 @@
 #ifndef __RSWITCH_MAP_DEFS_H
 #define __RSWITCH_MAP_DEFS_H
 
+#warning "map_defs.h is deprecated. Use #include <rswitch_maps.h> instead. See sdk/docs/SDK_Migration_Guide.md"
+
 #ifdef __BPF__
     /* BPF side: types from vmlinux.h, bpf_helpers from rswitch_bpf.h */
     #include <bpf/bpf_helpers.h>
@@ -21,44 +23,43 @@
 
 /* VLAN mode enumeration */
 enum rs_vlan_mode {
-    RS_VLAN_MODE_OFF = 0,
-    RS_VLAN_MODE_ACCESS = 1,
-    RS_VLAN_MODE_TRUNK = 2,
-    RS_VLAN_MODE_HYBRID = 3,
-    RS_VLAN_MODE_QINQ = 4
+    RS_VLAN_MODE_OFF = 0,       /* No VLAN processing */
+    RS_VLAN_MODE_ACCESS = 1,    /* Access port (untagged only) */
+    RS_VLAN_MODE_TRUNK = 2,     /* Trunk port (tagged + native) */
+    RS_VLAN_MODE_HYBRID = 3     /* Hybrid port (complex rules) */
 };
 
-struct rs_qinq_config {
-    __u16 s_vlan;
-    __u16 c_vlan_start;
-    __u16 c_vlan_end;
-    __u16 pad;
-};
-
-/* Port configuration */
+/* Port configuration
+ * 
+ * Per-interface configuration loaded by user-space.
+ * Modules read this to determine port behavior (VLAN mode, policies, etc.)
+ */
 struct rs_port_config {
-    __u32 ifindex;
-    __u8  enabled;
-    __u8  mgmt_type;
-    __u8  vlan_mode;
-    __u8  learning;
+    __u32 ifindex;              /* Interface index (key) */
+    __u8  enabled;              /* 0=disabled, 1=enabled */
+    __u8  mgmt_type;            /* 0=dumb, 1=managed */
+    __u8  vlan_mode;            /* 0=off, 1=access, 2=trunk, 3=hybrid */
+    __u8  learning;             /* 0=disabled, 1=enabled (MAC learning) */
     
-    __u16 pvid;
-    __u16 native_vlan;
-    __u16 access_vlan;
-    __u16 allowed_vlan_count;
-    __u16 allowed_vlans[128];
-    __u16 tagged_vlan_count;
-    __u16 tagged_vlans[64];
-    __u16 untagged_vlan_count;
-    __u16 untagged_vlans[64];
+    /* VLAN configuration */
+    __u16 pvid;                 /* Port VLAN ID (for access/hybrid) */
+    __u16 native_vlan;          /* Native VLAN (for trunk untagged) */
+    __u16 access_vlan;          /* ACCESS mode VLAN ID (alias for pvid) */
+    __u16 allowed_vlan_count;   /* Number of allowed VLANs (trunk mode) */
+    __u16 allowed_vlans[128];   /* Allowed VLANs (trunk mode) */
+    __u16 tagged_vlan_count;    /* Tagged VLANs count (hybrid mode) */
+    __u16 tagged_vlans[64];     /* Tagged VLANs (hybrid mode) */
+    __u16 untagged_vlan_count;  /* Untagged VLANs count (hybrid mode) */
+    __u16 untagged_vlans[64];   /* Untagged VLANs (hybrid mode) */
     
-    __u8  default_prio;
-    __u8  trust_dscp;
-    __u16 rate_limit_kbps;
+    /* QoS */
+    __u8  default_prio;         /* Default priority (0-7) */
+    __u8  trust_dscp;           /* 0=ignore, 1=trust incoming DSCP */
+    __u16 rate_limit_kbps;      /* Ingress rate limit */
     
-    __u8  port_security;
-    __u8  max_macs;
+    /* Security */
+    __u8  port_security;        /* 0=off, 1=on (MAC limiting) */
+    __u8  max_macs;             /* Max learned MACs */
     __u16 reserved;
     
     __u32 reserved2[4];
@@ -68,25 +69,21 @@ struct rs_port_config {
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, RS_MAX_INTERFACES);
-    __type(key, __u32);
+    __type(key, __u32);                     /* ifindex */
     __type(value, struct rs_port_config);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);    /* Pin to /sys/fs/bpf/ */
 } rs_port_config_map SEC(".maps");
 
+/* Interface index to port index mapping
+ * 
+ * Maps real ifindex (e.g., 4) to consecutive port_idx (0, 1, 2, ...)
+ * Used by VOQd and AF_XDP modules that need 0-based port indexing.
+ */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, RS_MAX_INTERFACES);
-    __type(key, __u32);
-    __type(value, struct rs_qinq_config);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} qinq_config_map SEC(".maps");
-
-/* Interface index to port index mapping */
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, RS_MAX_INTERFACES);
-    __type(key, __u32);
-    __type(value, __u32);
+    __type(key, __u32);                     /* ifindex */
+    __type(value, __u32);                   /* port_idx (0-based) */
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rs_ifindex_to_port_map SEC(".maps");
 
@@ -116,22 +113,50 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rs_module_config_map SEC(".maps");
 
-/* MAC address as map key */
+
+
+/* MAC address as map key
+ * 
+ * NOTE: Kept in map_defs.h for struct definition visibility.
+ * Actual map instance moved to l2learn.bpf.c (single owner pattern).
+ */
 struct rs_mac_key {
     __u8 mac[6];
-    __u16 vlan;
+    __u16 vlan;                 /* VLAN context for MAC */
 } __attribute__((packed));
 
 /* MAC forwarding table entry */
 struct rs_mac_entry {
-    __u32 ifindex;
-    __u8  static_entry;
+    __u32 ifindex;              /* Egress interface */
+    __u8  static_entry;         /* 0=dynamic (learned), 1=static (configured) */
     __u8  reserved[3];
-    __u64 last_seen;
-    __u32 hit_count;
+    __u64 last_seen;            /* Timestamp for aging */
+    __u32 hit_count;            /* Hit counter for statistics */
 } __attribute__((packed));
 
-/* External declaration for rs_mac_table (defined in l2learn.bpf.c) */
+/* NOTE: rs_mac_table map instance removed!
+ * 
+ * Following Single Owner Pattern:
+ * - MAC table is defined ONLY in l2learn.bpf.c (its primary owner)
+ * - Still pinned (LIBBPF_PIN_BY_NAME) for user-space access
+ * - Loader accesses it via l2learn module object
+ * - Struct definitions kept here for visibility to other modules
+ * 
+ * Rationale:
+ * - l2learn is the only module that writes to MAC table
+ * - Other modules only read (can use external declaration)
+ * - Reduces coupling - other modules don't auto-create MAC table instance
+ */
+
+/* External declaration for rs_mac_table (defined in l2learn.bpf.c)
+ * 
+ * This allows helper functions below to reference the map without
+ * creating a new instance. The linker will resolve this to the
+ * actual pinned map instance created by l2learn.
+ * 
+ * If RS_MAC_TABLE_OWNER is defined (in l2learn.bpf.c), skip this
+ * extern declaration to avoid conflicts.
+ */
 #if defined(__BPF__) && !defined(RS_MAC_TABLE_OWNER)
 extern struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -141,13 +166,18 @@ extern struct {
 } rs_mac_table SEC(".maps");
 #endif
 
-/* VLAN membership and peer information */
+/* VLAN membership and peer information
+ * 
+ * For each VLAN, stores which ports are members (tagged/untagged).
+ * Used by VLAN module to determine flooding domain.
+ */
 struct rs_vlan_members {
-    __u16 vlan_id;
-    __u16 member_count;
+    __u16 vlan_id;              /* VLAN ID (key) */
+    __u16 member_count;         /* Number of member ports */
     
-    __u64 tagged_members[4];
-    __u64 untagged_members[4];
+    /* Bitmask of member ports (ifindex % 64 = bit position) */
+    __u64 tagged_members[4];    /* Up to 256 ports as tagged */
+    __u64 untagged_members[4];  /* Up to 256 ports as untagged */
     
     __u32 reserved[4];
 };
@@ -156,12 +186,22 @@ struct rs_vlan_members {
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, RS_MAX_VLANS);
-    __type(key, __u16);
+    __type(key, __u16);                     /* vlan_id */
     __type(value, struct rs_vlan_members);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rs_vlan_map SEC(".maps");
 
-/* Statistics counters */
+/* NOTE: rs_xdp_devmap removed from here!
+ * Following PoC pattern: devmap is defined ONLY in lastcall.bpf.c
+ * Loader accesses it via lastcall module's object.
+ * No pinning needed - single owner, no cross-module sharing.
+ */
+
+/* Statistics counters
+ * 
+ * Per-interface packet and byte counters.
+ * Updated by modules and exported to user-space for telemetry.
+ */
 struct rs_stats {
     __u64 rx_packets;
     __u64 rx_bytes;
@@ -177,7 +217,7 @@ struct rs_stats {
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, RS_MAX_INTERFACES);
-    __type(key, __u32);
+    __type(key, __u32);         /* ifindex */
     __type(value, struct rs_stats);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rs_stats_map SEC(".maps");
@@ -203,6 +243,7 @@ struct {
 
 /* Helper functions for map operations */
 
+/* Update statistics atomically */
 static __always_inline void rs_stats_update_rx(struct rs_ctx *ctx, __u32 bytes) {
     __u32 key = ctx->ifindex;
     struct rs_stats *stats = bpf_map_lookup_elem(&rs_stats_map, &key);
@@ -220,12 +261,26 @@ static __always_inline void rs_stats_update_drop(struct rs_ctx *ctx) {
     }
 }
 
+/* Lookup port configuration */
 static __always_inline struct rs_port_config *rs_get_port_config(__u32 ifindex) {
     return bpf_map_lookup_elem(&rs_port_config_map, &ifindex);
 }
 
-#ifndef RS_MAC_TABLE_OWNER
+/* MAC table helper functions
+ * 
+ * NOTE: These helpers require rs_mac_table to be available:
+ * - In l2learn.bpf.c: rs_mac_table is defined locally
+ * - In other modules: must use extern declaration before calling these helpers
+ * 
+ * Example usage in other modules:
+ *   extern struct { ... } rs_mac_table SEC(".maps");
+ *   struct rs_mac_entry *entry = rs_mac_lookup(mac, vlan);
+ */
 
+#ifndef RS_MAC_TABLE_OWNER
+/* Only provide helpers if not the owner (owner defines rs_mac_table directly) */
+
+/* Lookup MAC forwarding entry */
 static __always_inline struct rs_mac_entry *rs_mac_lookup(__u8 *mac, __u16 vlan) {
     struct rs_mac_key key = {};
     __builtin_memcpy(key.mac, mac, 6);
@@ -233,6 +288,7 @@ static __always_inline struct rs_mac_entry *rs_mac_lookup(__u8 *mac, __u16 vlan)
     return bpf_map_lookup_elem(&rs_mac_table, &key);
 }
 
+/* Update MAC table (for learning) */
 static __always_inline int rs_mac_update(__u8 *mac, __u16 vlan, __u32 ifindex, __u64 timestamp) {
     struct rs_mac_key key = {};
     struct rs_mac_entry entry = {
@@ -248,6 +304,7 @@ static __always_inline int rs_mac_update(__u8 *mac, __u16 vlan, __u32 ifindex, _
 
 #endif /* !RS_MAC_TABLE_OWNER */
 
+/* Check if port is member of VLAN (tagged or untagged) */
 static __always_inline int rs_is_vlan_member(__u16 vlan, __u32 ifindex, int *is_tagged) {
     struct rs_vlan_members *members = bpf_map_lookup_elem(&rs_vlan_map, &vlan);
     if (!members)
