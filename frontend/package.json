@@ -19,7 +19,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@intlify/unplugin-vue-i18n": "^5.0.0",
     "@types/node": "^25.5.0",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/tsconfig": "^0.5.0",
