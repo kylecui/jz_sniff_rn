@@ -519,6 +519,79 @@ static int parse_frozen_ips(yaml_parser_t *parser, yaml_event_t *start,
     return 0;
 }
 
+static int parse_dhcp_exceptions(yaml_parser_t *parser, yaml_event_t *start,
+                                  jz_config_t *cfg, jz_config_errors_t *errors)
+{
+    if (start->type != YAML_SEQUENCE_START_EVENT) {
+        add_error(errors, event_line(start), "guards.dhcp_exceptions", "expected sequence");
+        return skip_node(parser, start, errors);
+    }
+    yaml_event_delete(start);
+    cfg->guards.dhcp_exception_count = 0;
+    for (;;) {
+        yaml_event_t item_ev;
+        if (next_event(parser, &item_ev, errors, "guards.dhcp_exceptions") != 0)
+            return -1;
+        if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+            yaml_event_delete(&item_ev);
+            break;
+        }
+        if (item_ev.type != YAML_MAPPING_START_EVENT) {
+            add_error(errors, event_line(&item_ev), "guards.dhcp_exceptions", "entries must be mappings");
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        if (cfg->guards.dhcp_exception_count >= JZ_CONFIG_MAX_DHCP_EXCEPTIONS) {
+            add_error(errors, event_line(&item_ev), "guards.dhcp_exceptions", "too many entries (max %d)",
+                      JZ_CONFIG_MAX_DHCP_EXCEPTIONS);
+            if (skip_node(parser, &item_ev, errors) != 0)
+                return -1;
+            continue;
+        }
+
+        yaml_event_delete(&item_ev);
+        for (;;) {
+            yaml_event_t k2, v2;
+            const char *k;
+            jz_config_dhcp_exception_t *de = &cfg->guards.dhcp_exceptions[cfg->guards.dhcp_exception_count];
+            if (next_event(parser, &k2, errors, "guards.dhcp_exceptions") != 0)
+                return -1;
+            if (k2.type == YAML_MAPPING_END_EVENT) {
+                yaml_event_delete(&k2);
+                cfg->guards.dhcp_exception_count++;
+                break;
+            }
+            if (k2.type != YAML_SCALAR_EVENT) {
+                add_error(errors, event_line(&k2), "guards.dhcp_exceptions", "expected scalar key");
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            k = (const char *)k2.data.scalar.value;
+            if (next_event(parser, &v2, errors, "guards.dhcp_exceptions") != 0) {
+                yaml_event_delete(&k2);
+                return -1;
+            }
+            if (!strcmp(k, "ip")) {
+                copy_scalar(de->ip, sizeof(de->ip), &v2);
+                yaml_event_delete(&v2);
+            } else if (!strcmp(k, "mac")) {
+                copy_scalar(de->mac, sizeof(de->mac), &v2);
+                yaml_event_delete(&v2);
+            } else {
+                add_error(errors, event_line(&k2), "guards.dhcp_exceptions", "unknown key '%s'", k);
+                if (skip_node(parser, &v2, errors) != 0) {
+                    yaml_event_delete(&k2);
+                    return -1;
+                }
+            }
+            yaml_event_delete(&k2);
+        }
+    }
+    return 0;
+}
+
 static int parse_system(yaml_parser_t *parser, yaml_event_t *start,
                         jz_config_t *cfg, jz_config_errors_t *errors)
 {
@@ -1373,6 +1446,11 @@ static int parse_guards(yaml_parser_t *parser, yaml_event_t *start,
             }
         } else if (!strcmp(key, "frozen_ips")) {
             if (parse_frozen_ips(parser, &val_ev, cfg, errors) != 0) {
+                yaml_event_delete(&key_ev);
+                return -1;
+            }
+        } else if (!strcmp(key, "dhcp_exceptions")) {
+            if (parse_dhcp_exceptions(parser, &val_ev, cfg, errors) != 0) {
                 yaml_event_delete(&key_ev);
                 return -1;
             }
@@ -3304,6 +3382,20 @@ char *jz_config_serialize(const jz_config_t *cfg)
         if (sb_appendf(&sb, "    - { ip: %s, reason: %s }\n",
                        cfg->guards.frozen_ips[i].ip,
                        cfg->guards.frozen_ips[i].reason) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb, "  dhcp_exceptions:\n") != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->guards.dhcp_exception_count; i++) {
+        if (sb_appendf(&sb, "    - { ip: %s, mac: %s }\n",
+                       cfg->guards.dhcp_exceptions[i].ip,
+                       cfg->guards.dhcp_exceptions[i].mac) != 0) {
             free(sb.data);
             return NULL;
         }

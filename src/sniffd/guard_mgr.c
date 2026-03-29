@@ -178,6 +178,41 @@ static int push_whitelist_entry(jz_guard_mgr_t *gm, const jz_config_whitelist_t 
     return 0;
 }
 
+static int push_dhcp_exception(jz_guard_mgr_t *gm, const jz_config_dhcp_exception_t *src)
+{
+    struct in_addr addr;
+    struct bpf_dhcp_exception_key dk;
+    struct bpf_whitelist_entry val;
+
+    if (!gm || !src || gm->dhcp_exception_map_fd < 0)
+        return -1;
+    if (inet_pton(AF_INET, src->ip, &addr) != 1) {
+        jz_log_error("Invalid DHCP exception IP '%s'", src->ip);
+        return -1;
+    }
+
+    memset(&dk, 0, sizeof(dk));
+    if (sscanf(src->mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+               &dk.mac[0], &dk.mac[1], &dk.mac[2],
+               &dk.mac[3], &dk.mac[4], &dk.mac[5]) != 6) {
+        jz_log_error("Invalid DHCP exception MAC '%s'", src->mac);
+        return -1;
+    }
+
+    memset(&val, 0, sizeof(val));
+    val.ip_addr = addr.s_addr;
+    memcpy(val.mac, dk.mac, 6);
+    val.match_mac = 1;
+    val.enabled = 1;
+    val.created_at = (uint64_t)time(NULL) * 1000000000ULL;
+
+    if (bpf_map_update_elem(gm->dhcp_exception_map_fd, &dk, &val, BPF_ANY) < 0) {
+        jz_log_error("bpf_map_update_elem(dhcp_exception:%s) failed: %s", src->ip, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
 /* ── Public API ───────────────────────────────────────────────── */
 
 int jz_guard_mgr_init(jz_guard_mgr_t *gm, const jz_config_t *cfg)
@@ -238,6 +273,10 @@ int jz_guard_mgr_load_config(jz_guard_mgr_t *gm, const jz_config_t *cfg)
     }
     for (i = 0; i < cfg->guards.whitelist_count; i++) {
         if (push_whitelist_entry(gm, &cfg->guards.whitelist[i]) < 0)
+            errors++;
+    }
+    for (i = 0; i < cfg->guards.dhcp_exception_count; i++) {
+        if (push_dhcp_exception(gm, &cfg->guards.dhcp_exceptions[i]) < 0)
             errors++;
     }
 

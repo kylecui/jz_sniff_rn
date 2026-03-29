@@ -24,6 +24,7 @@
 #define JZ_CONFIG_MAX_AUTH_TOKENS          16
 #define JZ_CONFIG_MAX_INTERFACES           8
 #define JZ_CONFIG_MAX_FROZEN_IPS           256
+#define JZ_CONFIG_MAX_DHCP_EXCEPTIONS      64
 #define JZ_CONFIG_MAX_ARP_SPOOF_TARGETS   32
 #define JZ_CONFIG_MAX_VLANS                16
 
@@ -170,6 +171,11 @@ typedef struct jz_config_frozen_ip {
     char reason[JZ_CONFIG_STR_MEDIUM];
 } jz_config_frozen_ip_t;
 
+typedef struct jz_config_dhcp_exception {
+    char ip[JZ_CONFIG_STR_SHORT];            /* e.g. "10.0.1.100" */
+    char mac[JZ_CONFIG_STR_SHORT];           /* e.g. "aa:bb:cc:dd:ee:ff" */
+} jz_config_dhcp_exception_t;
+
 typedef struct jz_config_guards {
     jz_config_guard_static_t static_entries[JZ_CONFIG_MAX_STATIC_GUARDS];
     int static_count;
@@ -181,6 +187,9 @@ typedef struct jz_config_guards {
 
     jz_config_frozen_ip_t frozen_ips[JZ_CONFIG_MAX_FROZEN_IPS];
     int frozen_ip_count;
+
+    jz_config_dhcp_exception_t dhcp_exceptions[JZ_CONFIG_MAX_DHCP_EXCEPTIONS];
+    int dhcp_exception_count;
 
     int max_ratio;   /* max % of subnet IPs to use as dynamic guards (0-100) */
 } jz_config_guards_t;

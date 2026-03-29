@@ -85,6 +85,10 @@ guards:
   #  - ip: "10.0.1.1"
   #    reason: "gateway"
 
+  dhcp_exceptions: []
+  #  - ip: "10.0.1.100"
+  #    mac: "aa:bb:cc:dd:ee:ff"
+
 discovery:
   aggressive_mode: false           # Send active DHCP DISCOVER probes
   dhcp_probe_interval_sec: 120     # Seconds between DHCP probe bursts

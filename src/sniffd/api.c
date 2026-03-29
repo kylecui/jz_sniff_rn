@@ -92,6 +92,8 @@ struct bpf_dhcp_exception_key {
 
 static time_t g_api_start_ts;
 
+static int api_persist_config(jz_api_t *api);
+
 static int read_file_to_pem(const char *path, char **out_buf)
 {
     if (!path || !path[0] || !out_buf)
@@ -1449,6 +1451,16 @@ static void handle_dhcp_exception_add(struct mg_connection *c, struct mg_http_me
         return;
     }
 
+    if (api->config &&
+        api->config->guards.dhcp_exception_count < JZ_CONFIG_MAX_DHCP_EXCEPTIONS) {
+        jz_config_dhcp_exception_t *de =
+            &api->config->guards.dhcp_exceptions[api->config->guards.dhcp_exception_count];
+        snprintf(de->ip, sizeof(de->ip), "%s", ip_buf);
+        api_mac_to_text(dev->profile.mac, de->mac, sizeof(de->mac));
+        api->config->guards.dhcp_exception_count++;
+        api_persist_config(api);
+    }
+
     {
         cJSON *result = cJSON_CreateObject();
         char macbuf[18];
@@ -1489,6 +1501,25 @@ static void handle_dhcp_exception_del(struct mg_connection *c, struct mg_http_me
     if (bpf_map_delete_elem(fd, &dk) < 0) {
         api_error_reply(c, 404, "dhcp exception not found");
         return;
+    }
+
+    if (api->config) {
+        int j, n = api->config->guards.dhcp_exception_count;
+        for (j = 0; j < n; j++) {
+            uint8_t stored_mac[6];
+            if (sscanf(api->config->guards.dhcp_exceptions[j].mac,
+                       "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                       &stored_mac[0], &stored_mac[1], &stored_mac[2],
+                       &stored_mac[3], &stored_mac[4], &stored_mac[5]) == 6 &&
+                memcmp(stored_mac, dk.mac, 6) == 0) {
+                if (j < n - 1)
+                    api->config->guards.dhcp_exceptions[j] =
+                        api->config->guards.dhcp_exceptions[n - 1];
+                api->config->guards.dhcp_exception_count--;
+                api_persist_config(api);
+                break;
+            }
+        }
     }
 
     api_audit_log(api, "dhcp_exception_del", mac_str, NULL, "success");
