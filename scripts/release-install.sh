@@ -172,9 +172,10 @@ install_rswitch() {
 
     # ── Workaround for rSwitch v2.1.0 build bugs ─────────────
     # Issue #9: .gitmodules uses private SSH URL for libbpf submodule.
-    # Issues #10/#11: module_abi.h→rswitch_abi.h redefines structs already
-    #   present in uapi.h and inline in .c files. Remove the unnecessary
-    #   module_abi.h include from the two affected files.
+    # Issues #10/#11: rs_layers/rs_ctx are defined in rswitch_abi.h, uapi.h,
+    #   and inline in .c files — causing redefinition errors. We add a
+    #   preprocessor guard around the structs in rswitch_abi.h and set
+    #   that guard in uapi.h and the affected .c files.
     local rs_src="$SCRIPT_DIR/rswitch"
 
     if [[ -f "$rs_src/.gitmodules" ]]; then
@@ -182,16 +183,36 @@ install_rswitch() {
             "$rs_src/.gitmodules" 2>/dev/null || true
     fi
 
-    local patched=0
-    for src_file in user/snmpagent/snmpagent.c user/ctl/rswitchctl_dev.c; do
-        local f="$rs_src/$src_file"
-        if [[ -f "$f" ]] && grep -q '#include.*module_abi.h' "$f"; then
-            sed -i '/#include.*module_abi.h/d' "$f"
-            patched=1
-        fi
-    done
-    if [[ "$patched" -eq 1 ]]; then
-        info "Applied rSwitch build workaround: removed unnecessary module_abi.h includes (issues #10, #11)"
+    local abi_h="$rs_src/sdk/include/rswitch_abi.h"
+    local guard="__RS_CORE_STRUCTS_DEFINED"
+
+    if [[ -f "$abi_h" ]] && ! grep -q "$guard" "$abi_h"; then
+        # Helper: wrap struct rs_layers...struct rs_ctx block with #ifndef guard
+        patch_struct_guard() {
+            local file="$1"
+            [[ -f "$file" ]] || return 0
+            grep -q '^struct rs_layers {' "$file" || return 0
+            grep -q "$guard" "$file" && return 0
+
+            sed -i "/^struct rs_layers {/i\\
+#ifndef $guard\\
+#define $guard" "$file"
+
+            local ctx_end
+            ctx_end=$(awk '/^struct rs_ctx \{/{found=1} found && /^\};/{print NR; exit}' "$file")
+            [[ -n "$ctx_end" ]] && sed -i "${ctx_end}a\\
+#endif /* $guard */" "$file"
+        }
+
+        patch_struct_guard "$abi_h"
+        patch_struct_guard "$rs_src/bpf/core/uapi.h"
+        patch_struct_guard "$rs_src/sdk/include/uapi.h"
+
+        for src_file in user/ctl/rswitchctl_dev.c user/tools/rs_packet_trace.c; do
+            patch_struct_guard "$rs_src/$src_file"
+        done
+
+        info "Applied rSwitch build workaround: guarded duplicate struct defs (issues #10, #11)"
     fi
     # ──────────────────────────────────────────────────────────
 
