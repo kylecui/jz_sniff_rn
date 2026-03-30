@@ -73,7 +73,7 @@ sudo make uninstall       # Remove installed files
 
 One line install from zero (Ubuntu 24.04 LTS, x86_64):
 ```bash
-curl -sL https://github.com/kylecui/jz_sniff_rn/releases/download/v0.9.2/jz-sniff-0.9.2-linux-x86_64.tar.gz | tar xz -C /tmp && cd /tmp/jz-sniff-0.9.2-linux-x86_64 && sudo ./install.sh
+curl -sL https://github.com/kylecui/jz_sniff_rn/releases/download/v0.9.2/jz-sniff-v0.9.2-linux-x86_64.tar.gz | tar xz -C /tmp && cd /tmp/jz-sniff-v0.9.2-linux-x86_64 && sudo ./install.sh
 ```
 
 
@@ -116,7 +116,7 @@ See [design.md](docs/archive/design.md) for full architecture documentation and 
 
 ### What's Remaining
 
-- **v0.9.0 released** (draft). All integration tests, performance benchmarks, and deployment complete. 11 post-deployment fixes applied.
+- **v0.9.2 released**. rSwitch SDK v2.1.0 migration, DHCP persistence, frontend i18n fix, bundled rSwitch installer with upstream bug workarounds.
 
 ### Known Issues
 
