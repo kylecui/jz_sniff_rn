@@ -4,6 +4,7 @@
 > 日期：2026-03-23
 > 状态：待评审（v1.3.1 — 修复 Momus 评审发现的 3 个阻塞问题）
 > 前置文档：[design.md](design.md) · [backlog.md](backlog.md)
+> *(Note: these are relative links within docs/archive/)*
 
 ---
 

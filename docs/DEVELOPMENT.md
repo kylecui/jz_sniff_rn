@@ -9,8 +9,8 @@ jz_sniff_rn (Sniff Reborn) is a network security appliance firmware built on the
 The primary goal is to provide deception-based threat detection, granular traffic analysis, and forensic capabilities. It uses a pipeline of eBPF modules to identify and respond to suspicious network activity at line rate.
 
 For detailed specifications, refer to the following documents:
-- [design.md](design.md): Canonical system architecture and design.
-- [backlog.md](backlog.md): Product roadmap and task tracking.
+- [design.md](archive/design.md): Canonical system architecture and design.
+- [backlog.md](archive/backlog.md): Product roadmap and task tracking.
 
 ## 2. Development History
 

@@ -296,6 +296,7 @@ uninstall:
 
 RELEASE_NAME := jz-sniff-$(VERSION)-linux-$(ARCH)
 RELEASE_STAGE := $(RELEASE_DIR)/$(RELEASE_NAME)
+RSWITCH_SRC  ?=
 
 release: user cli frontend
 	@echo "=== Packaging release $(RELEASE_NAME) ==="
@@ -329,6 +330,20 @@ release: user cli frontend
 	cp $(SYSTEMD_DIR)/*.service $(RELEASE_STAGE)/systemd/
 	# Frontend
 	cp -r $(FRONTEND)/dist/* $(RELEASE_STAGE)/www/
+	# rSwitch source bundle
+	@if [ -n "$(RSWITCH_SRC)" ] && [ -d "$(RSWITCH_SRC)" ]; then \
+		echo "  Bundling rSwitch source from $(RSWITCH_SRC)..."; \
+		mkdir -p $(RELEASE_STAGE)/rswitch; \
+		tar cf - -C "$(RSWITCH_SRC)" \
+			--exclude='.git' \
+			--exclude='build' \
+			--exclude='*.o' \
+			--exclude='*.ko' \
+			. | tar xf - -C $(RELEASE_STAGE)/rswitch; \
+		echo "  rSwitch: bundled"; \
+	else \
+		echo "$(YLW)WARNING: No rSwitch source bundled. Set RSWITCH_SRC=/path/to/rswitch/$(RST)"; \
+	fi
 	# Install script
 	cp $(SCRIPTS_DIR)/release-install.sh $(RELEASE_STAGE)/install.sh
 	chmod +x $(RELEASE_STAGE)/install.sh
@@ -376,3 +391,4 @@ help:
 	@echo "  PREFIX=/usr/local Install prefix"
 	@echo "  DESTDIR=         Staging directory for packaging"
 	@echo "  VERSION=x.y.z    Release version (default: git describe)"
+	@echo "  RSWITCH_SRC=     Path to rSwitch source tree (for release bundling)"

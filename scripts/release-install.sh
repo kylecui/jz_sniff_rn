@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# jz_sniff_rn — Release installer
-# Installs pre-built binaries from release tarball. No build tools required.
+# jz_sniff_rn — Release installer (Ubuntu 24.04 LTS)
+# Installs pre-built binaries from release tarball + bundled rSwitch platform.
 #
 # Usage:
 #   tar xzf jz-sniff-*.tar.gz && cd jz-sniff-* && sudo ./install.sh
 #
 # Runtime dependencies (auto-installed):
 #   libbpf0/libbpf1, libelf1, zlib1g, libsqlite3-0, libyaml-0-2, openssl
+# rSwitch build dependencies (auto-installed by rSwitch installer):
+#   build-essential, clang, llvm, libelf-dev, etc.
 
 set -euo pipefail
 
@@ -44,15 +46,18 @@ usage() {
 Usage: sudo $0 [OPTIONS]
 
 Install jz_sniff_rn from pre-built release package.
+Requires Ubuntu 24.04 LTS (x86_64).
 
 Options:
   --no-start         Install only, do not start services
   --skip-deps        Skip runtime dependency check
+  --skip-rswitch     Skip rSwitch installation (if already installed)
   --uninstall        Stop services and remove installed files
   -h, --help         Show this help
 
 Examples:
-  sudo $0                     # Install + start services
+  sudo $0                     # Install rSwitch + jz_sniff_rn, start services
+  sudo $0 --skip-rswitch      # Skip rSwitch, install jz_sniff_rn only
   sudo $0 --no-start          # Install only
   sudo $0 --uninstall         # Remove everything
 EOF
@@ -61,19 +66,48 @@ EOF
 
 NO_START=false
 SKIP_DEPS=false
+SKIP_RSWITCH=false
 UNINSTALL=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-start)    NO_START=true; shift ;;
-        --skip-deps)   SKIP_DEPS=true; shift ;;
-        --uninstall)   UNINSTALL=true; shift ;;
-        -h|--help)     usage ;;
-        *)             die "Unknown option: $1" ;;
+        --no-start)       NO_START=true; shift ;;
+        --skip-deps)      SKIP_DEPS=true; shift ;;
+        --skip-rswitch)   SKIP_RSWITCH=true; shift ;;
+        --uninstall)      UNINSTALL=true; shift ;;
+        -h|--help)        usage ;;
+        *)                die "Unknown option: $1" ;;
     esac
 done
 
 [[ $(id -u) -eq 0 ]] || die "Must run as root (use sudo)"
+
+# ── Platform check ────────────────────────────────────────────
+check_platform() {
+    local arch
+    arch=$(uname -m)
+    if [[ "$arch" != "x86_64" ]]; then
+        die "Unsupported architecture: $arch (requires x86_64)"
+    fi
+
+    if [[ ! -f /etc/os-release ]]; then
+        die "Cannot detect OS — /etc/os-release not found"
+    fi
+
+    # shellcheck source=/dev/null
+    source /etc/os-release
+
+    if [[ "${ID:-}" != "ubuntu" ]]; then
+        die "Unsupported OS: ${ID:-unknown} (requires Ubuntu)"
+    fi
+
+    local major_ver="${VERSION_ID%%.*}"
+    if [[ "$major_ver" -lt 24 ]]; then
+        die "Unsupported Ubuntu version: ${VERSION_ID} (requires 24.04+)"
+    fi
+
+    ok "Platform: Ubuntu ${VERSION_ID} ($arch)"
+}
 
 # ── Verify release contents ───────────────────────────────────
 verify_release() {
@@ -109,12 +143,43 @@ do_uninstall() {
     rm -rf "$WWWDIR"
 
     ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
+    echo "  Note: rSwitch was NOT removed. To remove: sudo /opt/rswitch/scripts/install.sh --uninstall"
     exit 0
 }
 
 if $UNINSTALL; then
     do_uninstall
 fi
+
+# ── rSwitch installation ─────────────────────────────────────
+install_rswitch() {
+    if [[ ! -d "$SCRIPT_DIR/rswitch" ]] || [[ ! -f "$SCRIPT_DIR/rswitch/scripts/install.sh" ]]; then
+        warn "No bundled rSwitch source found — skipping rSwitch installation"
+        warn "Install rSwitch manually: https://github.com/kylecui/rswitch"
+        return 0
+    fi
+
+    # Check if rSwitch is already installed and functional
+    if [[ -f /opt/rswitch/build/rswitch_loader ]]; then
+        info "rSwitch already installed at /opt/rswitch/"
+        local existing_ver
+        existing_ver=$(/opt/rswitch/build/rswitch_loader --version 2>/dev/null || echo "unknown")
+        info "  Existing version: $existing_ver"
+        info "  Reinstalling from bundled source to ensure compatibility..."
+    fi
+
+    info "Installing rSwitch from bundled source..."
+
+    # The rSwitch installer handles its own dependency installation.
+    # RSWITCH_SRC tells it to use the bundled source instead of cloning.
+    # RSWITCH_FORCE skips interactive prompts.
+    if RSWITCH_SRC="$SCRIPT_DIR/rswitch" RSWITCH_FORCE=1 \
+       bash "$SCRIPT_DIR/rswitch/scripts/install.sh"; then
+        ok "rSwitch installed"
+    else
+        die "rSwitch installation failed. Check /var/log/rswitch/install.log"
+    fi
+}
 
 # ── Runtime dependency check ──────────────────────────────────
 check_runtime_deps() {
@@ -321,8 +386,20 @@ verify() {
 
 # ── Main ──────────────────────────────────────────────────────
 
+check_platform
 verify_release
 
+# Phase 1: rSwitch platform (must be installed before jz_sniff_rn)
+if ! $SKIP_RSWITCH; then
+    install_rswitch
+else
+    info "Skipping rSwitch installation (--skip-rswitch)"
+    if [[ ! -f /opt/rswitch/build/rswitch_loader ]]; then
+        warn "rSwitch not found at /opt/rswitch/ — jz_sniff_rn requires rSwitch to function"
+    fi
+fi
+
+# Phase 2: jz_sniff_rn
 if ! $SKIP_DEPS; then
     check_runtime_deps
 fi

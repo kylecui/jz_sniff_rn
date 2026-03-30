@@ -1,7 +1,7 @@
 # jz_sniff_rn Phase 2 项目完成报告
 
 > 日期：2026-03-25
-> 基线文档：[phase2_plan.md](../phase2_plan.md) v1.3.1
+> 基线文档：[phase2_plan.md](archive/phase2_plan.md) v1.3.1
 > 部署环境：10.174.254.139（Ubuntu 24.04 / x86_64 / kernel 6.8）
 
 ---

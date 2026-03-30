@@ -71,9 +71,9 @@ sudo make install PREFIX=/usr  # Install to /usr
 sudo make uninstall       # Remove installed files
 ```
 
-One line install from zero. 
+One line install from zero (Ubuntu 24.04 LTS, x86_64):
 ```bash
-sudo apt-get update && sudo apt-get install -y git clang llvm libbpf-dev libelf-dev zlib1g-dev libsqlite3-dev libyaml-dev pkg-config linux-headers-$(uname -r) ethtool dhcpcd5 && git clone https://github.com/kylecui/rswitch /tmp/rswitch && cd /tmp/rswitch/rswitch && sudo ./scripts/install.sh && curl -sL https://github.com/kylecui/jz_sniff_rn/releases/download/v0.9.1/jz-sniff-0.9.1-linux-x86_64.tar.gz | tar xz -C /tmp && cd /tmp/jz-sniff-0.9.1-linux-x86_64 && sudo ./install.sh
+curl -sL https://github.com/kylecui/jz_sniff_rn/releases/download/v0.9.2/jz-sniff-0.9.2-linux-x86_64.tar.gz | tar xz -C /tmp && cd /tmp/jz-sniff-0.9.2-linux-x86_64 && sudo ./install.sh
 ```
 
 
@@ -89,7 +89,7 @@ jzguard list
 jzlog attack --since 2026-03-01
 ```
 
-See [design.md](design.md) for full architecture documentation and [DEVELOPMENT.md](DEVELOPMENT.md) for detailed build instructions, API reference, and development guide.
+See [design.md](docs/archive/design.md) for full architecture documentation and [DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed build instructions, API reference, and development guide.
 
 ## Current Status
 
@@ -140,7 +140,10 @@ jz_sniff_rn/
   systemd/          Systemd service files (sniffd, configd, collectord, uploadd)
   tests/            Unit, BPF, integration, and perf tests
   scripts/          Build and deploy scripts
-  docs/             Documentation (user manual, completion report)
+  docs/             Documentation
+    archive/         Design docs, backlog, planning (historical)
+    DEVELOPMENT.md   Build instructions, API reference, dev guide
+    OPERATIONS.md    Operations and deployment guide
   include/rswitch/  rSwitch SDK v2.1.0 headers (vendored)
   third_party/      Vendored dependencies (mongoose v7.20, cJSON v1.7.18, Paho MQTT)
 ```
