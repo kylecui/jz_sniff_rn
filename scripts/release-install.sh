@@ -226,11 +226,26 @@ install_rswitch() {
     # The rSwitch installer handles its own dependency installation.
     # RSWITCH_SRC tells it to use the bundled source instead of cloning.
     # RSWITCH_FORCE skips interactive prompts.
-    if RSWITCH_SRC="$SCRIPT_DIR/rswitch" RSWITCH_FORCE=1 \
-       bash "$SCRIPT_DIR/rswitch/scripts/install.sh"; then
-        ok "rSwitch installed"
+    RSWITCH_SRC="$SCRIPT_DIR/rswitch" RSWITCH_FORCE=1 \
+       bash "$SCRIPT_DIR/rswitch/scripts/install.sh" || true
+
+    if [[ ! -f /opt/rswitch/build/rswitch_loader ]]; then
+        die "rSwitch build failed — /opt/rswitch/build/rswitch_loader not found. Check /var/log/rswitch/install.log"
+    fi
+
+    sleep 3
+    if systemctl is-active --quiet rswitch 2>/dev/null; then
+        ok "rSwitch installed and running"
     else
-        die "rSwitch installation failed. Check /var/log/rswitch/install.log"
+        warn "rSwitch installed but service not yet active — may start after reboot"
+        systemctl restart rswitch 2>/dev/null || true
+        sleep 2
+        if systemctl is-active --quiet rswitch 2>/dev/null; then
+            ok "rSwitch running after retry"
+        else
+            warn "rSwitch service still not active. Continuing with jz_sniff_rn install."
+            warn "Check: journalctl -u rswitch -n 30"
+        fi
     fi
 }
 
