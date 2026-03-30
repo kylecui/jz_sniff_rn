@@ -216,6 +216,13 @@ install_rswitch() {
     fi
     # ──────────────────────────────────────────────────────────
 
+    # Issue #12: rSwitch loader uses sd_notify() but the installer doesn't
+    # pull libsystemd-dev. Install it before the rSwitch build.
+    if ! dpkg -s libsystemd-dev >/dev/null 2>&1; then
+        info "Installing missing rSwitch build dep: libsystemd-dev (issue #12)"
+        apt-get install -y -qq libsystemd-dev 2>&1 | tail -1
+    fi
+
     # The rSwitch installer handles its own dependency installation.
     # RSWITCH_SRC tells it to use the bundled source instead of cloning.
     # RSWITCH_FORCE skips interactive prompts.
