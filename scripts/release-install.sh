@@ -170,6 +170,25 @@ install_rswitch() {
 
     info "Installing rSwitch from bundled source..."
 
+    # ── Workaround for rSwitch v2.1.0 build bugs ─────────────
+    # Issue #9:  .gitmodules uses private SSH URL for libbpf submodule.
+    #            Rewrite to public HTTPS in case clone path is ever hit.
+    # Issue #10: bpf/core/module_abi.h includes rswitch_abi.h but
+    #            sdk/include/ is not in the Makefile INCLUDES variable.
+    local rs_src="$SCRIPT_DIR/rswitch"
+
+    if [[ -f "$rs_src/.gitmodules" ]]; then
+        sed -i 's|url = git@github.com:kylecui/libbpf.git|url = https://github.com/libbpf/libbpf.git|' \
+            "$rs_src/.gitmodules" 2>/dev/null || true
+    fi
+
+    if [[ -f "$rs_src/Makefile" ]] && ! grep -q 'sdk/include' "$rs_src/Makefile"; then
+        sed -i 's|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR)|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR) -I./sdk/include|' \
+            "$rs_src/Makefile" 2>/dev/null || true
+        info "Applied rSwitch build workarounds (issues #9, #10)"
+    fi
+    # ──────────────────────────────────────────────────────────
+
     # The rSwitch installer handles its own dependency installation.
     # RSWITCH_SRC tells it to use the bundled source instead of cloning.
     # RSWITCH_FORCE skips interactive prompts.

@@ -5,6 +5,7 @@ release/
 *.d
 *.skel.h
 *.tmp
+tmp/
 
 # BPF compiled objects
 bpf/*.o
