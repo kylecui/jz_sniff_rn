@@ -298,7 +298,11 @@ RELEASE_NAME := jz-sniff-$(VERSION)-linux-$(ARCH)
 RELEASE_STAGE := $(RELEASE_DIR)/$(RELEASE_NAME)
 RSWITCH_SRC  ?=
 
-release: user cli frontend
+release: user cli
+	@if [ ! -f "$(FRONTEND)/dist/index.html" ]; then \
+		echo "$(YLW)WARNING: frontend/dist/ not found. Run 'make frontend' first or build frontend separately.$(RST)"; \
+		exit 1; \
+	fi
 	@echo "=== Packaging release $(RELEASE_NAME) ==="
 	rm -rf $(RELEASE_STAGE)
 	mkdir -p $(RELEASE_STAGE)/sbin
