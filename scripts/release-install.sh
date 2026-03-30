@@ -171,12 +171,10 @@ install_rswitch() {
     info "Installing rSwitch from bundled source..."
 
     # ── Workaround for rSwitch v2.1.0 build bugs ─────────────
-    # Issue #9:  .gitmodules uses private SSH URL for libbpf submodule.
-    #            Rewrite to public HTTPS in case clone path is ever hit.
-    # Issue #10: bpf/core/module_abi.h includes rswitch_abi.h but
-    #            sdk/include/ is not in the Makefile INCLUDES variable.
-    # Issue #11: rswitch_abi.h and uapi.h both define rs_layers/rs_ctx
-    #            causing redefinition errors when both are included.
+    # Issue #9: .gitmodules uses private SSH URL for libbpf submodule.
+    # Issues #10/#11: module_abi.h→rswitch_abi.h redefines structs already
+    #   present in uapi.h and inline in .c files. Remove the unnecessary
+    #   module_abi.h include from the two affected files.
     local rs_src="$SCRIPT_DIR/rswitch"
 
     if [[ -f "$rs_src/.gitmodules" ]]; then
@@ -184,27 +182,16 @@ install_rswitch() {
             "$rs_src/.gitmodules" 2>/dev/null || true
     fi
 
-    if [[ -f "$rs_src/Makefile" ]] && ! grep -q '^INCLUDES.*sdk/include' "$rs_src/Makefile"; then
-        sed -i 's|^INCLUDES = \$(LIBBPF_UAPI_INCLUDES) \$(LIBBPF_INCLUDES) -I\$(INCLUDE_DIR) -I\$(CORE_DIR)$|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR) -I./sdk/include|' \
-            "$rs_src/Makefile" 2>/dev/null || true
-        info "Applied rSwitch build workaround: added -I./sdk/include (issue #10)"
-    fi
-
-    # Guard duplicate struct definitions: if uapi.h was already included
-    # (via map_defs.h), skip rs_layers/rs_ctx in rswitch_abi.h.
-    local abi_h="$rs_src/sdk/include/rswitch_abi.h"
-    if [[ -f "$abi_h" ]] && ! grep -q '__RSWITCH_UAPI_H' "$abi_h"; then
-        sed -i '/^struct rs_layers {/i \
-#ifndef __RSWITCH_UAPI_H  /* Skip if uapi.h already defined these structs */' "$abi_h"
-        # Find the closing brace of rs_ctx (the second struct after rs_layers)
-        # rs_ctx ends with a }; line after the rs_layers member
-        local ctx_end
-        ctx_end=$(awk '/^struct rs_ctx \{/{found=1} found && /^\};/{print NR; exit}' "$abi_h")
-        if [[ -n "$ctx_end" ]]; then
-            sed -i "${ctx_end}a\\
-#endif /* __RSWITCH_UAPI_H */" "$abi_h"
-            info "Applied rSwitch build workaround: guarded duplicate structs (issue #11)"
+    local patched=0
+    for src_file in user/snmpagent/snmpagent.c user/ctl/rswitchctl_dev.c; do
+        local f="$rs_src/$src_file"
+        if [[ -f "$f" ]] && grep -q '#include.*module_abi.h' "$f"; then
+            sed -i '/#include.*module_abi.h/d' "$f"
+            patched=1
         fi
+    done
+    if [[ "$patched" -eq 1 ]]; then
+        info "Applied rSwitch build workaround: removed unnecessary module_abi.h includes (issues #10, #11)"
     fi
     # ──────────────────────────────────────────────────────────
 
