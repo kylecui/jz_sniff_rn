@@ -182,10 +182,10 @@ install_rswitch() {
             "$rs_src/.gitmodules" 2>/dev/null || true
     fi
 
-    if [[ -f "$rs_src/Makefile" ]] && ! grep -q 'sdk/include' "$rs_src/Makefile"; then
-        sed -i 's|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR)|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR) -I./sdk/include|' \
+    if [[ -f "$rs_src/Makefile" ]] && ! grep -q '^INCLUDES.*sdk/include' "$rs_src/Makefile"; then
+        sed -i 's|^INCLUDES = \$(LIBBPF_UAPI_INCLUDES) \$(LIBBPF_INCLUDES) -I\$(INCLUDE_DIR) -I\$(CORE_DIR)$|INCLUDES = $(LIBBPF_UAPI_INCLUDES) $(LIBBPF_INCLUDES) -I$(INCLUDE_DIR) -I$(CORE_DIR) -I./sdk/include|' \
             "$rs_src/Makefile" 2>/dev/null || true
-        info "Applied rSwitch build workarounds (issues #9, #10)"
+        info "Applied rSwitch build workaround: added -I./sdk/include (issue #10)"
     fi
     # ──────────────────────────────────────────────────────────
 
