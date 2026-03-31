@@ -249,6 +249,48 @@ install_rswitch() {
     fi
 }
 
+# ── Workaround: rSwitch dhcpcd vs management NIC (issue #13) ──
+# rSwitch installs dhcpcd5 and adds denyinterfaces for switch ports,
+# but NOT for the management NIC. If the host already uses
+# systemd-networkd/netplan for DHCP, dhcpcd grabs a second lease and
+# the NIC ends up with two IPs from different DHCP clients.
+fix_dhcpcd_mgmt_conflict() {
+    command -v dhcpcd >/dev/null 2>&1 || return 0
+    [[ -f /etc/dhcpcd.conf ]] || return 0
+
+    # Find the management interface: the one carrying the default route
+    local mgmt_iface
+    mgmt_iface=$(ip -4 route show default 2>/dev/null \
+                 | awk '/default via/{print $5; exit}')
+    [[ -z "$mgmt_iface" ]] && return 0
+
+    # Skip if this interface is already denied
+    if grep -qF "denyinterfaces ${mgmt_iface}" /etc/dhcpcd.conf 2>/dev/null; then
+        return 0
+    fi
+
+    # Only act if another DHCP client already manages this interface
+    # (netplan/systemd-networkd/NetworkManager)
+    local managed=false
+    if systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+        # Check if networkd has a .network file matching this interface
+        networkctl status "$mgmt_iface" 2>/dev/null | grep -qi 'State:.*routable' && managed=true
+    fi
+    if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+        nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -q "^${mgmt_iface}:connected" && managed=true
+    fi
+
+    if $managed; then
+        info "Fixing dhcpcd conflict: adding denyinterfaces ${mgmt_iface} (rSwitch issue #13)"
+        echo "denyinterfaces ${mgmt_iface}" >> /etc/dhcpcd.conf
+        # Release any existing dhcpcd lease on the management NIC,
+        # then restart so it stops managing that interface.
+        dhcpcd --release "$mgmt_iface" 2>/dev/null || true
+        systemctl restart dhcpcd 2>/dev/null || true
+        ok "dhcpcd no longer manages ${mgmt_iface}"
+    fi
+}
+
 # ── Runtime dependency check ──────────────────────────────────
 check_runtime_deps() {
     info "Checking runtime dependencies..."
@@ -472,6 +514,7 @@ verify_release
 # Phase 1: rSwitch platform (must be installed before jz_sniff_rn)
 if ! $SKIP_RSWITCH; then
     install_rswitch
+    fix_dhcpcd_mgmt_conflict
 else
     info "Skipping rSwitch installation (--skip-rswitch)"
     if [[ ! -f /opt/rswitch/build/rswitch_loader ]]; then
