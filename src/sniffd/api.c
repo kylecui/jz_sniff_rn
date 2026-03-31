@@ -3820,6 +3820,16 @@ static void handle_system_daemons(struct mg_connection *c, struct mg_http_messag
 
 /* ── Interface Runtime Status (getifaddrs) ─────────────────────── */
 
+static bool is_rswitch_internal_iface(const char *name)
+{
+    if (!name)
+        return false;
+    return strncmp(name, "veth_voq", 8) == 0 ||
+           strcmp(name, "mgmt-br") == 0 ||
+           strcmp(name, "mgmt0") == 0 ||
+           strncmp(name, "rswitch", 7) == 0;
+}
+
 static void handle_system_interfaces(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     struct ifaddrs *ifap = NULL, *ifa;
@@ -3850,6 +3860,7 @@ static void handle_system_interfaces(struct mg_connection *c, struct mg_http_mes
         if (!ifa->ifa_addr) continue;
         if (ifa->ifa_addr->sa_family != AF_INET) continue;
         if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+        if (is_rswitch_internal_iface(ifa->ifa_name)) continue;
 
         inet_ntop(AF_INET,
                   &((struct sockaddr_in *) ifa->ifa_addr)->sin_addr,
@@ -3890,8 +3901,7 @@ static void handle_system_interfaces(struct mg_connection *c, struct mg_http_mes
         if (!ifa->ifa_addr) continue;
         if (ifa->ifa_addr->sa_family != AF_PACKET) continue;
         if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-
-        /* Check if we already emitted this interface (has AF_INET). */
+        if (is_rswitch_internal_iface(ifa->ifa_name)) continue;
         for (check = ifap; check; check = check->ifa_next) {
             if (!check->ifa_addr) continue;
             if (check->ifa_addr->sa_family == AF_INET &&
