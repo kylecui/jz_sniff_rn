@@ -360,18 +360,30 @@ setup_bpffs() {
 }
 
 setup_tls() {
+    install -d -m 0750 "$TLS_DIR"
+
+    if [[ -f "$TLS_DIR/server.key" ]] && head -1 "$TLS_DIR/server.key" | grep -q "ENCRYPTED\|PRIVATE KEY-----" && \
+       ! head -1 "$TLS_DIR/server.key" | grep -q "EC PRIVATE KEY"; then
+        warn "Existing TLS key is PKCS#8 format (unsupported by embedded TLS). Converting..."
+        openssl ec -in "$TLS_DIR/server.key" -out "$TLS_DIR/server.key.tmp" 2>/dev/null && \
+            mv "$TLS_DIR/server.key.tmp" "$TLS_DIR/server.key"
+        chmod 0640 "$TLS_DIR/server.key"
+        ok "TLS key converted to traditional EC format"
+    fi
+
     if [[ -f "$TLS_DIR/server.crt" && -f "$TLS_DIR/server.key" ]]; then
         ok "TLS certificates already exist"
         return 0
     fi
 
     info "Generating self-signed TLS certificate (ECC P-256, 10yr)..."
-    install -d -m 0750 "$TLS_DIR"
 
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-        -keyout "$TLS_DIR/server.key" \
+    openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null | \
+        openssl ec -out "$TLS_DIR/server.key" 2>/dev/null
+
+    openssl req -new -x509 -key "$TLS_DIR/server.key" \
         -out "$TLS_DIR/server.crt" \
-        -days 3650 -nodes \
+        -days 3650 \
         -subj "/CN=jz-sniff/O=jz_sniff_rn" \
         2>/dev/null
 
