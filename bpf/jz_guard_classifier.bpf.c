@@ -412,6 +412,7 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
 
     /* Step 2: Lookup guard tables */
     __u8 guard_type = JZ_GUARD_NONE;
+
     struct jz_guard_entry *entry = jz_lookup_guard(dst_ip, ctx->ingress_vlan,
                                                     ctx->ifindex, &guard_type);
 

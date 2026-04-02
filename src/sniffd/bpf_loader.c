@@ -207,6 +207,11 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
         const char *map_name = bpf_map__name(map);
         if (!map_name || strncmp(map_name, "jz_", 3) != 0)
             continue;
+        /* Skip internal ELF section maps (.rodata, .bss, .data) that
+         * libbpf manages internally — setting pin_path on these breaks
+         * the load when the section content changes between builds. */
+        if (strchr(map_name, '.'))
+            continue;
 
         char pin[512];
         snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
