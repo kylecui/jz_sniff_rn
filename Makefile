@@ -351,6 +351,9 @@ release: user cli
 	# Install script
 	cp $(SCRIPTS_DIR)/release-install.sh $(RELEASE_STAGE)/install.sh
 	chmod +x $(RELEASE_STAGE)/install.sh
+	# Diagnostic tool
+	cp $(SCRIPTS_DIR)/jzdiag.sh $(RELEASE_STAGE)/jzdiag.sh
+	chmod +x $(RELEASE_STAGE)/jzdiag.sh
 	# Tarball
 	cd $(RELEASE_DIR) && tar czf $(RELEASE_NAME).tar.gz $(RELEASE_NAME)
 	rm -rf $(RELEASE_STAGE)
