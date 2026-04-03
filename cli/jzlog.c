@@ -26,7 +26,10 @@
 #include <strings.h>
 #include <unistd.h>
 
-#define JZLOG_VERSION "0.1.0"
+#ifndef JZ_VERSION
+#define JZ_VERSION "0.0.0-dev"
+#endif
+#define JZLOG_VERSION JZ_VERSION
 #define DEFAULT_DB_PATH "/var/lib/jz/jz.db"
 #define DEFAULT_LIMIT 50
 #define MAX_LIMIT 1000000

@@ -69,6 +69,7 @@ BPF_CFLAGS := -g -O2 \
 # ── User-space Build Flags ────────────────────────────────────
 USER_CFLAGS  := -g -O2 -Wall -Wextra -Werror \
                 -std=c11 -D_GNU_SOURCE \
+                -DJZ_VERSION=\"$(VERSION)\" \
                 -I$(SRC_DIR)/common \
                 -I$(BPF_DIR)/include \
                 -I$(INCLUDE_DIR) \

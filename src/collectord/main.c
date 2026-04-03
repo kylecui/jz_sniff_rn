@@ -37,7 +37,10 @@
 
 /* ── Version ──────────────────────────────────────────────────── */
 
-#define COLLECTORD_VERSION  "0.7.0"
+#ifndef JZ_VERSION
+#define JZ_VERSION "0.0.0-dev"
+#endif
+#define COLLECTORD_VERSION  JZ_VERSION
 
 /* ── Defaults ─────────────────────────────────────────────────── */
 

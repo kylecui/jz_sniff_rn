@@ -31,7 +31,10 @@
 #include <string.h>
 #include <unistd.h>
 
-#define JZCTL_VERSION            "0.1.0"
+#ifndef JZ_VERSION
+#define JZ_VERSION "0.0.0-dev"
+#endif
+#define JZCTL_VERSION            JZ_VERSION
 #define DEFAULT_CONFIG_PATH      "/etc/jz/base.yaml"
 #define DEFAULT_TIMEOUT_MS       3000
 #define DEFAULT_REPLY_SIZE       8192

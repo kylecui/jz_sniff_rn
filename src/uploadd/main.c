@@ -41,7 +41,10 @@
 
 /* ── Version ──────────────────────────────────────────────────── */
 
-#define UPLOADD_VERSION  "0.8.0"
+#ifndef JZ_VERSION
+#define JZ_VERSION "0.0.0-dev"
+#endif
+#define UPLOADD_VERSION  JZ_VERSION
 
 /* ── Defaults ─────────────────────────────────────────────────── */
 
