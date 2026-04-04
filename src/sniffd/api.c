@@ -1862,7 +1862,7 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
                     "SELECT id,event_type,timestamp,timestamp_ns,src_ip,src_mac,dst_ip,dst_mac,"
                     "guard_type,protocol,ifindex,threat_level,details,COALESCE(vlan_id,0),"
                     "COALESCE(src_port,0),COALESCE(dst_port,0) "
-                    "FROM attack_log WHERE 1=1 %s %s %s %s %s %s %s "
+                    "FROM attack_log WHERE event_type IN (1,2,10,11) %s %s %s %s %s %s %s "
                     "ORDER BY id DESC LIMIT ? OFFSET ?",
                     since[0] ? "AND timestamp >= ?" : "",
                     until[0] ? "AND timestamp <= ?" : "",
@@ -2134,7 +2134,7 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
     (void) snprintf(sql, sizeof(sql),
                     "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,"
                     "COALESCE(vlan_id,0),COALESCE(src_port,0),COALESCE(dst_port,0) "
-                    "FROM attack_log WHERE threat_level > 0 %s %s %s %s %s "
+                    "FROM attack_log WHERE event_type = 5 %s %s %s %s %s "
                     "ORDER BY id DESC LIMIT ? OFFSET ?",
                     since[0] ? "AND timestamp >= ?" : "",
                     until[0] ? "AND timestamp <= ?" : "",
@@ -2356,9 +2356,9 @@ static void handle_stats(struct mg_connection *c, struct mg_http_message *hm, jz
     cJSON_AddNumberToObject(root, "guards_dynamic", dynamic_count);
     cJSON_AddNumberToObject(root, "whitelist_total", whitelist_count);
 
-    attacks_total = (int)api_query_db(api, "SELECT COUNT(*) FROM attack_log", NULL);
+    attacks_total = (int)api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11)", NULL);
     attacks_today = (int)api_query_db(api,
-        "SELECT COUNT(*) FROM attack_log WHERE timestamp >= strftime('%s','now','start of day')", NULL);
+        "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11) AND timestamp >= strftime('%s','now','start of day')", NULL);
     cJSON_AddNumberToObject(root, "attacks_total", attacks_total);
     cJSON_AddNumberToObject(root, "attacks_today", attacks_today);
 
@@ -2403,9 +2403,9 @@ static void handle_stats_threats(struct mg_connection *c, struct mg_http_message
     (void) hm;
     root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "threat_events",
-                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE threat_level > 0", NULL));
+                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5", NULL));
     cJSON_AddNumberToObject(root, "high_or_above",
-                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE threat_level >= 3", NULL));
+                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5 AND threat_level >= 3", NULL));
     api_json_reply(c, 200, root);
 }
 
