@@ -1852,7 +1852,8 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
 
     (void) snprintf(sql, sizeof(sql),
                     "SELECT id,event_type,timestamp,timestamp_ns,src_ip,src_mac,dst_ip,dst_mac,"
-                    "guard_type,protocol,ifindex,threat_level,details,COALESCE(vlan_id,0) "
+                    "guard_type,protocol,ifindex,threat_level,details,COALESCE(vlan_id,0),"
+                    "COALESCE(src_port,0),COALESCE(dst_port,0) "
                     "FROM attack_log WHERE 1=1 %s %s %s ORDER BY id DESC LIMIT ? OFFSET ?",
                     since[0] ? "AND timestamp >= ?" : "",
                     until[0] ? "AND timestamp <= ?" : "",
@@ -1889,6 +1890,8 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
         cJSON_AddNumberToObject(o, "threat_level", sqlite3_column_int(stmt, 11));
         cJSON_AddStringToObject(o, "details", (const char *) sqlite3_column_text(stmt, 12));
         cJSON_AddNumberToObject(o, "vlan_id", sqlite3_column_int(stmt, 13));
+        cJSON_AddNumberToObject(o, "src_port", sqlite3_column_int(stmt, 14));
+        cJSON_AddNumberToObject(o, "dst_port", sqlite3_column_int(stmt, 15));
         cJSON_AddItemToArray(arr, o);
     }
 
@@ -2050,7 +2053,8 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
     }
 
     if (sqlite3_prepare_v2(db,
-                           "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,COALESCE(vlan_id,0) "
+                           "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,"
+                           "COALESCE(vlan_id,0),COALESCE(src_port,0),COALESCE(dst_port,0) "
                            "FROM attack_log WHERE threat_level > 0 ORDER BY id DESC LIMIT ? OFFSET ?",
                            -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
@@ -2074,6 +2078,8 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
         cJSON_AddNumberToObject(o, "threat_level", sqlite3_column_int(stmt, 5));
         cJSON_AddStringToObject(o, "details", (const char *) sqlite3_column_text(stmt, 6));
         cJSON_AddNumberToObject(o, "vlan_id", sqlite3_column_int(stmt, 7));
+        cJSON_AddNumberToObject(o, "src_port", sqlite3_column_int(stmt, 8));
+        cJSON_AddNumberToObject(o, "dst_port", sqlite3_column_int(stmt, 9));
         cJSON_AddItemToArray(arr, o);
     }
 

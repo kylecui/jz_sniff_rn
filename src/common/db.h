@@ -46,7 +46,9 @@ int jz_db_insert_attack(jz_db_t *ctx,
                         const void *packet_sample,
                         int sample_len,
                         const char *details,
-                        int vlan_id);
+                        int vlan_id,
+                        int src_port,
+                        int dst_port);
 
 /* -- Sniffer Log -- */
 
@@ -132,6 +134,8 @@ typedef struct jz_attack_row {
     int      ifindex;
     int      threat_level;
     int      vlan_id;
+    int      src_port;
+    int      dst_port;
     char     details[256];
 } jz_attack_row_t;
 

@@ -25,6 +25,8 @@ static const char *SCHEMA_SQL =
     "    packet_sample   BLOB,"
     "    details         TEXT,"
     "    uploaded        INTEGER DEFAULT 0,"
+    "    src_port        INTEGER DEFAULT 0,"
+    "    dst_port        INTEGER DEFAULT 0,"
     "    created_at      TEXT DEFAULT (datetime('now'))"
     ");"
 
@@ -177,6 +179,12 @@ int jz_db_open(jz_db_t *ctx, const char *path)
     exec_sql(ctx->db,
         "ALTER TABLE bg_capture ADD COLUMN dst_mac TEXT DEFAULT '';");
 
+    /* Schema migration: add port columns to attack_log */
+    exec_sql(ctx->db,
+        "ALTER TABLE attack_log ADD COLUMN src_port INTEGER DEFAULT 0;");
+    exec_sql(ctx->db,
+        "ALTER TABLE attack_log ADD COLUMN dst_port INTEGER DEFAULT 0;");
+
     return 0;
 }
 
@@ -206,7 +214,9 @@ int jz_db_insert_attack(jz_db_t *ctx,
                         const void *packet_sample,
                         int sample_len,
                         const char *details,
-                        int vlan_id)
+                        int vlan_id,
+                        int src_port,
+                        int dst_port)
 {
     if (!ctx || !ctx->initialized)
         return -1;
@@ -214,8 +224,9 @@ int jz_db_insert_attack(jz_db_t *ctx,
     const char *sql =
         "INSERT INTO attack_log (event_type, timestamp, timestamp_ns, "
         "src_ip, src_mac, dst_ip, dst_mac, guard_type, protocol, "
-        "ifindex, threat_level, packet_sample, details, vlan_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        "ifindex, threat_level, packet_sample, details, vlan_id, "
+        "src_port, dst_port) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -241,6 +252,8 @@ int jz_db_insert_attack(jz_db_t *ctx,
 
     sqlite3_bind_text(stmt, 13, details, -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 14, vlan_id);
+    sqlite3_bind_int(stmt, 15, src_port);
+    sqlite3_bind_int(stmt, 16, dst_port);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -582,7 +595,7 @@ int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
     const char *sql =
         "SELECT id, event_type, timestamp, timestamp_ns, src_ip, src_mac, "
         "dst_ip, dst_mac, guard_type, protocol, ifindex, threat_level, details, "
-        "COALESCE(vlan_id, 0) "
+        "COALESCE(vlan_id, 0), COALESCE(src_port, 0), COALESCE(dst_port, 0) "
         "FROM attack_log WHERE uploaded = 0 ORDER BY id ASC LIMIT ?";
 
     sqlite3_stmt *stmt;
@@ -624,6 +637,8 @@ int jz_db_fetch_pending_attacks(jz_db_t *ctx, int max_rows,
         r->threat_level = sqlite3_column_int(stmt, 11);
         snprintf(r->details,    sizeof(r->details),    "%s", safe_text(stmt, 12));
         r->vlan_id      = sqlite3_column_int(stmt, 13);
+        r->src_port     = sqlite3_column_int(stmt, 14);
+        r->dst_port     = sqlite3_column_int(stmt, 15);
         n++;
     }
 

@@ -13,6 +13,8 @@ export interface LogEntry {
   guard_type?: string
   protocol?: string
   threat_level?: number
+  src_port?: number
+  dst_port?: number
   details?: string
   action?: string
   actor?: string

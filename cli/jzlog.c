@@ -82,6 +82,8 @@ static const char *event_name(int event_type)
     case 6: return "BG";
     case 7: return "CONFIG";
     case 8: return "STATUS";
+    case 10: return "TCP";
+    case 11: return "UDP";
     default: return "OTHER";
     }
 }

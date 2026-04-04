@@ -440,6 +440,8 @@ static int persist_event(const char *payload, uint32_t payload_len)
         const char *guard_type = "unknown";
         const char *protocol;
         int threat_level = 2;
+        int src_port_val = 0;
+        int dst_port_val = 0;
 
         switch (event_type) {
         case JZ_EVENT_ATTACK_ARP:  protocol = "ARP";  break;
@@ -453,11 +455,20 @@ static int persist_event(const char *payload, uint32_t payload_len)
             guard_type = (gt == 1) ? "static" : (gt == 2) ? "dynamic" : "unknown";
         }
 
+        if (payload_len >= EVENT_HDR_LEN + 16) {
+            uint16_t sp, dp;
+            memcpy(&sp, p + EVENT_HDR_LEN + 12, 2);
+            memcpy(&dp, p + EVENT_HDR_LEN + 14, 2);
+            src_port_val = ntohs(sp);
+            dst_port_val = ntohs(dp);
+        }
+
         rc = jz_db_insert_attack(&g_ctx.db, (int)event_type, timestamp,
                                   timestamp_ns, src_ip_str, src_mac_str,
                                   dst_ip_str, dst_mac_str, guard_type,
                                   protocol, (int)ifindex, threat_level,
-                                  NULL, 0, NULL, (int)vlan_id);
+                                  NULL, 0, NULL, (int)vlan_id,
+                                  src_port_val, dst_port_val);
         break;
     }
 
@@ -502,7 +513,7 @@ static int persist_event(const char *payload, uint32_t payload_len)
                                   timestamp_ns, src_ip_str, src_mac_str,
                                   dst_ip_str, dst_mac_str, "threat",
                                   "IP", (int)ifindex, threat_level,
-                                  NULL, 0, details, (int)vlan_id);
+                                  NULL, 0, details, (int)vlan_id, 0, 0);
         break;
     }
 
@@ -638,6 +649,8 @@ static char *export_pending_json(int max_records)
         cJSON_AddNumberToObject(obj, "ifindex",      r->ifindex);
         cJSON_AddNumberToObject(obj, "threat_level", r->threat_level);
         cJSON_AddNumberToObject(obj, "vlan_id",      r->vlan_id);
+        cJSON_AddNumberToObject(obj, "src_port",     r->src_port);
+        cJSON_AddNumberToObject(obj, "dst_port",     r->dst_port);
         if (r->details[0])
             cJSON_AddStringToObject(obj, "details", r->details);
         cJSON_AddItemToArray(arr_attacks, obj);
