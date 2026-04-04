@@ -127,7 +127,18 @@
     "vlan": "VLAN",
     "export": "导出 CSV",
     "filterAll": "全部",
-    "pageSize": "{n} 条/页"
+    "pageSize": "{n} 条/页",
+    "probeIp": "探针 IP",
+    "responseCount": "响应次数",
+    "firstSeen": "首次发现",
+    "lastSeen": "最后活跃",
+    "threatLevel": "威胁等级",
+    "packetCount": "数据包数",
+    "byteCount": "字节数",
+    "guardType": "哨兵类型",
+    "periodStart": "开始时段",
+    "periodEnd": "结束时段",
+    "uniqueSources": "独立源数"
   },
   "discovery": {
     "title": "设备发现",

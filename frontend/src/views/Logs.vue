@@ -38,9 +38,10 @@ const tabMap: { name: LogType; labelKey: string }[] = [
   { name: 'heartbeat', labelKey: 'logs.heartbeat' },
 ]
 
-const isAttackLike = computed(() =>
-  ['attacks', 'sniffers', 'background', 'threats'].includes(activeTab.value),
-)
+const isAttacks = computed(() => activeTab.value === 'attacks')
+const isSniffers = computed(() => activeTab.value === 'sniffers')
+const isBackground = computed(() => activeTab.value === 'background')
+const isThreats = computed(() => activeTab.value === 'threats')
 const isAudit = computed(() => activeTab.value === 'audit')
 const isHeartbeat = computed(() => activeTab.value === 'heartbeat')
 
@@ -291,16 +292,56 @@ onMounted(fetchLogs)
 
     <el-skeleton :loading="loading" animated>
       <template #default>
-        <el-table v-if="isAttackLike" :data="logs" stripe>
+        <!-- Attack Logs -->
+        <el-table v-if="isAttacks" :data="logs" stripe>
           <el-table-column prop="timestamp" :label="t('common.time')" width="180" sortable />
           <el-table-column prop="src_ip" :label="t('policies.srcIp')" sortable />
           <el-table-column prop="dst_ip" :label="t('policies.dstIp')" sortable />
           <el-table-column prop="src_mac" :label="t('common.mac')" sortable />
-          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
+          <el-table-column prop="guard_type" :label="t('logs.guardType')" width="110" sortable />
           <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" sortable />
           <el-table-column prop="src_port" :label="t('policies.srcPort')" width="100" sortable />
           <el-table-column prop="dst_port" :label="t('policies.dstPort')" width="100" sortable />
+          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
           <el-table-column prop="details" :label="t('common.description')" min-width="200" />
+        </el-table>
+
+        <!-- Threat Detection -->
+        <el-table v-else-if="isThreats" :data="logs" stripe>
+          <el-table-column prop="timestamp" :label="t('common.time')" width="180" sortable />
+          <el-table-column prop="src_ip" :label="t('policies.srcIp')" sortable />
+          <el-table-column prop="dst_ip" :label="t('policies.dstIp')" sortable />
+          <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" sortable />
+          <el-table-column prop="threat_level" :label="t('logs.threatLevel')" width="110" sortable />
+          <el-table-column prop="src_port" :label="t('policies.srcPort')" width="100" sortable />
+          <el-table-column prop="dst_port" :label="t('policies.dstPort')" width="100" sortable />
+          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
+          <el-table-column prop="details" :label="t('common.description')" min-width="200" />
+        </el-table>
+
+        <!-- Sniffer Detection -->
+        <el-table v-else-if="isSniffers" :data="logs" stripe>
+          <el-table-column prop="mac" :label="t('common.mac')" width="180" sortable />
+          <el-table-column prop="ip" :label="t('common.ip')" sortable />
+          <el-table-column prop="probe_ip" :label="t('logs.probeIp')" sortable />
+          <el-table-column prop="response_count" :label="t('logs.responseCount')" width="120" sortable />
+          <el-table-column prop="first_seen" :label="t('logs.firstSeen')" width="180" sortable />
+          <el-table-column prop="last_seen" :label="t('logs.lastSeen')" width="180" sortable />
+          <el-table-column prop="ifindex" :label="t('system.ifindex')" width="80" sortable />
+        </el-table>
+
+        <!-- Background Traffic -->
+        <el-table v-else-if="isBackground" :data="logs" stripe>
+          <el-table-column prop="timestamp" :label="t('logs.periodStart')" width="180" sortable />
+          <el-table-column prop="period_end" :label="t('logs.periodEnd')" width="180" sortable />
+          <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" sortable />
+          <el-table-column prop="packet_count" :label="t('logs.packetCount')" width="110" sortable />
+          <el-table-column prop="byte_count" :label="t('logs.byteCount')" width="110" sortable />
+          <el-table-column prop="unique_sources" :label="t('logs.uniqueSources')" width="130" sortable />
+          <el-table-column prop="src_ip" :label="t('policies.srcIp')" sortable />
+          <el-table-column prop="dst_ip" :label="t('policies.dstIp')" sortable />
+          <el-table-column prop="src_mac" :label="t('common.mac')" sortable />
+          <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
         </el-table>
 
         <el-table v-else-if="isAudit" :data="logs" stripe>

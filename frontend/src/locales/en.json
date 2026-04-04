@@ -127,7 +127,18 @@
     "vlan": "VLAN",
     "export": "Export CSV",
     "filterAll": "All",
-    "pageSize": "{n} / page"
+    "pageSize": "{n} / page",
+    "probeIp": "Probe IP",
+    "responseCount": "Responses",
+    "firstSeen": "First Seen",
+    "lastSeen": "Last Seen",
+    "threatLevel": "Threat Level",
+    "packetCount": "Packets",
+    "byteCount": "Bytes",
+    "guardType": "Guard Type",
+    "periodStart": "Period Start",
+    "periodEnd": "Period End",
+    "uniqueSources": "Unique Sources"
   },
   "discovery": {
     "title": "Device Discovery",
