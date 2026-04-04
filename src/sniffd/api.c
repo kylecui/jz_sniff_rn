@@ -1823,6 +1823,10 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
     char since[64] = {0};
     char until[64] = {0};
     char src_ip[64] = {0};
+    char dst_ip[64] = {0};
+    char protocol[32] = {0};
+    int src_port;
+    int dst_port;
     int limit;
     int offset;
     char sql[1024];
@@ -1836,12 +1840,16 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
     (void) api_parse_query_str(hm, "since", since, sizeof(since));
     (void) api_parse_query_str(hm, "until", until, sizeof(until));
     (void) api_parse_query_str(hm, "src_ip", src_ip, sizeof(src_ip));
+    (void) api_parse_query_str(hm, "dst_ip", dst_ip, sizeof(dst_ip));
+    (void) api_parse_query_str(hm, "protocol", protocol, sizeof(protocol));
+    src_port = api_parse_query_int(hm, "src_port", 0);
+    dst_port = api_parse_query_int(hm, "dst_port", 0);
     limit = api_parse_query_int(hm, "limit", 100);
     offset = api_parse_query_int(hm, "offset", 0);
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -1854,10 +1862,15 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
                     "SELECT id,event_type,timestamp,timestamp_ns,src_ip,src_mac,dst_ip,dst_mac,"
                     "guard_type,protocol,ifindex,threat_level,details,COALESCE(vlan_id,0),"
                     "COALESCE(src_port,0),COALESCE(dst_port,0) "
-                    "FROM attack_log WHERE 1=1 %s %s %s ORDER BY id DESC LIMIT ? OFFSET ?",
+                    "FROM attack_log WHERE 1=1 %s %s %s %s %s %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
                     since[0] ? "AND timestamp >= ?" : "",
                     until[0] ? "AND timestamp <= ?" : "",
-                    src_ip[0] ? "AND src_ip = ?" : "");
+                    src_ip[0] ? "AND src_ip = ?" : "",
+                    dst_ip[0] ? "AND dst_ip = ?" : "",
+                    protocol[0] ? "AND protocol = ?" : "",
+                    src_port > 0 ? "AND src_port = ?" : "",
+                    dst_port > 0 ? "AND dst_port = ?" : "");
 
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
         goto fail;
@@ -1868,6 +1881,14 @@ static void handle_logs_attacks(struct mg_connection *c, struct mg_http_message 
         sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
     if (src_ip[0])
         sqlite3_bind_text(stmt, idx++, src_ip, -1, SQLITE_TRANSIENT);
+    if (dst_ip[0])
+        sqlite3_bind_text(stmt, idx++, dst_ip, -1, SQLITE_TRANSIENT);
+    if (protocol[0])
+        sqlite3_bind_text(stmt, idx++, protocol, -1, SQLITE_TRANSIENT);
+    if (src_port > 0)
+        sqlite3_bind_int(stmt, idx++, src_port);
+    if (dst_port > 0)
+        sqlite3_bind_int(stmt, idx++, dst_port);
     sqlite3_bind_int(stmt, idx++, limit);
     sqlite3_bind_int(stmt, idx++, offset);
 
@@ -1917,13 +1938,24 @@ static void handle_logs_sniffers(struct mg_connection *c, struct mg_http_message
     sqlite3_stmt *stmt = NULL;
     cJSON *root = NULL;
     cJSON *arr = NULL;
+    char since[64] = {0};
+    char until[64] = {0};
+    char ip[64] = {0};
+    char mac[64] = {0};
+    char sql[1024];
+    int idx = 1;
     int limit = api_parse_query_int(hm, "limit", 100);
     int offset = api_parse_query_int(hm, "offset", 0);
 
+    (void) api_parse_query_str(hm, "since", since, sizeof(since));
+    (void) api_parse_query_str(hm, "until", until, sizeof(until));
+    (void) api_parse_query_str(hm, "ip", ip, sizeof(ip));
+    (void) api_parse_query_str(hm, "mac", mac, sizeof(mac));
+
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -1932,17 +1964,31 @@ static void handle_logs_sniffers(struct mg_connection *c, struct mg_http_message
         return;
     }
 
-    if (sqlite3_prepare_v2(db,
-                           "SELECT id,mac,ip,ifindex,first_seen,last_seen,response_count,probe_ip "
-                           "FROM sniffer_log ORDER BY id DESC LIMIT ? OFFSET ?",
-                           -1, &stmt, NULL) != SQLITE_OK) {
+    (void) snprintf(sql, sizeof(sql),
+                    "SELECT id,mac,ip,ifindex,first_seen,last_seen,response_count,probe_ip "
+                    "FROM sniffer_log WHERE 1=1 %s %s %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    since[0] ? "AND first_seen >= ?" : "",
+                    until[0] ? "AND first_seen <= ?" : "",
+                    ip[0] ? "AND ip = ?" : "",
+                    mac[0] ? "AND mac = ?" : "");
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
         return;
     }
 
-    sqlite3_bind_int(stmt, 1, limit);
-    sqlite3_bind_int(stmt, 2, offset);
+    if (since[0])
+        sqlite3_bind_text(stmt, idx++, since, -1, SQLITE_TRANSIENT);
+    if (until[0])
+        sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
+    if (ip[0])
+        sqlite3_bind_text(stmt, idx++, ip, -1, SQLITE_TRANSIENT);
+    if (mac[0])
+        sqlite3_bind_text(stmt, idx++, mac, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, idx++, limit);
+    sqlite3_bind_int(stmt, idx++, offset);
 
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "rows");
@@ -1971,13 +2017,22 @@ static void handle_logs_background(struct mg_connection *c, struct mg_http_messa
     sqlite3_stmt *stmt = NULL;
     cJSON *root = NULL;
     cJSON *arr = NULL;
+    char since[64] = {0};
+    char until[64] = {0};
+    char protocol[32] = {0};
+    char sql[1024];
+    int idx = 1;
     int limit = api_parse_query_int(hm, "limit", 100);
     int offset = api_parse_query_int(hm, "offset", 0);
 
+    (void) api_parse_query_str(hm, "since", since, sizeof(since));
+    (void) api_parse_query_str(hm, "until", until, sizeof(until));
+    (void) api_parse_query_str(hm, "protocol", protocol, sizeof(protocol));
+
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -1986,18 +2041,29 @@ static void handle_logs_background(struct mg_connection *c, struct mg_http_messa
         return;
     }
 
-    if (sqlite3_prepare_v2(db,
-                           "SELECT id,period_start,period_end,protocol,packet_count,byte_count,"
-                           "unique_sources,sample_data,vlan_id,src_ip,dst_ip,src_mac,dst_mac "
-                           "FROM bg_capture ORDER BY id DESC LIMIT ? OFFSET ?",
-                           -1, &stmt, NULL) != SQLITE_OK) {
+    (void) snprintf(sql, sizeof(sql),
+                    "SELECT id,period_start,period_end,protocol,packet_count,byte_count,"
+                    "unique_sources,sample_data,vlan_id,src_ip,dst_ip,src_mac,dst_mac "
+                    "FROM bg_capture WHERE 1=1 %s %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    since[0] ? "AND period_start >= ?" : "",
+                    until[0] ? "AND period_start <= ?" : "",
+                    protocol[0] ? "AND protocol = ?" : "");
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
         return;
     }
 
-    sqlite3_bind_int(stmt, 1, limit);
-    sqlite3_bind_int(stmt, 2, offset);
+    if (since[0])
+        sqlite3_bind_text(stmt, idx++, since, -1, SQLITE_TRANSIENT);
+    if (until[0])
+        sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
+    if (protocol[0])
+        sqlite3_bind_text(stmt, idx++, protocol, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, idx++, limit);
+    sqlite3_bind_int(stmt, idx++, offset);
 
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "rows");
@@ -2037,13 +2103,26 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
     sqlite3_stmt *stmt = NULL;
     cJSON *root = NULL;
     cJSON *arr = NULL;
+    char since[64] = {0};
+    char until[64] = {0};
+    char src_ip[64] = {0};
+    char dst_ip[64] = {0};
+    char protocol[32] = {0};
+    char sql[1024];
+    int idx = 1;
     int limit = api_parse_query_int(hm, "limit", 100);
     int offset = api_parse_query_int(hm, "offset", 0);
 
+    (void) api_parse_query_str(hm, "since", since, sizeof(since));
+    (void) api_parse_query_str(hm, "until", until, sizeof(until));
+    (void) api_parse_query_str(hm, "src_ip", src_ip, sizeof(src_ip));
+    (void) api_parse_query_str(hm, "dst_ip", dst_ip, sizeof(dst_ip));
+    (void) api_parse_query_str(hm, "protocol", protocol, sizeof(protocol));
+
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -2052,18 +2131,35 @@ static void handle_logs_threats(struct mg_connection *c, struct mg_http_message 
         return;
     }
 
-    if (sqlite3_prepare_v2(db,
-                           "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,"
-                           "COALESCE(vlan_id,0),COALESCE(src_port,0),COALESCE(dst_port,0) "
-                           "FROM attack_log WHERE threat_level > 0 ORDER BY id DESC LIMIT ? OFFSET ?",
-                           -1, &stmt, NULL) != SQLITE_OK) {
+    (void) snprintf(sql, sizeof(sql),
+                    "SELECT id,timestamp,src_ip,dst_ip,protocol,threat_level,details,"
+                    "COALESCE(vlan_id,0),COALESCE(src_port,0),COALESCE(dst_port,0) "
+                    "FROM attack_log WHERE threat_level > 0 %s %s %s %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    since[0] ? "AND timestamp >= ?" : "",
+                    until[0] ? "AND timestamp <= ?" : "",
+                    src_ip[0] ? "AND src_ip = ?" : "",
+                    dst_ip[0] ? "AND dst_ip = ?" : "",
+                    protocol[0] ? "AND protocol = ?" : "");
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
         return;
     }
 
-    sqlite3_bind_int(stmt, 1, limit);
-    sqlite3_bind_int(stmt, 2, offset);
+    if (since[0])
+        sqlite3_bind_text(stmt, idx++, since, -1, SQLITE_TRANSIENT);
+    if (until[0])
+        sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
+    if (src_ip[0])
+        sqlite3_bind_text(stmt, idx++, src_ip, -1, SQLITE_TRANSIENT);
+    if (dst_ip[0])
+        sqlite3_bind_text(stmt, idx++, dst_ip, -1, SQLITE_TRANSIENT);
+    if (protocol[0])
+        sqlite3_bind_text(stmt, idx++, protocol, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, idx++, limit);
+    sqlite3_bind_int(stmt, idx++, offset);
 
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "rows");
@@ -2094,13 +2190,22 @@ static void handle_logs_audit(struct mg_connection *c, struct mg_http_message *h
     sqlite3_stmt *stmt = NULL;
     cJSON *root = NULL;
     cJSON *arr = NULL;
+    char since[64] = {0};
+    char until[64] = {0};
+    char action[64] = {0};
+    char sql[1024];
+    int idx = 1;
     int limit = api_parse_query_int(hm, "limit", 100);
     int offset = api_parse_query_int(hm, "offset", 0);
 
+    (void) api_parse_query_str(hm, "since", since, sizeof(since));
+    (void) api_parse_query_str(hm, "until", until, sizeof(until));
+    (void) api_parse_query_str(hm, "action", action, sizeof(action));
+
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -2109,17 +2214,28 @@ static void handle_logs_audit(struct mg_connection *c, struct mg_http_message *h
         return;
     }
 
-    if (sqlite3_prepare_v2(db,
-                           "SELECT id,timestamp,action,actor,target,details,result "
-                           "FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?",
-                           -1, &stmt, NULL) != SQLITE_OK) {
+    (void) snprintf(sql, sizeof(sql),
+                    "SELECT id,timestamp,action,actor,target,details,result "
+                    "FROM audit_log WHERE 1=1 %s %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    since[0] ? "AND timestamp >= ?" : "",
+                    until[0] ? "AND timestamp <= ?" : "",
+                    action[0] ? "AND action = ?" : "");
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
         return;
     }
 
-    sqlite3_bind_int(stmt, 1, limit);
-    sqlite3_bind_int(stmt, 2, offset);
+    if (since[0])
+        sqlite3_bind_text(stmt, idx++, since, -1, SQLITE_TRANSIENT);
+    if (until[0])
+        sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
+    if (action[0])
+        sqlite3_bind_text(stmt, idx++, action, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, idx++, limit);
+    sqlite3_bind_int(stmt, idx++, offset);
 
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "rows");
@@ -2147,13 +2263,20 @@ static void handle_logs_heartbeat(struct mg_connection *c, struct mg_http_messag
     sqlite3_stmt *stmt = NULL;
     cJSON *root = NULL;
     cJSON *arr = NULL;
+    char since[64] = {0};
+    char until[64] = {0};
+    char sql[1024];
+    int idx = 1;
     int limit = api_parse_query_int(hm, "limit", 100);
     int offset = api_parse_query_int(hm, "offset", 0);
 
+    (void) api_parse_query_str(hm, "since", since, sizeof(since));
+    (void) api_parse_query_str(hm, "until", until, sizeof(until));
+
     if (limit <= 0)
         limit = 100;
-    if (limit > 1000)
-        limit = 1000;
+    if (limit > 10000)
+        limit = 10000;
     if (offset < 0)
         offset = 0;
 
@@ -2162,17 +2285,25 @@ static void handle_logs_heartbeat(struct mg_connection *c, struct mg_http_messag
         return;
     }
 
-    if (sqlite3_prepare_v2(db,
-                           "SELECT id,timestamp,json_data "
-                           "FROM heartbeat_log ORDER BY id DESC LIMIT ? OFFSET ?",
-                           -1, &stmt, NULL) != SQLITE_OK) {
+    (void) snprintf(sql, sizeof(sql),
+                    "SELECT id,timestamp,json_data "
+                    "FROM heartbeat_log WHERE 1=1 %s %s "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    since[0] ? "AND timestamp >= ?" : "",
+                    until[0] ? "AND timestamp <= ?" : "");
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_close(db);
         api_error_reply(c, 500, "query failed");
         return;
     }
 
-    sqlite3_bind_int(stmt, 1, limit);
-    sqlite3_bind_int(stmt, 2, offset);
+    if (since[0])
+        sqlite3_bind_text(stmt, idx++, since, -1, SQLITE_TRANSIENT);
+    if (until[0])
+        sqlite3_bind_text(stmt, idx++, until, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, idx++, limit);
+    sqlite3_bind_int(stmt, idx++, offset);
 
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "rows");

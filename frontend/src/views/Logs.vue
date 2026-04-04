@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { getLogs } from '@/api/logs'
-import type { LogType, LogEntry } from '@/api/logs'
+import { getLogs, exportLogsToCSV } from '@/api/logs'
+import type { LogType, LogEntry, LogQueryParams } from '@/api/logs'
 
 const { t } = useI18n()
 
@@ -10,6 +10,24 @@ const logs = ref<LogEntry[]>([])
 const limit = ref(20)
 const offset = ref(0)
 const timeRange = ref<[string, string] | null>(null)
+
+/* --- per-tab filters --- */
+const filterSrcIp = ref('')
+const filterDstIp = ref('')
+const filterProtocol = ref('')
+const filterSrcPort = ref<number | undefined>(undefined)
+const filterDstPort = ref<number | undefined>(undefined)
+const filterIp = ref('')
+const filterMac = ref('')
+const filterAction = ref('')
+
+const protocolOptions = [
+  { value: '', label: t('logs.filterAll') },
+  { value: 'ARP', label: 'ARP' },
+  { value: 'ICMP', label: 'ICMP' },
+  { value: 'TCP', label: 'TCP' },
+  { value: 'UDP', label: 'UDP' },
+]
 
 const tabMap: { name: LogType; labelKey: string }[] = [
   { name: 'attacks', labelKey: 'logs.attack' },
@@ -26,21 +44,55 @@ const isAttackLike = computed(() =>
 const isAudit = computed(() => activeTab.value === 'audit')
 const isHeartbeat = computed(() => activeTab.value === 'heartbeat')
 
+const showIpFilters = computed(() =>
+  ['attacks', 'threats'].includes(activeTab.value),
+)
+const showProtocolFilter = computed(() =>
+  ['attacks', 'threats', 'background'].includes(activeTab.value),
+)
+const showPortFilters = computed(() => activeTab.value === 'attacks')
+const showSnifferFilters = computed(() => activeTab.value === 'sniffers')
+const showActionFilter = computed(() => activeTab.value === 'audit')
+
+function resetFilters() {
+  filterSrcIp.value = ''
+  filterDstIp.value = ''
+  filterProtocol.value = ''
+  filterSrcPort.value = undefined
+  filterDstPort.value = undefined
+  filterIp.value = ''
+  filterMac.value = ''
+  filterAction.value = ''
+}
+
 async function fetchLogs() {
   loading.value = true
   try {
-    const params: {
-      limit?: number
-      offset?: number
-      since?: string
-      until?: string
-    } = {
+    const params: LogQueryParams = {
       limit: limit.value,
       offset: offset.value,
     }
     if (timeRange.value) {
       params.since = timeRange.value[0]
       params.until = timeRange.value[1]
+    }
+    if (showIpFilters.value) {
+      if (filterSrcIp.value) params.src_ip = filterSrcIp.value
+      if (filterDstIp.value) params.dst_ip = filterDstIp.value
+    }
+    if (showProtocolFilter.value && filterProtocol.value) {
+      params.protocol = filterProtocol.value
+    }
+    if (showPortFilters.value) {
+      if (filterSrcPort.value) params.src_port = filterSrcPort.value
+      if (filterDstPort.value) params.dst_port = filterDstPort.value
+    }
+    if (showSnifferFilters.value) {
+      if (filterIp.value) params.ip = filterIp.value
+      if (filterMac.value) params.mac = filterMac.value
+    }
+    if (showActionFilter.value && filterAction.value) {
+      params.action = filterAction.value
     }
     const res = await getLogs(activeTab.value, params)
     logs.value = res.rows ?? []
@@ -53,10 +105,21 @@ async function fetchLogs() {
 
 function onTabChange() {
   offset.value = 0
+  resetFilters()
+  fetchLogs()
+}
+
+function onFilterChange() {
+  offset.value = 0
   fetchLogs()
 }
 
 function onTimeChange() {
+  offset.value = 0
+  fetchLogs()
+}
+
+function onPageSizeChange() {
   offset.value = 0
   fetchLogs()
 }
@@ -70,6 +133,39 @@ function onNext() {
   if (logs.value.length >= limit.value) {
     offset.value += limit.value
     fetchLogs()
+  }
+}
+
+async function onExport() {
+  /* Fetch up to 10000 rows with current filters for export */
+  const params: LogQueryParams = { limit: 10000, offset: 0 }
+  if (timeRange.value) {
+    params.since = timeRange.value[0]
+    params.until = timeRange.value[1]
+  }
+  if (showIpFilters.value) {
+    if (filterSrcIp.value) params.src_ip = filterSrcIp.value
+    if (filterDstIp.value) params.dst_ip = filterDstIp.value
+  }
+  if (showProtocolFilter.value && filterProtocol.value) {
+    params.protocol = filterProtocol.value
+  }
+  if (showPortFilters.value) {
+    if (filterSrcPort.value) params.src_port = filterSrcPort.value
+    if (filterDstPort.value) params.dst_port = filterDstPort.value
+  }
+  if (showSnifferFilters.value) {
+    if (filterIp.value) params.ip = filterIp.value
+    if (filterMac.value) params.mac = filterMac.value
+  }
+  if (showActionFilter.value && filterAction.value) {
+    params.action = filterAction.value
+  }
+  try {
+    const res = await getLogs(activeTab.value, params)
+    exportLogsToCSV(res.rows ?? [], activeTab.value)
+  } catch {
+    /* silent */
   }
 }
 
@@ -101,6 +197,87 @@ onMounted(fetchLogs)
         value-format="YYYY-MM-DDTHH:mm:ss"
         @change="onTimeChange"
       />
+
+      <template v-if="showIpFilters">
+        <el-input
+          v-model="filterSrcIp"
+          :placeholder="t('policies.srcIp')"
+          clearable
+          style="width: 150px"
+          @change="onFilterChange"
+        />
+        <el-input
+          v-model="filterDstIp"
+          :placeholder="t('policies.dstIp')"
+          clearable
+          style="width: 150px"
+          @change="onFilterChange"
+        />
+      </template>
+
+      <template v-if="showProtocolFilter">
+        <el-select
+          v-model="filterProtocol"
+          :placeholder="t('policies.protocol')"
+          style="width: 110px"
+          @change="onFilterChange"
+        >
+          <el-option
+            v-for="opt in protocolOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+      </template>
+
+      <template v-if="showPortFilters">
+        <el-input-number
+          v-model="filterSrcPort"
+          :placeholder="t('policies.srcPort')"
+          :min="0"
+          :max="65535"
+          controls-position="right"
+          style="width: 130px"
+          @change="onFilterChange"
+        />
+        <el-input-number
+          v-model="filterDstPort"
+          :placeholder="t('policies.dstPort')"
+          :min="0"
+          :max="65535"
+          controls-position="right"
+          style="width: 130px"
+          @change="onFilterChange"
+        />
+      </template>
+
+      <template v-if="showSnifferFilters">
+        <el-input
+          v-model="filterIp"
+          :placeholder="t('common.ip')"
+          clearable
+          style="width: 150px"
+          @change="onFilterChange"
+        />
+        <el-input
+          v-model="filterMac"
+          :placeholder="t('common.mac')"
+          clearable
+          style="width: 180px"
+          @change="onFilterChange"
+        />
+      </template>
+
+      <template v-if="showActionFilter">
+        <el-input
+          v-model="filterAction"
+          :placeholder="t('logs.auditAction')"
+          clearable
+          style="width: 150px"
+          @change="onFilterChange"
+        />
+      </template>
     </div>
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
@@ -121,8 +298,8 @@ onMounted(fetchLogs)
           <el-table-column prop="src_mac" :label="t('common.mac')" sortable />
           <el-table-column prop="vlan_id" :label="t('logs.vlan')" width="80" sortable />
           <el-table-column prop="protocol" :label="t('policies.protocol')" width="100" sortable />
-          <el-table-column prop="src_port" label="Src Port" width="100" sortable />
-          <el-table-column prop="dst_port" label="Dst Port" width="100" sortable />
+          <el-table-column prop="src_port" :label="t('policies.srcPort')" width="100" sortable />
+          <el-table-column prop="dst_port" :label="t('policies.dstPort')" width="100" sortable />
           <el-table-column prop="details" :label="t('common.description')" min-width="200" />
         </el-table>
 
@@ -148,6 +325,17 @@ onMounted(fetchLogs)
           <el-button :disabled="offset <= 0" @click="onPrev">{{ t('logs.prev') }}</el-button>
           <span class="page-info">{{ t('logs.showing', { from: offset + 1, to: offset + logs.length }) }}</span>
           <el-button :disabled="logs.length < limit" @click="onNext">{{ t('logs.next') }}</el-button>
+
+          <el-select v-model="limit" style="width: 100px; margin-left: 16px" @change="onPageSizeChange">
+            <el-option :value="20" label="20 / page" />
+            <el-option :value="50" label="50 / page" />
+            <el-option :value="100" label="100 / page" />
+            <el-option :value="200" label="200 / page" />
+          </el-select>
+
+          <el-button style="margin-left: 16px" @click="onExport">
+            {{ t('logs.export') }}
+          </el-button>
         </div>
       </template>
     </el-skeleton>
@@ -160,6 +348,7 @@ onMounted(fetchLogs)
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 .filter-label {
   white-space: nowrap;

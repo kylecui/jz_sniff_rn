@@ -124,7 +124,10 @@
     "prev": "Previous",
     "next": "Next",
     "showing": "Showing {from}–{to}",
-    "vlan": "VLAN"
+    "vlan": "VLAN",
+    "export": "Export CSV",
+    "filterAll": "All",
+    "pageSize": "{n} / page"
   },
   "discovery": {
     "title": "Device Discovery",
