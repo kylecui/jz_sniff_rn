@@ -726,11 +726,14 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
     int len = 0;
 
     if (msg->len >= 6 && strncmp(cmd, "event:", 6) == 0) {
-        /* Binary event data after "event:" prefix */
+        /* Binary event data after "event:" prefix.
+         * Fire-and-forget: sniffd does not read replies for events,
+         * so sending one would fill its recv buffer and eventually
+         * cause collectord to disconnect sniffd when the write fails
+         * with EAGAIN on the non-blocking server fd. */
         g_ctx.events_received++;
-        int rc = persist_event(cmd + 6, msg->len - 6);
-        len = snprintf(reply, sizeof(reply),
-                       rc == 0 ? "event:ok" : "event:error");
+        persist_event(cmd + 6, msg->len - 6);
+        return 0;
     }
     else if (strncmp(cmd, "stats", 5) == 0) {
         int attack_pending = jz_db_pending_count(&g_ctx.db, "attack_log");

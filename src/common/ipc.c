@@ -40,7 +40,9 @@ static int set_blocking(int fd)
     return fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 }
 
-/* Full write: loop until all bytes sent or error. */
+/* Full write: loop until all bytes sent or error.
+ * Handles EAGAIN (non-blocking fds used by server-side connections)
+ * with poll()-based retry up to JZ_IPC_DEFAULT_TIMEOUT_MS. */
 static int write_all(int fd, const void *buf, size_t len)
 {
     const char *p = buf;
@@ -51,6 +53,13 @@ static int write_all(int fd, const void *buf, size_t len)
         if (n < 0) {
             if (errno == EINTR)
                 continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+                int ret = poll(&pfd, 1, JZ_IPC_DEFAULT_TIMEOUT_MS);
+                if (ret > 0)
+                    continue;
+                return -1;
+            }
             return -1;
         }
         p += n;
