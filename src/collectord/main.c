@@ -42,6 +42,29 @@
 #endif
 #define COLLECTORD_VERSION  JZ_VERSION
 
+/* ── Write Queue (batch INSERT) ──────────────────────────────── */
+
+/* Max raw event payload size (jz_event_attack = 48 hdr + 16 body = 64,
+ * forensics with 256-byte sample ≈ 320, leave headroom). */
+#define WQ_MAX_PAYLOAD   512
+/* Number of slots in the write queue. 128 events × 516 bytes ≈ 64 KB. */
+#define WQ_CAPACITY      128
+/* Flush when queue reaches this many entries */
+#define WQ_FLUSH_COUNT    64
+/* Flush when this many milliseconds have elapsed since last flush */
+#define WQ_FLUSH_MS      500
+
+typedef struct {
+    uint32_t len;
+    char     data[WQ_MAX_PAYLOAD];
+} wq_entry_t;
+
+typedef struct {
+    wq_entry_t entries[WQ_CAPACITY];
+    int        count;       /* number of queued entries      */
+    uint64_t   last_flush;  /* monotonic ms of last flush    */
+} write_queue_t;
+
 /* ── Defaults ─────────────────────────────────────────────────── */
 
 #define DEFAULT_CONFIG_PATH   "/etc/jz/base.yaml"
@@ -215,6 +238,8 @@ static struct {
     dedup_engine_t    dedup;
     rate_limiter_t    rate_limiter;
 
+    write_queue_t     wq;
+
     /* Statistics */
     uint64_t events_received;
     uint64_t events_persisted;
@@ -344,6 +369,13 @@ static uint64_t now_sec(void)
     return (uint64_t)ts.tv_sec;
 }
 
+static uint64_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
 static void now_iso8601(char *buf, size_t len)
 {
     time_t t = time(NULL);
@@ -372,14 +404,12 @@ static void now_iso8601(char *buf, size_t len)
 
 static int persist_event(const char *payload, uint32_t payload_len)
 {
-    /* payload is raw binary event data forwarded by sniffd */
     if (payload_len < EVENT_HDR_LEN) {
         jz_log_warn("Event too short: %u < %d", payload_len, EVENT_HDR_LEN);
         g_ctx.events_errors++;
         return -1;
     }
 
-    /* Parse common header fields */
     const uint8_t *p = (const uint8_t *)payload;
 
     uint32_t event_type;
@@ -400,22 +430,6 @@ static int persist_event(const char *payload, uint32_t payload_len)
     uint32_t src_ip, dst_ip;
     memcpy(&src_ip, p + 36, 4);
     memcpy(&dst_ip, p + 40, 4);
-
-    /* Dedup check */
-    char fp[DEDUP_KEY_LEN];
-    uint64_t ts = now_sec();
-    event_fingerprint(event_type, src_ip, dst_ip, src_mac, fp, sizeof(fp));
-
-    if (!dedup_check(&g_ctx.dedup, fp, ts)) {
-        g_ctx.events_deduped++;
-        return 0;  /* duplicate, silently skip */
-    }
-
-    /* Rate limit check */
-    if (!rate_limiter_allow(&g_ctx.rate_limiter, ts)) {
-        g_ctx.events_rate_limited++;
-        return 0;  /* rate limited, silently skip */
-    }
 
     /* Format strings */
     char src_ip_str[INET_ADDRSTRLEN];
@@ -596,6 +610,89 @@ static int persist_event(const char *payload, uint32_t payload_len)
     return rc;
 }
 
+/* ── Write Queue: batch INSERT with transactions ─────────────── */
+
+static void flush_events(void)
+{
+    write_queue_t *wq = &g_ctx.wq;
+    if (wq->count == 0) {
+        wq->last_flush = now_ms();
+        return;
+    }
+
+    char *errmsg = NULL;
+    int rc = sqlite3_exec(g_ctx.db.db, "BEGIN;", NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) {
+        jz_log_error("BEGIN failed: %s", errmsg ? errmsg : "unknown");
+        sqlite3_free(errmsg);
+    }
+
+    for (int i = 0; i < wq->count; i++)
+        persist_event(wq->entries[i].data, wq->entries[i].len);
+
+    errmsg = NULL;
+    rc = sqlite3_exec(g_ctx.db.db, "COMMIT;", NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) {
+        jz_log_error("COMMIT failed: %s", errmsg ? errmsg : "unknown");
+        sqlite3_free(errmsg);
+        sqlite3_exec(g_ctx.db.db, "ROLLBACK;", NULL, NULL, NULL);
+    }
+
+    jz_log_debug("Flushed %d events in batch", wq->count);
+    wq->count = 0;
+    wq->last_flush = now_ms();
+}
+
+static void queue_event(const char *payload, uint32_t payload_len)
+{
+    if (payload_len < EVENT_HDR_LEN) {
+        jz_log_warn("Event too short: %u < %d", payload_len, EVENT_HDR_LEN);
+        g_ctx.events_errors++;
+        return;
+    }
+
+    const uint8_t *p = (const uint8_t *)payload;
+    uint32_t event_type;
+    memcpy(&event_type, p, 4);
+    uint32_t src_ip, dst_ip;
+    memcpy(&src_ip, p + 36, 4);
+    memcpy(&dst_ip, p + 40, 4);
+    const uint8_t *src_mac = p + 24;
+
+    char fp[DEDUP_KEY_LEN];
+    uint64_t ts = now_sec();
+    event_fingerprint(event_type, src_ip, dst_ip, src_mac, fp, sizeof(fp));
+
+    if (!dedup_check(&g_ctx.dedup, fp, ts)) {
+        g_ctx.events_deduped++;
+        return;
+    }
+
+    if (!rate_limiter_allow(&g_ctx.rate_limiter, ts)) {
+        g_ctx.events_rate_limited++;
+        return;
+    }
+
+    write_queue_t *wq = &g_ctx.wq;
+
+    if (wq->count >= WQ_CAPACITY)
+        flush_events();
+
+    if (payload_len > WQ_MAX_PAYLOAD) {
+        jz_log_warn("Event payload too large: %u > %d, truncating",
+                     payload_len, WQ_MAX_PAYLOAD);
+        payload_len = WQ_MAX_PAYLOAD;
+    }
+
+    wq_entry_t *entry = &wq->entries[wq->count];
+    entry->len = payload_len;
+    memcpy(entry->data, payload, payload_len);
+    wq->count++;
+
+    if (wq->count >= WQ_FLUSH_COUNT)
+        flush_events();
+}
+
 /* ── JSON Export ──────────────────────────────────────────────── */
 
 /*
@@ -757,7 +854,7 @@ static int ipc_handler(int client_fd, const jz_ipc_msg_t *msg, void *user_data)
          * cause collectord to disconnect sniffd when the write fails
          * with EAGAIN on the non-blocking server fd. */
         g_ctx.events_received++;
-        persist_event(cmd + 6, msg->len - 6);
+        queue_event(cmd + 6, msg->len - 6);
         return 0;
     }
     else if (strncmp(cmd, "stats", 5) == 0) {
@@ -1064,28 +1161,31 @@ int main(int argc, char *argv[])
 
     /* ── Main Loop ── */
     g_ctx.last_expire_time = now_sec();
+    g_ctx.wq.last_flush = now_ms();
 
     while (g_running) {
-        /* Poll IPC for incoming events and commands */
         jz_ipc_server_poll(&g_ctx.ipc, 100);
 
-        /* Periodic dedup cache expiry (every 30 seconds) */
+        uint64_t ms = now_ms();
+        if (g_ctx.wq.count > 0 && (ms - g_ctx.wq.last_flush) >= WQ_FLUSH_MS)
+            flush_events();
+
         uint64_t ts = now_sec();
         if (ts - g_ctx.last_expire_time >= 30) {
             dedup_expire(&g_ctx.dedup, ts);
             g_ctx.last_expire_time = ts;
         }
 
-        /* Periodic DB size check (piggyback on expire cycle) */
         if (ts - g_ctx.last_expire_time == 0)
             check_db_size();
 
-        /* Handle SIGHUP reload */
         if (g_reload) {
             g_reload = 0;
             do_reload();
         }
     }
+
+    flush_events();
 
     jz_log_info("collectord shutting down...");
 
