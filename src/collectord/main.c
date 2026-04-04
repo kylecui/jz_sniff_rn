@@ -459,8 +459,8 @@ static int persist_event(const char *payload, uint32_t payload_len)
             uint16_t sp, dp;
             memcpy(&sp, p + EVENT_HDR_LEN + 12, 2);
             memcpy(&dp, p + EVENT_HDR_LEN + 14, 2);
-            src_port_val = ntohs(sp);
-            dst_port_val = ntohs(dp);
+            src_port_val = sp;
+            dst_port_val = dp;
         }
 
         rc = jz_db_insert_attack(&g_ctx.db, (int)event_type, timestamp,
