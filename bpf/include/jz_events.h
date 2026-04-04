@@ -8,13 +8,15 @@
 
 /* ── Event structures emitted to rs_event_bus ring buffer ── */
 
-/* Attack event (ARP/ICMP honeypot triggered) */
+/* Attack event (ARP/ICMP honeypot triggered, or TCP/UDP guard hit) */
 struct jz_event_attack {
-    struct jz_event_hdr hdr;    /* type = JZ_EVENT_ATTACK_ARP or _ICMP */
+    struct jz_event_hdr hdr;    /* type = JZ_EVENT_ATTACK_ARP/_ICMP/_TCP/_UDP */
     __u8  guard_type;           /* static or dynamic */
-    __u8  protocol;             /* ARP=1, ICMP=2 */
+    __u8  protocol;             /* ARP=1, ICMP=2, TCP=3, UDP=4 */
     __u8  fake_mac[6];          /* MAC used in honeypot response */
     __u32 guarded_ip;           /* the guard IP that was triggered */
+    __u16 src_port;             /* source port (TCP/UDP only, 0 for ARP/ICMP) */
+    __u16 dst_port;             /* destination port (TCP/UDP only, 0 for ARP/ICMP) */
 };
 
 /* Sniffer detected event */

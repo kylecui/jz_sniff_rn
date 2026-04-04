@@ -61,6 +61,8 @@
 #define JZ_EVENT_BG_CAPTURE         6
 #define JZ_EVENT_CONFIG_CHANGE      7
 #define JZ_EVENT_SYSTEM_STATUS      8
+#define JZ_EVENT_ATTACK_TCP        10
+#define JZ_EVENT_ATTACK_UDP        11
 
 /* ── Dedup Engine ─────────────────────────────────────────────── */
 
@@ -432,12 +434,20 @@ static int persist_event(const char *payload, uint32_t payload_len)
 
     switch (event_type) {
     case JZ_EVENT_ATTACK_ARP:
-    case JZ_EVENT_ATTACK_ICMP: {
+    case JZ_EVENT_ATTACK_ICMP:
+    case JZ_EVENT_ATTACK_TCP:
+    case JZ_EVENT_ATTACK_UDP: {
         const char *guard_type = "unknown";
-        const char *protocol = (event_type == JZ_EVENT_ATTACK_ARP) ? "ARP" : "ICMP";
-        int threat_level = 2;  /* medium by default */
+        const char *protocol;
+        int threat_level = 2;
 
-        /* Parse guard_type if payload is large enough */
+        switch (event_type) {
+        case JZ_EVENT_ATTACK_ARP:  protocol = "ARP";  break;
+        case JZ_EVENT_ATTACK_ICMP: protocol = "ICMP"; break;
+        case JZ_EVENT_ATTACK_TCP:  protocol = "TCP";  break;
+        default:                   protocol = "UDP";  break;
+        }
+
         if (payload_len > EVENT_HDR_LEN) {
             uint8_t gt = p[EVENT_HDR_LEN];
             guard_type = (gt == 1) ? "static" : (gt == 2) ? "dynamic" : "unknown";
@@ -550,7 +560,9 @@ static int persist_event(const char *payload, uint32_t payload_len)
         g_ctx.events_persisted++;
         if (g_ctx.syslog_enabled && jz_syslog_is_open() &&
             (event_type == JZ_EVENT_ATTACK_ARP ||
-             event_type == JZ_EVENT_ATTACK_ICMP)) {
+             event_type == JZ_EVENT_ATTACK_ICMP ||
+             event_type == JZ_EVENT_ATTACK_TCP ||
+             event_type == JZ_EVENT_ATTACK_UDP)) {
             if (payload_len >= sizeof(struct jz_event_attack)) {
                 char syslog_buf[512];
                 char device_id[64] = "unknown";

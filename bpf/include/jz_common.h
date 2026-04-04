@@ -41,6 +41,8 @@
 #define JZ_FLAG_IS_PROBE_RESPONSE  (1 << 1)
 #define JZ_FLAG_ARP_REQUEST        (1 << 2)
 #define JZ_FLAG_ICMP_REQUEST       (1 << 3)
+#define JZ_FLAG_TCP_SYN            (1 << 4)
+#define JZ_FLAG_UDP                (1 << 5)
 
 /* ── Weaver Actions ── */
 #define JZ_ACTION_PASS              0
@@ -59,6 +61,8 @@
 #define JZ_EVENT_CONFIG_CHANGE      7
 #define JZ_EVENT_SYSTEM_STATUS      8
 #define JZ_EVENT_DHCP_UNPROTECTED   9
+#define JZ_EVENT_ATTACK_TCP        10
+#define JZ_EVENT_ATTACK_UDP        11
 
 /* ── Event Header (common to all events) ── */
 struct jz_event_hdr {

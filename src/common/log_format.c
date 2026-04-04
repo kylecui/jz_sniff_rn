@@ -170,8 +170,14 @@ int jz_log_v1_attack(char *buf, size_t bufsz,
     ip4_str(ev->guarded_ip, guard_ip_s, sizeof(guard_ip_s));
     mac_str(ev->hdr.src_mac, src_mac_s, sizeof(src_mac_s));
 
-    ethertype = (ev->protocol == 1) ? 0x0806 : 0x0800;
-    ip_proto = (ev->protocol == 2) ? 1 : 0;
+    ethertype = 0x0800;
+    switch (ev->protocol) {
+    case 1: ethertype = 0x0806; ip_proto = 0;  break;  /* ARP */
+    case 2: ip_proto = 1;  break;  /* ICMP */
+    case 3: ip_proto = 6;  break;  /* TCP */
+    case 4: ip_proto = 17; break;  /* UDP */
+    default: ip_proto = 0; break;
+    }
 
     n = snprintf(buf, bufsz,
                  "syslog_version=1.10.0,"
@@ -181,7 +187,7 @@ int jz_log_v1_attack(char *buf, size_t bufsz,
                  "attack_mac=%s,"
                  "attack_ip=%s,"
                  "response_ip=%s,"
-                 "response_port=0,"
+                 "response_port=%u,"
                  "line_id=%u,"
                  "Iface_type=1,"
                  "Vlan_id=0,"
@@ -189,6 +195,7 @@ int jz_log_v1_attack(char *buf, size_t bufsz,
                  "eth_type=%d,"
                  "ip_type=%d",
                  device_id, src_mac_s, src_ip_s, guard_ip_s,
+                 (unsigned)ev->dst_port,
                  ev->hdr.ifindex,
                  (long)(ev->hdr.timestamp_ns / 1000000000ULL),
                  ethertype, ip_proto);
@@ -272,15 +279,31 @@ char *jz_log_v2_attack(const char *device_id, uint64_t seq,
     cJSON_AddStringToObject(data, "guard_mac", guard_mac_s);
     cJSON_AddStringToObject(data, "guard_type",
                             ev->guard_type == JZ_GUARD_STATIC ? "static" : "dynamic");
-    cJSON_AddStringToObject(data, "protocol",
-                            ev->protocol == 1 ? "arp" : "icmp");
-    cJSON_AddNumberToObject(data, "dst_port", 0);
+
+    const char *proto_str;
+    switch (ev->protocol) {
+    case 1:  proto_str = "arp";  break;
+    case 2:  proto_str = "icmp"; break;
+    case 3:  proto_str = "tcp";  break;
+    case 4:  proto_str = "udp";  break;
+    default: proto_str = "unknown"; break;
+    }
+    cJSON_AddStringToObject(data, "protocol", proto_str);
+    cJSON_AddNumberToObject(data, "src_port", ev->src_port);
+    cJSON_AddNumberToObject(data, "dst_port", ev->dst_port);
     cJSON_AddNumberToObject(data, "ifindex", ev->hdr.ifindex);
-    cJSON_AddNumberToObject(data, "vlan_id", 0);
-    cJSON_AddNumberToObject(data, "ethertype",
-                            ev->protocol == 1 ? 0x0806 : 0x0800);
-    cJSON_AddNumberToObject(data, "ip_proto",
-                            ev->protocol == 2 ? 1 : 0);
+    cJSON_AddNumberToObject(data, "vlan_id", ev->hdr.vlan_id);
+
+    int v2_ethertype = 0x0800;
+    int v2_ip_proto = 0;
+    switch (ev->protocol) {
+    case 1: v2_ethertype = 0x0806; v2_ip_proto = 0;  break;
+    case 2: v2_ip_proto = 1;  break;
+    case 3: v2_ip_proto = 6;  break;
+    case 4: v2_ip_proto = 17; break;
+    }
+    cJSON_AddNumberToObject(data, "ethertype", v2_ethertype);
+    cJSON_AddNumberToObject(data, "ip_proto", v2_ip_proto);
 
     cJSON_ReplaceItemInObject(root, "data", data);
 

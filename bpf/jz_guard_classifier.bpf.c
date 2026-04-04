@@ -328,6 +328,53 @@ jz_parse_packet(struct xdp_md *xdp_ctx, struct rs_ctx *ctx)
     ctx->parsed = 1;
 }
 
+/* ── Helper: Check TCP SYN flag from packet data ── */
+
+static __always_inline bool
+jz_is_tcp_syn(struct xdp_md *xdp_ctx, struct rs_ctx *ctx)
+{
+    void *data     = (void *)(long)xdp_ctx->data;
+    void *data_end = (void *)(long)xdp_ctx->data_end;
+
+    __u16 l4_off = ctx->layers.l4_offset & RS_L3_OFFSET_MASK;
+    struct tcphdr *th = data + l4_off;
+    if ((void *)(th + 1) > data_end)
+        return false;
+
+    return th->syn && !th->ack;
+}
+
+/* ── Helper: Emit attack event for TCP/UDP guard hits ── */
+
+static __always_inline void
+jz_emit_guard_event(struct rs_ctx *ctx, const __u8 *src_mac,
+                    const __u8 *dst_mac, __u32 src_ip, __u32 dst_ip,
+                    __u8 guard_type, __u8 proto,
+                    const __u8 *fake_mac, __u32 guarded_ip)
+{
+    struct jz_event_attack evt = {};
+
+    evt.hdr.type = (proto == 3) ? JZ_EVENT_ATTACK_TCP : JZ_EVENT_ATTACK_UDP;
+    evt.hdr.len = sizeof(evt);
+    evt.hdr.timestamp_ns = bpf_ktime_get_ns();
+    evt.hdr.ifindex = ctx->ifindex;
+    evt.hdr.vlan_id = ctx->ingress_vlan;
+    __builtin_memcpy(evt.hdr.src_mac, src_mac, 6);
+    __builtin_memcpy(evt.hdr.dst_mac, dst_mac, 6);
+    evt.hdr.src_ip = src_ip;
+    evt.hdr.dst_ip = dst_ip;
+
+    evt.guard_type = guard_type;
+    evt.protocol = proto;
+    if (fake_mac)
+        __builtin_memcpy(evt.fake_mac, fake_mac, 6);
+    evt.guarded_ip = guarded_ip;
+    evt.src_port = bpf_ntohs(ctx->layers.sport);
+    evt.dst_port = bpf_ntohs(ctx->layers.dport);
+
+    RS_EMIT_EVENT(&evt, sizeof(evt));
+}
+
 /* ── Main XDP Program ── */
 
 SEC("xdp")
@@ -432,21 +479,34 @@ int jz_guard_classifier_prog(struct xdp_md *xdp_ctx)
         flags |= JZ_FLAG_ARP_REQUEST;
     else if (proto == 2)  /* ICMP */
         flags |= JZ_FLAG_ICMP_REQUEST;
+    else if (proto == 3 && jz_is_tcp_syn(xdp_ctx, ctx))
+        flags |= JZ_FLAG_TCP_SYN;
+    else if (proto == 4)
+        flags |= JZ_FLAG_UDP;
 
     /* Step 4: Store guard result for downstream modules */
     const __u8 *fake_mac = NULL;
-    /* Check if entry has a specific fake MAC (non-zero) */
     if (entry->fake_mac[0] || entry->fake_mac[1] || entry->fake_mac[2])
         fake_mac = entry->fake_mac;
 
     jz_store_result(guard_type, proto, flags, dst_ip, fake_mac,
                     ctx->ingress_vlan, ctx->ifindex);
 
-    /* Step 5: Update guard entry stats (best-effort) */
+    /* Step 5: Emit event for TCP SYN / UDP guard hits.
+     * ARP and ICMP events are emitted by their respective honeypot
+     * modules (stages 22/23) which also craft fake replies.
+     * TCP/UDP have no honeypot reply — log the attempt here. */
+    if (flags & (JZ_FLAG_TCP_SYN | JZ_FLAG_UDP)) {
+        jz_emit_guard_event(ctx, eth->h_source, eth->h_dest,
+                            src_ip, dst_ip, guard_type, proto,
+                            fake_mac, dst_ip);
+    }
+
+    /* Step 6: Update guard entry stats (best-effort) */
     __sync_fetch_and_add(&entry->hit_count, 1);
     entry->last_hit = bpf_ktime_get_ns();
 
-    /* Step 6: Tail-call to next stage
+    /* Step 7: Tail-call to next stage
      * RS_TAIL_CALL_NEXT handles sequential pipeline chaining.
      * The rSwitch loader assigns modules to sequential slots.
      * ARP honeypot (stage 22) / ICMP honeypot (stage 23) will
