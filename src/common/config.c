@@ -1583,21 +1583,23 @@ static int parse_policies(yaml_parser_t *parser, yaml_event_t *start,
                 copy_scalar(p->src_ip, sizeof(p->src_ip), &v2);
             else if (!strcmp(k, "dst_ip"))
                 copy_scalar(p->dst_ip, sizeof(p->dst_ip), &v2);
-            else if (!strcmp(k, "src_port") && scalar_to_int(&v2, &p->src_port) != 0)
-                add_error(errors, event_line(&v2), "policies[].src_port", "must be int");
-            else if (!strcmp(k, "dst_port") && scalar_to_int(&v2, &p->dst_port) != 0)
-                add_error(errors, event_line(&v2), "policies[].dst_port", "must be int");
-            else if (!strcmp(k, "proto"))
+            else if (!strcmp(k, "src_port")) {
+                if (scalar_to_int(&v2, &p->src_port) != 0)
+                    add_error(errors, event_line(&v2), "policies[].src_port", "must be int");
+            } else if (!strcmp(k, "dst_port")) {
+                if (scalar_to_int(&v2, &p->dst_port) != 0)
+                    add_error(errors, event_line(&v2), "policies[].dst_port", "must be int");
+            } else if (!strcmp(k, "proto"))
                 copy_scalar(p->proto, sizeof(p->proto), &v2);
             else if (!strcmp(k, "action"))
                 copy_scalar(p->action, sizeof(p->action), &v2);
-            else if (!strcmp(k, "redirect_port") && scalar_to_int(&v2, &p->redirect_port) != 0)
-                add_error(errors, event_line(&v2), "policies[].redirect_port", "must be int");
-            else if (!strcmp(k, "mirror_port") && scalar_to_int(&v2, &p->mirror_port) != 0)
-                add_error(errors, event_line(&v2), "policies[].mirror_port", "must be int");
-            else if (strcmp(k, "src_ip") && strcmp(k, "dst_ip") && strcmp(k, "src_port") &&
-                     strcmp(k, "dst_port") && strcmp(k, "proto") && strcmp(k, "action") &&
-                     strcmp(k, "redirect_port") && strcmp(k, "mirror_port"))
+            else if (!strcmp(k, "redirect_port")) {
+                if (scalar_to_int(&v2, &p->redirect_port) != 0)
+                    add_error(errors, event_line(&v2), "policies[].redirect_port", "must be int");
+            } else if (!strcmp(k, "mirror_port")) {
+                if (scalar_to_int(&v2, &p->mirror_port) != 0)
+                    add_error(errors, event_line(&v2), "policies[].mirror_port", "must be int");
+            } else
                 add_error(errors, event_line(&k2), "policies", "unknown key '%s'", k);
 
             yaml_event_delete(&v2);
@@ -1711,9 +1713,10 @@ static int parse_threats(yaml_parser_t *parser, yaml_event_t *start,
                     }
                     if (!strcmp(k, "id"))
                         copy_scalar(p->id, sizeof(p->id), &v2);
-                    else if (!strcmp(k, "dst_port") && scalar_to_int(&v2, &p->dst_port) != 0)
-                        add_error(errors, event_line(&v2), "threats.patterns[].dst_port", "must be int");
-                    else if (!strcmp(k, "proto"))
+                    else if (!strcmp(k, "dst_port")) {
+                        if (scalar_to_int(&v2, &p->dst_port) != 0)
+                            add_error(errors, event_line(&v2), "threats.patterns[].dst_port", "must be int");
+                    } else if (!strcmp(k, "proto"))
                         copy_scalar(p->proto, sizeof(p->proto), &v2);
                     else if (!strcmp(k, "threat_level"))
                         copy_scalar(p->threat_level, sizeof(p->threat_level), &v2);
@@ -2750,7 +2753,7 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
 {
     static const char *const log_levels[] = {"debug", "info", "warn", "error", NULL};
     static const char *const actions[] = {"pass", "drop", "redirect", "mirror", "redirect_mirror", NULL};
-    static const char *const threat_actions[] = {"log_only", "log_drop", "log_redirect", NULL};
+    static const char *const threat_actions[] = {"log", "log_only", "log_drop", "log_redirect", NULL};
     static const char *const threat_levels[] = {"low", "medium", "high", "critical", NULL};
     static const char *const protos[] = {"tcp", "udp", "icmp", "any", NULL};
     static const char *const iface_roles[] = {"monitor", "manage", "mirror", NULL};

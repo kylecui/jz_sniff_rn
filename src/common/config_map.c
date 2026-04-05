@@ -277,7 +277,7 @@ static int threat_action_str_to_num(const char *s)
     if (!s || s[0] == '\0')
         return -1;
 
-    if (str_ieq(s, "log_only"))
+    if (str_ieq(s, "log") || str_ieq(s, "log_only"))
         return 0;
 
     if (str_ieq(s, "log_drop"))
