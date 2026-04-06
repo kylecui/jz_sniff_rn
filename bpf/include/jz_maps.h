@@ -183,11 +183,19 @@ struct jz_flow_policy {
     __u64 byte_count;
 };
 
-/* Redirect port configuration */
+/* Redirect port configuration (legacy global — used by traffic_weaver fallback) */
 struct jz_redirect_config {
     __u32 honeypot_ifindex;    /* default honeypot VM interface */
     __u32 mirror_ifindex;      /* default mirror analyzer interface */
     __u8  enabled;
+    __u8  _pad[3];
+};
+
+/* Per-target redirect/mirror destination (used by threat_detect) */
+#define JZ_MAX_REDIRECT_TARGETS  16
+struct jz_redirect_target {
+    __u32 ifindex;             /* resolved interface index (0 = unconfigured) */
+    __u8  active;              /* 1 = target reachable, 0 = disabled */
     __u8  _pad[3];
 };
 
@@ -230,17 +238,46 @@ struct jz_bg_stats {
  * Section 3.8: Threat Detect Maps
  * ═══════════════════════════════════════════════ */
 
-/* Threat pattern — header-based matching */
+/* Threat pattern — header-based matching (v2: 64 bytes, cache-line aligned) */
 struct jz_threat_pattern {
     __u32 src_ip;           /* 0 = wildcard */
     __u32 dst_ip;           /* 0 = wildcard */
     __u16 dst_port;         /* 0 = wildcard */
     __u8  proto;            /* 0 = wildcard */
     __u8  threat_level;     /* 1=low, 2=medium, 3=high, 4=critical */
-    __u32 pattern_id;       /* unique ID for this pattern */
-    __u8  action;           /* 0=log-only, 1=log+drop, 2=log+redirect */
-    __u8  _pad[3];
+    __u32 pattern_id;       /* stable ID (doesn't change on reorder) */
+    __u8  action;           /* 0=log, 1=drop, 2=redirect, 3=mirror */
+    __u8  redirect_target;  /* index into jz_redirect_targets (0-15) */
+    __u8  flags;            /* bit0: continue_matching, bit1: capture_packet */
+    __u8  _pad1;
+    __u8  src_mac[6];       /* 00:00:00:00:00:00 = wildcard */
+    __u8  _pad2[6];
     char  description[32];  /* human-readable description */
+};
+
+_Static_assert(sizeof(struct jz_threat_pattern) == 64,
+               "jz_threat_pattern must be 64 bytes (cache-line aligned)");
+
+/* Attacker session — multi-sentinel convergence tracking */
+struct jz_attacker_session {
+    __u32 src_ip;              /* attacker IP (redundant with key, for convenience) */
+    __u32 first_sentinel_ip;   /* first sentinel that was probed */
+    __u16 first_dst_port;      /* port they probed on first hit */
+    __u8  redirect_target;     /* honeypot target index (from first-match rule) */
+    __u8  hit_count;           /* number of distinct sentinel hits (capped 255) */
+    __u32 first_seen;          /* ktime seconds of first hit */
+    __u32 last_seen;           /* ktime seconds of most recent hit */
+};
+
+/* Capture metadata — prepended to packet data in ring buffer */
+struct jz_capture_meta {
+    __u64 timestamp_ns;    /* bpf_ktime_get_ns() */
+    __u32 wire_len;        /* original packet length */
+    __u32 cap_len;         /* captured bytes (= wire_len for full capture) */
+    __u32 pattern_id;      /* which rule triggered capture */
+    __u16 ifindex;         /* ingress interface */
+    __u8  action;          /* action taken */
+    __u8  threat_level;    /* threat level of matching rule */
 };
 
 /* Threat detection statistics */
@@ -252,6 +289,8 @@ struct jz_threat_stats {
     __u64 threats_critical;
     __u64 dropped;
     __u64 redirected;
+    __u64 mirrored;
+    __u64 captured;
 };
 
 /* ═══════════════════════════════════════════════

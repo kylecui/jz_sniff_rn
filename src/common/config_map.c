@@ -18,7 +18,7 @@
 #define JZ_MAP_MAX_STATIC_GUARDS      256
 #define JZ_MAP_MAX_WHITELIST          256
 #define JZ_MAP_MAX_POLICIES           512
-#define JZ_MAP_MAX_THREAT_PATTERNS    512
+#define JZ_MAP_MAX_THREAT_PATTERNS    128
 #define JZ_MAP_MAX_THREAT_BLACKLIST   65536
 #define JZ_MAP_MAX_FAKE_MACS          256
 #define JZ_MAP_MAX_BG_FILTERS         64
@@ -286,7 +286,10 @@ static int threat_action_str_to_num(const char *s)
     if (str_ieq(s, "log_redirect"))
         return 2;
 
-    if (parse_u8_decimal(s, &numeric) == 0 && numeric <= 2)
+    if (str_ieq(s, "log_mirror"))
+        return 3;
+
+    if (parse_u8_decimal(s, &numeric) == 0 && numeric <= 3)
         return (int)numeric;
 
     return -1;
@@ -548,23 +551,41 @@ static int translate_policies(const jz_config_t *cfg, jz_config_map_batch_t *bat
     return 0;
 }
 
+static int cmp_threat_priority(const void *a, const void *b)
+{
+    const jz_config_threat_pattern_t *pa = (const jz_config_threat_pattern_t *)a;
+    const jz_config_threat_pattern_t *pb = (const jz_config_threat_pattern_t *)b;
+
+    if (pa->priority != pb->priority)
+        return (pa->priority < pb->priority) ? -1 : 1;
+
+    return 0;
+}
+
 static int translate_threats(const jz_config_t *cfg, jz_config_map_batch_t *batch)
 {
     int i;
+    jz_config_threat_pattern_t sorted[JZ_MAP_MAX_THREAT_PATTERNS];
+    int count;
 
     if (!cfg || !batch)
         return -1;
 
-    if (cfg->threats.pattern_count < 0 || cfg->threats.pattern_count > JZ_MAP_MAX_THREAT_PATTERNS)
+    count = cfg->threats.pattern_count;
+    if (count < 0 || count > JZ_MAP_MAX_THREAT_PATTERNS)
         return -1;
 
-    for (i = 0; i < cfg->threats.pattern_count; i++) {
-        const jz_config_threat_pattern_t *src = &cfg->threats.patterns[i];
-        struct jz_threat_pattern *dst = &batch->threat_patterns.values[batch->threat_patterns.count];
+    memcpy(sorted, cfg->threats.patterns, (size_t)count * sizeof(sorted[0]));
+    qsort(sorted, (size_t)count, sizeof(sorted[0]), cmp_threat_priority);
+
+    for (i = 0; i < count; i++) {
+        const jz_config_threat_pattern_t *src = &sorted[i];
+        struct jz_threat_pattern *dst = &batch->threat_patterns.values[i];
         uint32_t pattern_id;
         int proto_num;
         int level_num;
         int action_num;
+        uint8_t flags = 0;
 
         memset(dst, 0, sizeof(*dst));
 
@@ -586,18 +607,73 @@ static int translate_threats(const jz_config_t *cfg, jz_config_map_batch_t *batc
         if (action_num < 0)
             return -1;
 
-        dst->src_ip = 0;
+        if (src->src_ip[0] != '\0') {
+            if (parse_ip_with_wildcard(src->src_ip, &dst->src_ip) != 0)
+                return -1;
+        }
+
+        if (src->src_mac[0] != '\0') {
+            if (parse_mac(src->src_mac, dst->src_mac) != 0)
+                return -1;
+        }
+
+        if (src->continue_matching)
+            flags |= 0x01;
+        if (src->capture_packet)
+            flags |= 0x02;
+
         dst->dst_ip = 0;
         dst->dst_port = (uint16_t)src->dst_port;
         dst->proto = (uint8_t)proto_num;
         dst->threat_level = (uint8_t)level_num;
         dst->pattern_id = pattern_id;
         dst->action = (uint8_t)action_num;
+        dst->redirect_target = (uint8_t)(src->redirect_target >= 0 && src->redirect_target < 16
+                                         ? src->redirect_target : 0);
+        dst->flags = flags;
 
         snprintf(dst->description, sizeof(dst->description), "%s", src->description);
 
-        batch->threat_patterns.keys[batch->threat_patterns.count] = pattern_id;
-        batch->threat_patterns.count++;
+        batch->threat_patterns.keys[i] = (uint32_t)i;
+    }
+
+    batch->threat_patterns.count = count;
+    batch->threat_rule_count = (uint32_t)count;
+
+    return 0;
+}
+
+static int translate_redirect_targets(const jz_config_t *cfg, jz_config_map_batch_t *batch)
+{
+    int i;
+
+    if (!cfg || !batch)
+        return -1;
+
+    memset(&batch->redirect_targets, 0, sizeof(batch->redirect_targets));
+
+    for (i = 0; i < cfg->threats.redirect_target_count && i < 16; i++) {
+        const jz_config_redirect_target_t *src = &cfg->threats.redirect_targets[i];
+        int slot = src->id;
+        unsigned int idx;
+
+        if (slot < 0 || slot >= 16)
+            continue;
+
+        idx = if_nametoindex(src->interface);
+        if (idx == 0) {
+            jz_log_warn("redirect_target[%d] '%s': interface '%s' not found",
+                         slot, src->name, src->interface);
+            continue;
+        }
+
+        batch->redirect_targets.entries[slot].ifindex = (uint32_t)idx;
+        batch->redirect_targets.entries[slot].active = 1;
+        if (slot >= batch->redirect_targets.count)
+            batch->redirect_targets.count = slot + 1;
+
+        jz_log_info("redirect_target[%d] '%s' -> %s (ifindex=%u)",
+                     slot, src->name, src->interface, idx);
     }
 
     return 0;
@@ -811,6 +887,11 @@ int jz_config_to_maps(const jz_config_t *cfg, jz_config_map_batch_t *batch)
 
     if (translate_threats(cfg, batch) != 0) {
         jz_log_error("config_to_maps: translate_threats failed");
+        return -1;
+    }
+
+    if (translate_redirect_targets(cfg, batch) != 0) {
+        jz_log_error("config_to_maps: translate_redirect_targets failed");
         return -1;
     }
 

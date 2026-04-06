@@ -1,0 +1,38 @@
+# jz_sniff_rn — captd: Standalone packet capture daemon
+#
+# Reads threat detection ring buffer (pinned by sniffd) and writes pcap files.
+# Tolerates sniffd restarts — retries until ring buffer appears.
+
+[Unit]
+Description=jz_sniff_rn Capture Daemon
+Documentation=file:/usr/share/doc/jz_sniff_rn/design.md
+After=sniffd.service
+Wants=sniffd.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/captd
+
+Restart=on-failure
+RestartSec=5
+
+# Needs access to pinned BPF maps
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/jz /sys/fs/bpf
+ProtectHome=yes
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=captd
+
+[Install]
+WantedBy=multi-user.target

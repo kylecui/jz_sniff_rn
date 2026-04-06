@@ -1644,6 +1644,87 @@ static int parse_threats(yaml_parser_t *parser, yaml_event_t *start,
         if (!strcmp(key, "blacklist_file")) {
             copy_scalar(cfg->threats.blacklist_file, sizeof(cfg->threats.blacklist_file), &val_ev);
             yaml_event_delete(&val_ev);
+        } else if (!strcmp(key, "redirect_targets")) {
+            if (val_ev.type != YAML_SEQUENCE_START_EVENT) {
+                add_error(errors, event_line(&val_ev), "threats.redirect_targets", "expected sequence");
+                if (skip_node(parser, &val_ev, errors) != 0) {
+                    yaml_event_delete(&key_ev);
+                    return -1;
+                }
+                yaml_event_delete(&key_ev);
+                continue;
+            }
+            cfg->threats.redirect_target_count = 0;
+            yaml_event_delete(&val_ev);
+            for (;;) {
+                yaml_event_t item_ev;
+                if (next_event(parser, &item_ev, errors, "threats.redirect_targets") != 0) {
+                    yaml_event_delete(&key_ev);
+                    return -1;
+                }
+                if (item_ev.type == YAML_SEQUENCE_END_EVENT) {
+                    yaml_event_delete(&item_ev);
+                    break;
+                }
+                if (item_ev.type != YAML_MAPPING_START_EVENT) {
+                    add_error(errors, event_line(&item_ev), "threats.redirect_targets", "entry must be mapping");
+                    if (skip_node(parser, &item_ev, errors) != 0) {
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    continue;
+                }
+
+                if (cfg->threats.redirect_target_count >= JZ_CONFIG_MAX_REDIRECT_TARGETS) {
+                    add_error(errors, event_line(&item_ev), "threats.redirect_targets", "too many entries (max %d)",
+                              JZ_CONFIG_MAX_REDIRECT_TARGETS);
+                    if (skip_node(parser, &item_ev, errors) != 0) {
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    continue;
+                }
+
+                yaml_event_delete(&item_ev);
+                for (;;) {
+                    yaml_event_t k2, v2;
+                    const char *k;
+                    jz_config_redirect_target_t *rt = &cfg->threats.redirect_targets[cfg->threats.redirect_target_count];
+                    if (next_event(parser, &k2, errors, "threats.redirect_targets") != 0) {
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    if (k2.type == YAML_MAPPING_END_EVENT) {
+                        yaml_event_delete(&k2);
+                        cfg->threats.redirect_target_count++;
+                        break;
+                    }
+                    if (k2.type != YAML_SCALAR_EVENT) {
+                        add_error(errors, event_line(&k2), "threats.redirect_targets", "expected scalar key");
+                        yaml_event_delete(&k2);
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    k = (const char *)k2.data.scalar.value;
+                    if (next_event(parser, &v2, errors, "threats.redirect_targets") != 0) {
+                        yaml_event_delete(&k2);
+                        yaml_event_delete(&key_ev);
+                        return -1;
+                    }
+                    if (!strcmp(k, "id")) {
+                        if (scalar_to_int(&v2, &rt->id) != 0)
+                            add_error(errors, event_line(&v2), "threats.redirect_targets[].id", "must be int");
+                    } else if (!strcmp(k, "name"))
+                        copy_scalar(rt->name, sizeof(rt->name), &v2);
+                    else if (!strcmp(k, "interface"))
+                        copy_scalar(rt->interface, sizeof(rt->interface), &v2);
+                    else
+                        add_error(errors, event_line(&k2), "threats.redirect_targets", "unknown key '%s'", k);
+
+                    yaml_event_delete(&v2);
+                    yaml_event_delete(&k2);
+                }
+            }
         } else if (!strcmp(key, "patterns")) {
             if (val_ev.type != YAML_SEQUENCE_START_EVENT) {
                 add_error(errors, event_line(&val_ev), "threats.patterns", "expected sequence");
@@ -1724,6 +1805,20 @@ static int parse_threats(yaml_parser_t *parser, yaml_event_t *start,
                         copy_scalar(p->action, sizeof(p->action), &v2);
                     else if (!strcmp(k, "description"))
                         copy_scalar(p->description, sizeof(p->description), &v2);
+                    else if (!strcmp(k, "redirect_target")) {
+                        if (scalar_to_int(&v2, &p->redirect_target) != 0)
+                            add_error(errors, event_line(&v2), "threats.patterns[].redirect_target", "must be int");
+                    } else if (!strcmp(k, "priority")) {
+                        if (scalar_to_int(&v2, &p->priority) != 0)
+                            add_error(errors, event_line(&v2), "threats.patterns[].priority", "must be int");
+                    } else if (!strcmp(k, "src_ip"))
+                        copy_scalar(p->src_ip, sizeof(p->src_ip), &v2);
+                    else if (!strcmp(k, "src_mac"))
+                        copy_scalar(p->src_mac, sizeof(p->src_mac), &v2);
+                    else if (!strcmp(k, "continue_matching"))
+                        scalar_to_bool(&v2, &p->continue_matching);
+                    else if (!strcmp(k, "capture_packet"))
+                        scalar_to_bool(&v2, &p->capture_packet);
                     else
                         add_error(errors, event_line(&k2), "threats.patterns", "unknown key '%s'", k);
 
@@ -2753,10 +2848,10 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
 {
     static const char *const log_levels[] = {"debug", "info", "warn", "error", NULL};
     static const char *const actions[] = {"pass", "drop", "redirect", "mirror", "redirect_mirror", NULL};
-    static const char *const threat_actions[] = {"log", "log_only", "log_drop", "log_redirect", NULL};
+    static const char *const threat_actions[] = {"log", "log_only", "log_drop", "log_redirect", "log_mirror", NULL};
     static const char *const threat_levels[] = {"low", "medium", "high", "critical", NULL};
     static const char *const protos[] = {"tcp", "udp", "icmp", "any", NULL};
-    static const char *const iface_roles[] = {"monitor", "manage", "mirror", NULL};
+    static const char *const iface_roles[] = {"monitor", "manage", "mirror", "honeypot", NULL};
     static const char *const deploy_modes[] = {"bypass", "inline", NULL};
     int i;
     int start_count = errors ? errors->count : 0;
@@ -2905,7 +3000,19 @@ int jz_config_validate(const jz_config_t *cfg, jz_config_errors_t *errors)
         if (!in_set(p->threat_level, threat_levels))
             add_error(errors, 0, "threats.patterns[].threat_level", "invalid threat level");
         if (!in_set(p->action, threat_actions))
-            add_error(errors, 0, "threats.patterns[].action", "must be log_only/log_drop/log_redirect");
+            add_error(errors, 0, "threats.patterns[].action", "must be log/log_only/log_drop/log_redirect/log_mirror");
+        if (p->redirect_target < 0 || p->redirect_target >= JZ_CONFIG_MAX_REDIRECT_TARGETS)
+            add_error(errors, 0, "threats.patterns[].redirect_target", "must be 0-%d", JZ_CONFIG_MAX_REDIRECT_TARGETS - 1);
+    }
+
+    for (i = 0; i < cfg->threats.redirect_target_count && i < JZ_CONFIG_MAX_REDIRECT_TARGETS; i++) {
+        const jz_config_redirect_target_t *rt = &cfg->threats.redirect_targets[i];
+        if (rt->id < 0 || rt->id >= JZ_CONFIG_MAX_REDIRECT_TARGETS)
+            add_error(errors, 0, "threats.redirect_targets[].id", "must be 0-%d", JZ_CONFIG_MAX_REDIRECT_TARGETS - 1);
+        if (rt->name[0] == '\0')
+            add_error(errors, 0, "threats.redirect_targets[].name", "must not be empty");
+        if (rt->interface[0] == '\0')
+            add_error(errors, 0, "threats.redirect_targets[].interface", "must not be empty");
     }
 
     for (i = 0; i < cfg->api.auth_token_count && i < JZ_CONFIG_MAX_AUTH_TOKENS; i++) {
@@ -3427,8 +3534,23 @@ char *jz_config_serialize(const jz_config_t *cfg)
     if (sb_appendf(&sb,
                    "threats:\n"
                    "  blacklist_file: %s\n"
-                   "  patterns:\n",
+                   "  redirect_targets:\n",
                    cfg->threats.blacklist_file) != 0) {
+        free(sb.data);
+        return NULL;
+    }
+
+    for (i = 0; i < cfg->threats.redirect_target_count; i++) {
+        const jz_config_redirect_target_t *rt = &cfg->threats.redirect_targets[i];
+        if (sb_appendf(&sb,
+                       "    - { id: %d, name: \"%s\", interface: \"%s\" }\n",
+                       rt->id, rt->name, rt->interface) != 0) {
+            free(sb.data);
+            return NULL;
+        }
+    }
+
+    if (sb_appendf(&sb, "  patterns:\n") != 0) {
         free(sb.data);
         return NULL;
     }
@@ -3436,8 +3558,11 @@ char *jz_config_serialize(const jz_config_t *cfg)
     for (i = 0; i < cfg->threats.pattern_count; i++) {
         const jz_config_threat_pattern_t *p = &cfg->threats.patterns[i];
         if (sb_appendf(&sb,
-                       "    - { id: %s, dst_port: %d, proto: %s, threat_level: %s, action: %s, description: %s }\n",
-                       p->id, p->dst_port, p->proto, p->threat_level, p->action, p->description) != 0) {
+                       "    - { id: %s, dst_port: %d, proto: %s, threat_level: %s, action: %s, redirect_target: %d, description: \"%s\", priority: %d, src_ip: \"%s\", src_mac: \"%s\", continue_matching: %s, capture_packet: %s }\n",
+                       p->id, p->dst_port, p->proto, p->threat_level, p->action, p->redirect_target, p->description,
+                       p->priority, p->src_ip, p->src_mac,
+                       p->continue_matching ? "true" : "false",
+                       p->capture_packet ? "true" : "false") != 0) {
             free(sb.data);
             return NULL;
         }

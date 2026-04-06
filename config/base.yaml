@@ -118,12 +118,20 @@ policy_auto:
 
 threats:
   blacklist_file: "/etc/jz/blacklist.txt"  # One IP per line
+  redirect_targets: []
+  #  - id: 0
+  #    name: "honeypot-vm"
+  #    interface: "ens34"
+  #  - id: 1
+  #    name: "docker-trap"
+  #    interface: "veth-hp"
   patterns: []
   #  - id: 1
   #    dst_port: 445
   #    proto: "tcp"
   #    threat_level: "high"
-  #    action: "log_drop"
+  #    action: "log_redirect"
+  #    redirect_target: 0
   #    description: "SMB exploit attempt"
 
 collector:

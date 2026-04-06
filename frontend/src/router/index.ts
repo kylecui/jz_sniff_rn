@@ -33,6 +33,12 @@ const router = createRouter({
           meta: { titleKey: 'nav.policies', icon: 'List' },
         },
         {
+          path: 'threats',
+          name: 'Threats',
+          component: () => import('@/views/Threats.vue'),
+          meta: { titleKey: 'nav.threats', icon: 'WarningFilled' },
+        },
+        {
           path: 'logs',
           name: 'Logs',
           component: () => import('@/views/Logs.vue'),

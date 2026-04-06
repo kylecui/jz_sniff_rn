@@ -355,12 +355,33 @@ static int apply_config_to_maps(const jz_config_t *cfg)
             warnings++;
     }
 
-    /* Threat patterns: HASH, key=uint32(pattern_id), value=jz_threat_pattern */
-    if (batch->threat_patterns.count > 0) {
-        if (push_hash_map("jz_threat_patterns",
-                          batch->threat_patterns.keys, sizeof(uint32_t),
-                          batch->threat_patterns.values, sizeof(struct jz_threat_pattern),
-                          batch->threat_patterns.count) < 0)
+    /* Threat patterns: ARRAY, key=uint32(slot index), value=jz_threat_pattern */
+    {
+        struct jz_threat_pattern zero;
+        memset(&zero, 0, sizeof(zero));
+
+        if (push_array_map("jz_threat_patterns",
+                           batch->threat_patterns.values,
+                           sizeof(struct jz_threat_pattern),
+                           batch->threat_patterns.count) < 0)
+            warnings++;
+
+        /* Zero remaining ARRAY slots to clear stale rules */
+        {
+            char pin[512];
+            int fd = open_pinned_map("jz_threat_patterns", pin, sizeof(pin));
+            if (fd >= 0) {
+                for (int i = batch->threat_patterns.count; i < 128; i++) {
+                    uint32_t key = (uint32_t)i;
+                    bpf_map_update_elem(fd, &key, &zero, BPF_ANY);
+                }
+                close(fd);
+            }
+        }
+
+        if (push_array_singleton("jz_threat_rule_count",
+                                 &batch->threat_rule_count,
+                                 sizeof(uint32_t)) < 0)
             warnings++;
     }
 
@@ -409,8 +430,16 @@ static int apply_config_to_maps(const jz_config_t *cfg)
             warnings++;
     }
 
+    /* Redirect targets: ARRAY[16], key=idx, value=jz_redirect_target */
+    if (batch->redirect_targets.count > 0) {
+        if (push_array_map("jz_redirect_targets",
+                           batch->redirect_targets.entries, sizeof(struct jz_redirect_target),
+                           batch->redirect_targets.count) < 0)
+            warnings++;
+    }
+
     jz_log_info("Config pushed to BPF maps: %d guards, %d whitelist, %d policies, "
-                 "%d threats, %d blacklist, %d bg_filters, %d fake MACs (%d map warnings)",
+                 "%d threats, %d blacklist, %d bg_filters, %d fake MACs, %d redirect_targets (%d map warnings)",
                  batch->static_guards.count,
                  batch->whitelist.count,
                  batch->policies.count,
@@ -418,6 +447,7 @@ static int apply_config_to_maps(const jz_config_t *cfg)
                  batch->threat_blacklist.count,
                  batch->bg_filters.count,
                  batch->fake_macs.count,
+                 batch->redirect_targets.count,
                  warnings);
 
     free(batch);

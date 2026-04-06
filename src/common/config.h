@@ -20,13 +20,14 @@
 #define JZ_CONFIG_MAX_STATIC_GUARDS        256
 #define JZ_CONFIG_MAX_WHITELIST            256
 #define JZ_CONFIG_MAX_POLICIES             512
-#define JZ_CONFIG_MAX_THREAT_PATTERNS      512
+#define JZ_CONFIG_MAX_THREAT_PATTERNS      128
 #define JZ_CONFIG_MAX_AUTH_TOKENS          16
 #define JZ_CONFIG_MAX_INTERFACES           8
 #define JZ_CONFIG_MAX_FROZEN_IPS           256
 #define JZ_CONFIG_MAX_DHCP_EXCEPTIONS      64
 #define JZ_CONFIG_MAX_ARP_SPOOF_TARGETS   32
 #define JZ_CONFIG_MAX_VLANS                16
+#define JZ_CONFIG_MAX_REDIRECT_TARGETS     16
 
 #define JZ_CONFIG_MAX_ERRORS               64
 
@@ -220,6 +221,12 @@ typedef struct jz_config_policy_auto {
     bool escalation;
 } jz_config_policy_auto_t;
 
+typedef struct jz_config_redirect_target {
+    int  id;
+    char name[JZ_CONFIG_STR_SHORT];
+    char interface[JZ_CONFIG_STR_SHORT];
+} jz_config_redirect_target_t;
+
 typedef struct jz_config_threat_pattern {
     char id[JZ_CONFIG_STR_SHORT];
     int  dst_port;
@@ -227,12 +234,20 @@ typedef struct jz_config_threat_pattern {
     char threat_level[JZ_CONFIG_STR_SHORT];
     char action[JZ_CONFIG_STR_SHORT];
     char description[JZ_CONFIG_STR_LONG];
+    int  redirect_target;
+    int  priority;
+    char src_ip[JZ_CONFIG_STR_SHORT];
+    char src_mac[JZ_CONFIG_STR_SHORT];
+    bool continue_matching;
+    bool capture_packet;
 } jz_config_threat_pattern_t;
 
 typedef struct jz_config_threats {
     char blacklist_file[JZ_CONFIG_STR_LONG];
     jz_config_threat_pattern_t patterns[JZ_CONFIG_MAX_THREAT_PATTERNS];
     int pattern_count;
+    jz_config_redirect_target_t redirect_targets[JZ_CONFIG_MAX_REDIRECT_TARGETS];
+    int redirect_target_count;
 } jz_config_threats_t;
 
 typedef struct jz_config_collector {

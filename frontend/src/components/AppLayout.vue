@@ -8,6 +8,7 @@ import {
   Search,
   Setting,
   Cpu,
+  WarningFilled,
 } from '@element-plus/icons-vue'
 
 const { t, locale } = useI18n({ useScope: 'global' })
@@ -21,6 +22,7 @@ const menuItems = [
   { path: '/guards', icon: Lock, titleKey: 'nav.guards' },
   { path: '/whitelist', icon: Check, titleKey: 'nav.whitelist' },
   { path: '/policies', icon: List, titleKey: 'nav.policies' },
+  { path: '/threats', icon: WarningFilled, titleKey: 'nav.threats' },
   { path: '/logs', icon: Document, titleKey: 'nav.logs' },
   { path: '/discovery', icon: Search, titleKey: 'nav.discovery' },
   { path: '/config', icon: Setting, titleKey: 'nav.config' },

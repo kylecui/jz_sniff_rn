@@ -120,8 +120,31 @@ struct jz_threat_pattern {
     uint8_t  threat_level;
     uint32_t pattern_id;
     uint8_t  action;
-    uint8_t  _pad[3];
+    uint8_t  redirect_target;
+    uint8_t  flags;            /* bit0: continue_matching, bit1: capture_packet */
+    uint8_t  _pad1;
+    uint8_t  src_mac[6];       /* 00:00:00:00:00:00 = wildcard */
+    uint8_t  _pad2[6];
     char     description[32];
+};
+
+_Static_assert(sizeof(struct jz_threat_pattern) == 64,
+               "jz_threat_pattern must be 64 bytes (cache-line aligned)");
+
+struct jz_capture_meta {
+    uint64_t timestamp_ns;
+    uint32_t wire_len;
+    uint32_t cap_len;
+    uint32_t pattern_id;
+    uint16_t ifindex;
+    uint8_t  action;
+    uint8_t  threat_level;
+};
+
+struct jz_redirect_target {
+    uint32_t ifindex;
+    uint8_t  active;
+    uint8_t  _pad[3];
 };
 
 struct jz_sample_config {
@@ -154,10 +177,12 @@ typedef struct jz_config_map_batch {
     } policies;
 
     struct {
-        uint32_t keys[512];
-        struct jz_threat_pattern values[512];
+        uint32_t keys[128];
+        struct jz_threat_pattern values[128];
         int count;
     } threat_patterns;
+
+    uint32_t threat_rule_count;
 
     struct {
         uint32_t keys[65536];
@@ -173,6 +198,11 @@ typedef struct jz_config_map_batch {
     struct jz_arp_config arp_config;
     struct jz_icmp_config icmp_config;
     struct jz_sample_config sample_config;
+
+    struct {
+        struct jz_redirect_target entries[16];
+        int count;
+    } redirect_targets;
 
     struct {
         uint32_t keys[64];

@@ -746,6 +746,71 @@ static void api_add_config_threats_json(cJSON *root, const jz_config_t *cfg)
     arr = cJSON_AddArrayToObject(threats, "patterns");
     for (i = 0; i < cfg->threats.pattern_count; i++) {
         const jz_config_threat_pattern_t *p = &cfg->threats.patterns[i];
+        int priority = p->priority;
+        cJSON *o = cJSON_CreateObject();
+        if (!o)
+            continue;
+        if (priority == 0 && i > 0)
+            priority = i;
+        cJSON_AddStringToObject(o, "id", p->id);
+        cJSON_AddNumberToObject(o, "dst_port", p->dst_port);
+        cJSON_AddStringToObject(o, "proto", p->proto);
+        cJSON_AddStringToObject(o, "threat_level", p->threat_level);
+        cJSON_AddStringToObject(o, "action", p->action);
+        cJSON_AddStringToObject(o, "description", p->description);
+        cJSON_AddNumberToObject(o, "priority", priority);
+        cJSON_AddStringToObject(o, "src_ip", p->src_ip);
+        cJSON_AddStringToObject(o, "src_mac", p->src_mac);
+        cJSON_AddBoolToObject(o, "continue_matching", p->continue_matching ? 1 : 0);
+        cJSON_AddBoolToObject(o, "capture_packet", p->capture_packet ? 1 : 0);
+        cJSON_AddItemToArray(arr, o);
+    }
+}
+
+static int threat_pattern_priority_for_index(const jz_config_threat_pattern_t *p, int index)
+{
+    if (!p)
+        return index;
+    return p->priority;
+}
+
+static int threat_pattern_cmp_by_priority(const void *a, const void *b)
+{
+    const jz_config_threat_pattern_t *pa = (const jz_config_threat_pattern_t *) a;
+    const jz_config_threat_pattern_t *pb = (const jz_config_threat_pattern_t *) b;
+
+    if (pa->priority < pb->priority)
+        return -1;
+    if (pa->priority > pb->priority)
+        return 1;
+    return 0;
+}
+
+static void handle_threat_patterns_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    jz_config_threat_pattern_t sorted[JZ_CONFIG_MAX_THREAT_PATTERNS];
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "patterns");
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        sorted[i] = api->config->threats.patterns[i];
+        sorted[i].priority = threat_pattern_priority_for_index(&sorted[i], i);
+    }
+    qsort(sorted,
+          (size_t) api->config->threats.pattern_count,
+          sizeof(jz_config_threat_pattern_t),
+          threat_pattern_cmp_by_priority);
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        const jz_config_threat_pattern_t *p = &sorted[i];
         cJSON *o = cJSON_CreateObject();
         if (!o)
             continue;
@@ -754,8 +819,556 @@ static void api_add_config_threats_json(cJSON *root, const jz_config_t *cfg)
         cJSON_AddStringToObject(o, "proto", p->proto);
         cJSON_AddStringToObject(o, "threat_level", p->threat_level);
         cJSON_AddStringToObject(o, "action", p->action);
+        cJSON_AddNumberToObject(o, "redirect_target", p->redirect_target);
         cJSON_AddStringToObject(o, "description", p->description);
+        cJSON_AddNumberToObject(o, "priority", p->priority);
+        cJSON_AddStringToObject(o, "src_ip", p->src_ip);
+        cJSON_AddStringToObject(o, "src_mac", p->src_mac);
+        cJSON_AddBoolToObject(o, "continue_matching", p->continue_matching ? 1 : 0);
+        cJSON_AddBoolToObject(o, "capture_packet", p->capture_packet ? 1 : 0);
         cJSON_AddItemToArray(arr, o);
+    }
+    cJSON_AddNumberToObject(root, "count", api->config->threats.pattern_count);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_threat_patterns_add(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *j;
+    jz_config_threat_pattern_t *p;
+    int max_priority = -1;
+    int max_id = 0;
+    int i;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api->config->threats.pattern_count >= JZ_CONFIG_MAX_THREAT_PATTERNS) {
+        api_error_reply(c, 400, "max threat patterns reached");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    p = &api->config->threats.patterns[api->config->threats.pattern_count];
+    memset(p, 0, sizeof(*p));
+
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        int cur_pri = threat_pattern_priority_for_index(&api->config->threats.patterns[i], i);
+        int id_num = atoi(api->config->threats.patterns[i].id);
+        if (cur_pri > max_priority)
+            max_priority = cur_pri;
+        if (id_num > max_id)
+            max_id = id_num;
+    }
+    p->priority = max_priority + 1;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "id");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->id, sizeof(p->id), "%s", j->valuestring);
+    else
+        snprintf(p->id, sizeof(p->id), "%d", max_id + 1);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_port");
+    if (cJSON_IsNumber(j))
+        p->dst_port = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "proto");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->proto, sizeof(p->proto), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "threat_level");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->threat_level, sizeof(p->threat_level), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "action");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->action, sizeof(p->action), "%s", j->valuestring);
+    else
+        snprintf(p->action, sizeof(p->action), "log");
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "description");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->description, sizeof(p->description), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "redirect_target");
+    if (cJSON_IsNumber(j))
+        p->redirect_target = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "priority");
+    if (cJSON_IsNumber(j))
+        p->priority = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->src_ip, sizeof(p->src_ip), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_mac");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->src_mac, sizeof(p->src_mac), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "continue_matching");
+    if (cJSON_IsBool(j))
+        p->continue_matching = cJSON_IsTrue(j) ? true : false;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "capture_packet");
+    if (cJSON_IsBool(j))
+        p->capture_packet = cJSON_IsTrue(j) ? true : false;
+
+    cJSON_Delete(body);
+
+    api->config->threats.pattern_count++;
+
+    if (api_persist_config(api) < 0) {
+        api->config->threats.pattern_count--;
+        memset(p, 0, sizeof(*p));
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "added");
+        cJSON_AddStringToObject(result, "id", p->id);
+        api_audit_log(api, "threat_pattern_add", p->id, p->description, "success");
+        api_json_reply(c, 201, result);
+    }
+}
+
+static void handle_threat_patterns_update(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                          struct mg_str id_cap)
+{
+    char id_str[64];
+    cJSON *body;
+    cJSON *j;
+    jz_config_threat_pattern_t *p = NULL;
+    int i;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str)) < 0) {
+        api_error_reply(c, 400, "invalid id");
+        return;
+    }
+
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        if (strcmp(api->config->threats.patterns[i].id, id_str) == 0) {
+            p = &api->config->threats.patterns[i];
+            break;
+        }
+    }
+
+    if (!p) {
+        api_error_reply(c, 404, "pattern not found");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "dst_port");
+    if (cJSON_IsNumber(j))
+        p->dst_port = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "proto");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->proto, sizeof(p->proto), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "threat_level");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->threat_level, sizeof(p->threat_level), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "action");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->action, sizeof(p->action), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "description");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->description, sizeof(p->description), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "redirect_target");
+    if (cJSON_IsNumber(j))
+        p->redirect_target = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "priority");
+    if (cJSON_IsNumber(j))
+        p->priority = j->valueint;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_ip");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->src_ip, sizeof(p->src_ip), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "src_mac");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(p->src_mac, sizeof(p->src_mac), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "continue_matching");
+    if (cJSON_IsBool(j))
+        p->continue_matching = cJSON_IsTrue(j) ? true : false;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "capture_packet");
+    if (cJSON_IsBool(j))
+        p->capture_packet = cJSON_IsTrue(j) ? true : false;
+
+    cJSON_Delete(body);
+
+    if (api_persist_config(api) < 0) {
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "updated");
+        cJSON_AddStringToObject(result, "id", p->id);
+        api_audit_log(api, "threat_pattern_update", p->id, p->description, "success");
+        api_json_reply(c, 200, result);
+    }
+}
+
+static void handle_threat_patterns_del(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                       struct mg_str id_cap)
+{
+    char id_str[64];
+    int i;
+    int found = -1;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str)) < 0) {
+        api_error_reply(c, 400, "invalid id");
+        return;
+    }
+
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        if (strcmp(api->config->threats.patterns[i].id, id_str) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0) {
+        api_error_reply(c, 404, "pattern not found");
+        return;
+    }
+
+    if (found < api->config->threats.pattern_count - 1) {
+        memmove(&api->config->threats.patterns[found],
+                &api->config->threats.patterns[found + 1],
+                (size_t)(api->config->threats.pattern_count - found - 1) * sizeof(jz_config_threat_pattern_t));
+    }
+    api->config->threats.pattern_count--;
+    memset(&api->config->threats.patterns[api->config->threats.pattern_count], 0,
+           sizeof(jz_config_threat_pattern_t));
+
+    if (api_persist_config(api) < 0) {
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "deleted");
+        cJSON_AddStringToObject(result, "id", id_str);
+        api_audit_log(api, "threat_pattern_delete", id_str, NULL, "success");
+        api_json_reply(c, 200, result);
+    }
+}
+
+static void handle_threat_patterns_reorder(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *order;
+    int matched[JZ_CONFIG_MAX_THREAT_PATTERNS] = {0};
+    int i;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    order = cJSON_GetObjectItemCaseSensitive(body, "order");
+    if (!cJSON_IsArray(order) || cJSON_GetArraySize(order) != api->config->threats.pattern_count) {
+        cJSON_Delete(body);
+        api_error_reply(c, 400, "invalid order");
+        return;
+    }
+
+    for (i = 0; i < api->config->threats.pattern_count; i++) {
+        cJSON *id_item = cJSON_GetArrayItem(order, i);
+        int j;
+        int found = -1;
+
+        if (!cJSON_IsString(id_item) || !id_item->valuestring) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "invalid order");
+            return;
+        }
+
+        for (j = 0; j < api->config->threats.pattern_count; j++) {
+            if (strcmp(api->config->threats.patterns[j].id, id_item->valuestring) == 0) {
+                found = j;
+                break;
+            }
+        }
+
+        if (found < 0 || matched[found]) {
+            cJSON_Delete(body);
+            api_error_reply(c, 400, "invalid order");
+            return;
+        }
+
+        matched[found] = 1;
+        api->config->threats.patterns[found].priority = i;
+    }
+
+    cJSON_Delete(body);
+
+    if (api_persist_config(api) < 0) {
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "reordered");
+        api_audit_log(api, "threat_pattern_reorder", NULL, NULL, "success");
+        api_json_reply(c, 200, result);
+    }
+}
+
+static void handle_redirect_targets_list(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *root;
+    cJSON *arr;
+    int i;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    root = cJSON_CreateObject();
+    arr = cJSON_AddArrayToObject(root, "targets");
+    for (i = 0; i < api->config->threats.redirect_target_count; i++) {
+        const jz_config_redirect_target_t *rt = &api->config->threats.redirect_targets[i];
+        cJSON *o = cJSON_CreateObject();
+        if (!o)
+            continue;
+        cJSON_AddNumberToObject(o, "id", rt->id);
+        cJSON_AddStringToObject(o, "name", rt->name);
+        cJSON_AddStringToObject(o, "interface", rt->interface);
+        cJSON_AddItemToArray(arr, o);
+    }
+    cJSON_AddNumberToObject(root, "count", api->config->threats.redirect_target_count);
+    api_json_reply(c, 200, root);
+}
+
+static void handle_redirect_targets_add(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
+{
+    cJSON *body;
+    cJSON *j;
+    jz_config_redirect_target_t *rt;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api->config->threats.redirect_target_count >= JZ_CONFIG_MAX_REDIRECT_TARGETS) {
+        api_error_reply(c, 400, "max redirect targets reached");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    rt = &api->config->threats.redirect_targets[api->config->threats.redirect_target_count];
+    memset(rt, 0, sizeof(*rt));
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "id");
+    if (cJSON_IsNumber(j))
+        rt->id = j->valueint;
+    else
+        rt->id = api->config->threats.redirect_target_count;
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "name");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(rt->name, sizeof(rt->name), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "interface");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(rt->interface, sizeof(rt->interface), "%s", j->valuestring);
+
+    cJSON_Delete(body);
+
+    if (rt->name[0] == '\0' || rt->interface[0] == '\0') {
+        memset(rt, 0, sizeof(*rt));
+        api_error_reply(c, 400, "name and interface are required");
+        return;
+    }
+
+    api->config->threats.redirect_target_count++;
+
+    if (api_persist_config(api) < 0) {
+        api->config->threats.redirect_target_count--;
+        memset(rt, 0, sizeof(*rt));
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "added");
+        cJSON_AddNumberToObject(result, "id", rt->id);
+        cJSON_AddStringToObject(result, "name", rt->name);
+        api_audit_log(api, "redirect_target_add", rt->name, rt->interface, "success");
+        api_json_reply(c, 201, result);
+    }
+}
+
+static void handle_redirect_targets_update(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                            struct mg_str id_cap)
+{
+    char id_str[64];
+    cJSON *body;
+    cJSON *j;
+    jz_config_redirect_target_t *rt = NULL;
+    int target_id;
+    int i;
+
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str)) < 0) {
+        api_error_reply(c, 400, "invalid id");
+        return;
+    }
+
+    target_id = atoi(id_str);
+    for (i = 0; i < api->config->threats.redirect_target_count; i++) {
+        if (api->config->threats.redirect_targets[i].id == target_id) {
+            rt = &api->config->threats.redirect_targets[i];
+            break;
+        }
+    }
+
+    if (!rt) {
+        api_error_reply(c, 404, "redirect target not found");
+        return;
+    }
+
+    body = api_parse_body_json(hm);
+    if (!body) {
+        api_error_reply(c, 400, "invalid json body");
+        return;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "name");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(rt->name, sizeof(rt->name), "%s", j->valuestring);
+
+    j = cJSON_GetObjectItemCaseSensitive(body, "interface");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(rt->interface, sizeof(rt->interface), "%s", j->valuestring);
+
+    cJSON_Delete(body);
+
+    if (api_persist_config(api) < 0) {
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "updated");
+        cJSON_AddNumberToObject(result, "id", rt->id);
+        api_audit_log(api, "redirect_target_update", rt->name, rt->interface, "success");
+        api_json_reply(c, 200, result);
+    }
+}
+
+static void handle_redirect_targets_del(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api,
+                                         struct mg_str id_cap)
+{
+    char id_str[64];
+    int target_id;
+    int i;
+    int found = -1;
+
+    (void) hm;
+    if (!api || !api->config) {
+        api_error_reply(c, 500, "config unavailable");
+        return;
+    }
+
+    if (api_mg_str_to_cstr(id_cap, id_str, sizeof(id_str)) < 0) {
+        api_error_reply(c, 400, "invalid id");
+        return;
+    }
+
+    target_id = atoi(id_str);
+    for (i = 0; i < api->config->threats.redirect_target_count; i++) {
+        if (api->config->threats.redirect_targets[i].id == target_id) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0) {
+        api_error_reply(c, 404, "redirect target not found");
+        return;
+    }
+
+    if (found < api->config->threats.redirect_target_count - 1) {
+        memmove(&api->config->threats.redirect_targets[found],
+                &api->config->threats.redirect_targets[found + 1],
+                (size_t)(api->config->threats.redirect_target_count - found - 1) * sizeof(jz_config_redirect_target_t));
+    }
+    api->config->threats.redirect_target_count--;
+    memset(&api->config->threats.redirect_targets[api->config->threats.redirect_target_count], 0,
+           sizeof(jz_config_redirect_target_t));
+
+    if (api_persist_config(api) < 0) {
+        api_error_reply(c, 500, "failed to persist config");
+        return;
+    }
+
+    {
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "status", "deleted");
+        cJSON_AddNumberToObject(result, "id", target_id);
+        api_audit_log(api, "redirect_target_delete", id_str, NULL, "success");
+        api_json_reply(c, 200, result);
     }
 }
 
@@ -4366,6 +4979,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_policies_list(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/patterns"), NULL)) {
+            handle_threat_patterns_list(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/redirect_targets"), NULL)) {
+            handle_redirect_targets_list(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/logs/attacks"), NULL)) {
             handle_logs_attacks(c, hm, api);
             return;
@@ -4497,6 +5118,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_policies_add(c, hm, api);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/patterns"), NULL)) {
+            handle_threat_patterns_add(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/redirect_targets"), NULL)) {
+            handle_redirect_targets_add(c, hm, api);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/config"), NULL)) {
             handle_config_post(c, hm, api);
             return;
@@ -4564,6 +5193,14 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
             handle_policies_del(c, hm, api, caps[0]);
             return;
         }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/patterns/*"), caps)) {
+            handle_threat_patterns_del(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/redirect_targets/*"), caps)) {
+            handle_redirect_targets_del(c, hm, api, caps[0]);
+            return;
+        }
         if (mg_match(hm->uri, mg_str("/api/v1/captures/*"), caps)) {
             handle_capture_delete(c, hm, api, caps[0]);
             return;
@@ -4597,6 +5234,18 @@ static void api_route_http(struct mg_connection *c, struct mg_http_message *hm, 
         }
         if (mg_match(hm->uri, mg_str("/api/v1/policies/*"), caps)) {
             handle_policies_update(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/patterns/reorder"), NULL)) {
+            handle_threat_patterns_reorder(c, hm, api);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/patterns/*"), caps)) {
+            handle_threat_patterns_update(c, hm, api, caps[0]);
+            return;
+        }
+        if (mg_match(hm->uri, mg_str("/api/v1/threats/redirect_targets/*"), caps)) {
+            handle_redirect_targets_update(c, hm, api, caps[0]);
             return;
         }
     }

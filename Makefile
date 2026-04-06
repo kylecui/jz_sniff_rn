@@ -46,7 +46,7 @@ WWWDIR     ?= /usr/share/jz/www
 FRONTEND   := $(TOPDIR)/frontend
 
 # Release packaging
-VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
 RELEASE_DIR := $(TOPDIR)/release
 ARCH       := $(shell uname -m)
 
@@ -115,7 +115,7 @@ COMMON_OBJS += $(PAHO_OBJS)
 COMMON_OBJS += $(VENDOR_OBJS)
 
 # Daemons
-DAEMONS := sniffd configd collectord uploadd
+DAEMONS := sniffd configd collectord uploadd captd
 DAEMON_BINS := $(foreach d,$(DAEMONS),$(BUILD_DIR)/$(d)/$(d))
 
 # CLI tools
@@ -187,7 +187,7 @@ $(BUILD_DIR)/cli/%: $(CLI_DIR)/%.c $(COMMON_OBJS) | $(BUILD_DIR)/cli
 $(BUILD_DIR)/bpf $(BUILD_DIR)/common $(BUILD_DIR)/cli $(BUILD_DIR)/vendor:
 	mkdir -p $@
 
-$(BUILD_DIR)/sniffd $(BUILD_DIR)/configd $(BUILD_DIR)/collectord $(BUILD_DIR)/uploadd:
+$(BUILD_DIR)/sniffd $(BUILD_DIR)/configd $(BUILD_DIR)/collectord $(BUILD_DIR)/uploadd $(BUILD_DIR)/captd:
 	mkdir -p $@
 
 # ── Tests ─────────────────────────────────────────────────────
@@ -295,7 +295,7 @@ uninstall:
 
 # ── Release Packaging ─────────────────────────────────────────
 
-RELEASE_NAME := jz-sniff-$(VERSION)-linux-$(ARCH)
+RELEASE_NAME := jz-sniff-v$(VERSION)-linux-$(ARCH)
 RELEASE_STAGE := $(RELEASE_DIR)/$(RELEASE_NAME)
 RSWITCH_SRC  ?=
 

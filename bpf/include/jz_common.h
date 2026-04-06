@@ -85,7 +85,7 @@ struct jz_event_hdr {
 #define JZ_MAX_FAKE_MACS           256
 #define JZ_MAX_FLOW_POLICIES       8192
 #define JZ_MAX_PROBE_TARGETS       1024
-#define JZ_MAX_THREAT_PATTERNS     2048
+#define JZ_MAX_THREAT_PATTERNS     128
 #define JZ_MAX_BG_FILTERS          64
 #define JZ_MAX_DHCP_EXCEPTION      256
 
