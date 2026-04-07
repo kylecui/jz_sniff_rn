@@ -26,7 +26,7 @@ WWWDIR="/usr/share/jz/www"
 BPFFS="/sys/fs/bpf"
 TLS_DIR="$SYSCONFDIR/tls"
 
-DAEMONS="sniffd configd collectord uploadd"
+DAEMONS="sniffd configd collectord uploadd captd"
 
 # ── Colors ────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -139,7 +139,8 @@ do_uninstall() {
     info "Removing BPF modules, systemd units, frontend..."
     rm -rf "$SYSCONFDIR/bpf"
     rm -f "$UNITDIR/sniffd.service" "$UNITDIR/configd.service" \
-          "$UNITDIR/collectord.service" "$UNITDIR/uploadd.service"
+          "$UNITDIR/collectord.service" "$UNITDIR/uploadd.service" \
+          "$UNITDIR/captd.service"
     rm -rf "$WWWDIR"
 
     ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
@@ -436,6 +437,7 @@ setup_tls() {
 
 setup_runtime_dirs() {
     install -d -m 0750 "$DATADIR"
+    install -d -m 0750 "$DATADIR/captures"
     install -d -m 0750 "$RUNDIR"
     ok "Runtime directories ready"
 }
@@ -456,7 +458,7 @@ start_services() {
     sleep 1
     systemctl restart sniffd
     sleep 2
-    for d in collectord uploadd; do
+    for d in collectord uploadd captd; do
         systemctl restart "$d" 2>/dev/null || true
     done
     sleep 1
@@ -503,7 +505,7 @@ verify() {
     printf "  Web UI:    https://<host>:8443/\n"
     printf "  API:       https://<host>:8443/api/v1/health\n"
     printf "  Logs:      journalctl -u sniffd -f\n"
-    printf "  Status:    systemctl status sniffd configd collectord uploadd\n\n"
+    printf "  Status:    systemctl status sniffd configd collectord uploadd captd\n\n"
 }
 
 # ── Main ──────────────────────────────────────────────────────
@@ -543,5 +545,5 @@ if ! $NO_START; then
     verify
 else
     ok "Installed but not started (--no-start)"
-    printf "  Start: sudo systemctl start configd sniffd collectord uploadd\n"
+    printf "  Start: sudo systemctl start configd sniffd collectord uploadd captd\n"
 fi
