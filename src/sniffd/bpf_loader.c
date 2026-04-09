@@ -462,6 +462,105 @@ int jz_bpf_loader_attach_xdp(jz_bpf_loader_t *loader, const int *ifindexes,
     return 0;
 }
 
+int jz_bpf_loader_ensure_xdp(jz_bpf_loader_t *loader,
+                             const char (*want_names)[32],
+                             const int *want_ifindexes,
+                             int want_count)
+{
+    int i;
+    int j;
+    int added = 0;
+    int prog_fd;
+
+    if (!loader || !loader->initialized || !want_names || !want_ifindexes)
+        return -1;
+    if (want_count <= 0)
+        return 0;
+
+    prog_fd = loader->modules[0].prog_fd;
+    if (prog_fd < 0) {
+        jz_log_error("ensure_xdp: guard_classifier not loaded");
+        return -1;
+    }
+
+    jz_log_info("ensure_xdp: reconciling %d wanted ifaces (currently %d attached)",
+                want_count, loader->xdp_iface_count);
+
+    for (i = 0; i < want_count; i++) {
+        bool already = false;
+
+        if (want_ifindexes[i] <= 0)
+            continue;
+
+        for (j = 0; j < loader->xdp_iface_count; j++) {
+            if (loader->xdp_ifindexes[j] == want_ifindexes[i]) {
+                already = true;
+                break;
+            }
+        }
+
+        if (already)
+            continue;
+
+        if (loader->xdp_iface_count >= JZ_MAX_BUSINESS_IFACES) {
+            jz_log_warn("ensure_xdp: max interfaces reached, skipping %s",
+                        want_names[i]);
+            continue;
+        }
+
+        if (bpf_xdp_attach(want_ifindexes[i], prog_fd,
+                            XDP_FLAGS_SKB_MODE, NULL) < 0) {
+            jz_log_error("ensure_xdp: attach XDP to %s (ifindex %d): %s",
+                         want_names[i], want_ifindexes[i], strerror(errno));
+            continue;
+        }
+
+        {
+            int pos = loader->xdp_iface_count;
+            loader->xdp_ifindexes[pos] = want_ifindexes[i];
+            snprintf(loader->xdp_iface_names[pos],
+                     sizeof(loader->xdp_iface_names[pos]), "%s",
+                     want_names[i]);
+            loader->xdp_iface_count++;
+            added++;
+            jz_log_info("ensure_xdp: attached XDP to %s (ifindex %d)",
+                        want_names[i], want_ifindexes[i]);
+        }
+    }
+
+    /* Detach interfaces no longer in the wanted set */
+    for (j = loader->xdp_iface_count - 1; j >= 0; j--) {
+        bool wanted = false;
+
+        for (i = 0; i < want_count; i++) {
+            if (loader->xdp_ifindexes[j] == want_ifindexes[i]) {
+                wanted = true;
+                break;
+            }
+        }
+
+        if (!wanted) {
+            jz_log_info("ensure_xdp: detaching XDP from %s (ifindex %d, no longer configured)",
+                        loader->xdp_iface_names[j], loader->xdp_ifindexes[j]);
+            bpf_xdp_detach(loader->xdp_ifindexes[j], XDP_FLAGS_SKB_MODE, NULL);
+
+            /* Shift remaining entries down */
+            int last = loader->xdp_iface_count - 1;
+            if (j < last) {
+                loader->xdp_ifindexes[j] = loader->xdp_ifindexes[last];
+                memcpy(loader->xdp_iface_names[j],
+                       loader->xdp_iface_names[last],
+                       sizeof(loader->xdp_iface_names[j]));
+            }
+            loader->xdp_ifindexes[last] = 0;
+            loader->xdp_iface_names[last][0] = '\0';
+            loader->xdp_iface_count--;
+        }
+    }
+
+    return added;
+}
+
 void jz_bpf_loader_detach_xdp(jz_bpf_loader_t *loader)
 {
     if (!loader)

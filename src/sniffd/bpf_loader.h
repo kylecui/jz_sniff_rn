@@ -80,6 +80,10 @@ int jz_bpf_loader_find(const jz_bpf_loader_t *loader, const char *name);
 
 int jz_bpf_loader_attach_xdp(jz_bpf_loader_t *loader, const int *ifindexes,
                              const char names[][32], int count);
+int jz_bpf_loader_ensure_xdp(jz_bpf_loader_t *loader,
+                              const char (*want_names)[32],
+                              const int *want_ifindexes,
+                              int want_count);
 void jz_bpf_loader_detach_xdp(jz_bpf_loader_t *loader);
 
 /* Unload all modules and clean up. */

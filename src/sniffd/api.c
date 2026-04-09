@@ -3932,6 +3932,59 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
     if (api->ip_mgr)
         jz_ip_mgr_update_config(api->ip_mgr, api->config);
 
+    if (api->loader) {
+        int xdp_ifindexes[JZ_MAX_BUSINESS_IFACES] = {0};
+        char xdp_names[JZ_MAX_BUSINESS_IFACES][32];
+        int xdp_count = 0;
+        int ci;
+
+        for (ci = 0; ci < api->config->system.interface_count &&
+                     ci < JZ_CONFIG_MAX_INTERFACES; ci++) {
+            const jz_config_interface_t *cif =
+                &api->config->system.interfaces[ci];
+            unsigned int idx;
+
+            if (strcmp(cif->role, "manage") == 0)
+                continue;
+
+            idx = if_nametoindex(cif->name);
+            if (idx == 0)
+                continue;
+
+            if (xdp_count < JZ_MAX_BUSINESS_IFACES) {
+                xdp_ifindexes[xdp_count] = (int)idx;
+                snprintf(xdp_names[xdp_count], 32, "%s", cif->name);
+                xdp_count++;
+            }
+        }
+
+        if (xdp_count > 0) {
+            int added = jz_bpf_loader_ensure_xdp(api->loader, xdp_names,
+                                                  xdp_ifindexes, xdp_count);
+            if (added > 0) {
+                int sock = socket(AF_INET, SOCK_DGRAM, 0);
+                if (sock >= 0) {
+                    for (ci = 0; ci < xdp_count; ci++) {
+                        struct ifreq ifr;
+                        memset(&ifr, 0, sizeof(ifr));
+                        memcpy(ifr.ifr_name, xdp_names[ci],
+                               IFNAMSIZ < 32 ? IFNAMSIZ : 32);
+                        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+                        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0 &&
+                            !(ifr.ifr_flags & IFF_PROMISC)) {
+                            ifr.ifr_flags |= IFF_UP | IFF_PROMISC;
+                            ioctl(sock, SIOCSIFFLAGS, &ifr);
+                        }
+                    }
+                    close(sock);
+                }
+            }
+        }
+    }
+
+    if (api->discovery)
+        jz_discovery_update_config(api->discovery, api->config);
+
     api_audit_log(api, "config_interfaces_update", NULL, NULL, "success");
     cJSON_Delete(body);
     handle_config_interfaces_get(c, hm, api);
