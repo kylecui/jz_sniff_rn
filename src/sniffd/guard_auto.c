@@ -571,6 +571,36 @@ int jz_guard_auto_tick(jz_guard_auto_t *ga)
 
     recount_dynamic_by_segment(ga);
 
+    /* Evict excess dynamic guards when max_ratio was lowered */
+    for (seg_i = 0; seg_i < ga->segment_count && seg_i < JZ_GUARD_AUTO_MAX_SEGMENTS; seg_i++) {
+        jz_guard_auto_segment_t *seg = &ga->segments[seg_i];
+        int seg_max = max_allowed_dynamic_segment(seg);
+        int j;
+
+        if (seg->current_dynamic <= seg_max)
+            continue;
+
+        jz_log_info("guard_auto seg ifindex=%u: trimming excess guards "
+                     "current=%d allowed=%d",
+                     seg->ifindex, seg->current_dynamic, seg_max);
+
+        for (j = JZ_GUARD_MGR_MAX_DYNAMIC - 1;
+             j >= 0 && seg->current_dynamic > seg_max; j--) {
+            const jz_guard_entry_user_t *entry;
+
+            entry = &ga->guard_mgr->dynamic_entries[j];
+            if (!entry->enabled || entry->guard_type != JZ_GUARD_DYNAMIC)
+                continue;
+            if (entry->ifindex != seg->ifindex)
+                continue;
+            if (!ip_in_segment(seg, entry->ip))
+                continue;
+
+            jz_guard_auto_evict_ip(ga, entry->ip, entry->ifindex);
+        }
+    }
+    recount_dynamic_by_segment(ga);
+
     total_deployed = 0;
     for (seg_i = 0; seg_i < ga->segment_count && seg_i < JZ_GUARD_AUTO_MAX_SEGMENTS; seg_i++) {
         jz_guard_auto_segment_t *seg;
@@ -922,6 +952,27 @@ void jz_guard_auto_update_config(jz_guard_auto_t *ga, const jz_config_t *cfg)
 
     refresh_segment_host_ips(ga);
     recount_dynamic_by_segment(ga);
+
+    /* If discovery first-pass already done, skip warmup gate immediately.
+     * parse_monitor_subnets() resets warmup_ready=false on all segments,
+     * which would block deployment until the next first_pass_done — but
+     * discovery already completed it before the config update. */
+    if (ga->discovery) {
+        for (i = 0; i < ga->segment_count && i < JZ_GUARD_AUTO_MAX_SEGMENTS; i++) {
+            const jz_discovery_iface_t *diface;
+
+            diface = jz_discovery_iface_by_ifindex(ga->discovery,
+                                                    ga->segments[i].ifindex);
+            if (diface && diface->first_pass_done) {
+                ga->segments[i].warmup_ready = true;
+                jz_log_info("guard_auto config update: seg ifindex=%u "
+                            "warmup already done, skipping gate",
+                            ga->segments[i].ifindex);
+            }
+        }
+    }
+
+    ga->last_eval_ns = 0;
 }
 
 void jz_guard_auto_set_discovery(jz_guard_auto_t *ga, const jz_discovery_t *disc)
