@@ -35,13 +35,15 @@ Options:
   --skip-frontend    Skip frontend installation
   --skip-deps        Skip dependency check
   --no-start         Install only, do not start services
-  --uninstall        Stop services and remove installed files
+  --uninstall        Stop services and remove installed files (preserves config/data)
+  --purge            Full removal: uninstall + delete config, data, BPF state
   -h, --help         Show this help
 
 Examples:
   sudo $0                     # Full install: build + deploy + start
   sudo $0 --skip-build        # Deploy pre-built binaries + start
-  sudo $0 --uninstall         # Stop and remove everything
+  sudo $0 --uninstall         # Remove binaries/services (keep config/data)
+  sudo $0 --purge             # Nuke everything for a clean slate
 EOF
     exit 0
 }
@@ -51,6 +53,7 @@ SKIP_FRONTEND=false
 SKIP_DEPS=false
 NO_START=false
 UNINSTALL=false
+PURGE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --skip-deps)     SKIP_DEPS=true; shift ;;
         --no-start)      NO_START=true; shift ;;
         --uninstall)     UNINSTALL=true; shift ;;
+        --purge)         PURGE=true; shift ;;
         -h|--help)       usage ;;
         *)               die "Unknown option: $1" ;;
     esac
@@ -77,12 +81,48 @@ do_uninstall() {
     info "Removing installed files..."
     make -C "$PROJECT_DIR" uninstall 2>/dev/null || true
     rm -rf "$WWWDIR"
-    ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
-    exit 0
 }
+
+do_purge() {
+    do_uninstall
+
+    info "Removing configuration and data..."
+    rm -rf "$SYSCONFDIR"
+    rm -rf "$DATADIR"
+    rm -rf "$RUNDIR"
+
+    info "Detaching XDP from all interfaces..."
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$'); do
+        ip link set dev "$iface" xdp off 2>/dev/null || true
+        ip link set dev "$iface" promisc off 2>/dev/null || true
+    done
+
+    info "Cleaning BPF state..."
+    rm -rf "$BPFFS/jz"
+    rm -f "$BPFFS"/jz_* "$BPFFS/rs_ctx_map" "$BPFFS/rs_progs" \
+          "$BPFFS/rs_prog_chain" "$BPFFS/rs_event_bus"
+    sed -i '/^bpf \/sys\/fs\/bpf/d' /etc/fstab 2>/dev/null || true
+
+    info "Removing netplan overrides..."
+    rm -f /etc/netplan/90-jz-monitors.yaml 2>/dev/null || true
+    netplan apply 2>/dev/null || true
+
+    info "Removing polkit rules..."
+    rm -f /etc/polkit-1/rules.d/50-jz-services.rules 2>/dev/null || true
+
+    ok "Purge complete — system returned to clean state"
+}
+
+if $PURGE; then
+    do_purge
+    exit 0
+fi
 
 if $UNINSTALL; then
     do_uninstall
+    ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
+    echo "  To remove everything: sudo $0 --purge"
+    exit 0
 fi
 
 check_deps() {

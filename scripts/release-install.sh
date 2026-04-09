@@ -52,14 +52,16 @@ Options:
   --no-start         Install only, do not start services
   --skip-deps        Skip runtime dependency check
   --skip-rswitch     Skip rSwitch installation (if already installed)
-  --uninstall        Stop services and remove installed files
+  --uninstall        Stop services and remove installed files (preserves config/data)
+  --purge            Full removal: uninstall + delete config, data, BPF state, rSwitch
   -h, --help         Show this help
 
 Examples:
   sudo $0                     # Install rSwitch + jz_sniff_rn, start services
   sudo $0 --skip-rswitch      # Skip rSwitch, install jz_sniff_rn only
   sudo $0 --no-start          # Install only
-  sudo $0 --uninstall         # Remove everything
+  sudo $0 --uninstall         # Remove binaries/services (keep config/data)
+  sudo $0 --purge             # Nuke everything for a clean slate
 EOF
     exit 0
 }
@@ -68,6 +70,7 @@ NO_START=false
 SKIP_DEPS=false
 SKIP_RSWITCH=false
 UNINSTALL=false
+PURGE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -75,6 +78,7 @@ while [[ $# -gt 0 ]]; do
         --skip-deps)      SKIP_DEPS=true; shift ;;
         --skip-rswitch)   SKIP_RSWITCH=true; shift ;;
         --uninstall)      UNINSTALL=true; shift ;;
+        --purge)          PURGE=true; shift ;;
         -h|--help)        usage ;;
         *)                die "Unknown option: $1" ;;
     esac
@@ -133,7 +137,7 @@ do_uninstall() {
     systemctl daemon-reload
 
     info "Removing binaries..."
-    for d in $DAEMONS; do rm -f "$SBINDIR/$d"; done
+    for d in $DAEMONS; do rm -f "$SBINDIR/$d" "$BINDIR/$d"; done
     for t in jzctl jzguard jzlog; do rm -f "$BINDIR/$t"; done
 
     info "Removing BPF modules, systemd units, frontend..."
@@ -142,14 +146,64 @@ do_uninstall() {
           "$UNITDIR/collectord.service" "$UNITDIR/uploadd.service" \
           "$UNITDIR/captd.service"
     rm -rf "$WWWDIR"
-
-    ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
-    echo "  Note: rSwitch was NOT removed. To remove: sudo /opt/rswitch/scripts/install.sh --uninstall"
-    exit 0
 }
+
+# ── Purge ─────────────────────────────────────────────────────
+do_purge() {
+    do_uninstall
+
+    info "Removing configuration and data..."
+    rm -rf "$SYSCONFDIR"
+    rm -rf "$DATADIR"
+    rm -rf "$RUNDIR"
+
+    info "Detaching XDP from all interfaces..."
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$'); do
+        ip link set dev "$iface" xdp off 2>/dev/null || true
+        ip link set dev "$iface" promisc off 2>/dev/null || true
+    done
+
+    info "Cleaning BPF state..."
+    rm -rf "$BPFFS/jz"
+    rm -f "$BPFFS"/jz_* "$BPFFS/rs_ctx_map" "$BPFFS/rs_progs" \
+          "$BPFFS/rs_prog_chain" "$BPFFS/rs_event_bus"
+    sed -i '/^bpf \/sys\/fs\/bpf/d' /etc/fstab 2>/dev/null || true
+
+    info "Removing netplan overrides..."
+    rm -f /etc/netplan/90-jz-monitors.yaml 2>/dev/null || true
+    netplan apply 2>/dev/null || true
+
+    info "Removing polkit rules..."
+    rm -f /etc/polkit-1/rules.d/50-jz-services.rules 2>/dev/null || true
+
+    info "Removing rSwitch..."
+    if [[ -x /opt/rswitch/uninstall.sh ]]; then
+        yes | /opt/rswitch/uninstall.sh 2>/dev/null || true
+    fi
+    systemctl stop rswitch rswitch-mgmtd rswitch-failsafe rswitch-watchdog 2>/dev/null || true
+    systemctl disable rswitch rswitch-mgmtd rswitch-failsafe rswitch-watchdog 2>/dev/null || true
+    rm -f /etc/systemd/system/rswitch*.service
+    rm -rf /opt/rswitch
+    systemctl daemon-reload
+
+    if [[ -f /etc/dhcpcd.conf ]]; then
+        sed -i '/^denyinterfaces/d' /etc/dhcpcd.conf 2>/dev/null || true
+        systemctl restart dhcpcd 2>/dev/null || true
+    fi
+
+    ok "Purge complete — system returned to clean state"
+}
+
+if $PURGE; then
+    do_purge
+    exit 0
+fi
 
 if $UNINSTALL; then
     do_uninstall
+    ok "Uninstall complete (config in $SYSCONFDIR and data in $DATADIR preserved)"
+    echo "  To remove everything including rSwitch: sudo $0 --purge"
+    exit 0
 fi
 
 # ── rSwitch installation ─────────────────────────────────────
