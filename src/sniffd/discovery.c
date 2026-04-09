@@ -1161,7 +1161,6 @@ void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
 {
     int new_max;
     int i;
-    bool was_aggressive;
 
     if (!disc || !cfg || !disc->initialized)
         return;
@@ -1172,7 +1171,6 @@ void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
     disc->max_devices = new_max;
     disc->arp_interval_sec = JZ_DISCOVERY_ARP_INTERVAL;
 
-    was_aggressive = disc->aggressive_mode;
     disc->aggressive_mode = cfg->discovery.aggressive_mode;
     disc->dhcp_probe_interval_sec = cfg->discovery.dhcp_probe_interval_sec;
     if (disc->dhcp_probe_interval_sec < 10)
@@ -1197,8 +1195,6 @@ void jz_discovery_update_config(jz_discovery_t *disc, const jz_config_t *cfg)
         }
     }
 
-    if (!disc->aggressive_mode && was_aggressive)
-        disc->last_dhcp_probe_ns = 0;
-
+    disc->last_dhcp_probe_ns = 0;
     disc->last_arp_scan_ns = 0;
 }

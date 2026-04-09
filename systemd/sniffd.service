@@ -7,7 +7,7 @@
 Description=jz_sniff_rn Sniff Daemon
 Documentation=file:/usr/share/doc/jz_sniff_rn/design.md
 After=network-online.target rswitch.service
-Wants=network-online.target rswitch.service
+Wants=network-online.target rswitch.service configd.service collectord.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

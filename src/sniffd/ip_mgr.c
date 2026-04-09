@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <ifaddrs.h>
 
+extern bool iface_has_external_dhcp(const char *ifname);
+
 /* ── Timing constants ───────────────────────────────────────────── */
 
 #define NS_PER_SEC              1000000000ULL
@@ -926,6 +928,8 @@ static void setup_iface_from_config(jz_ip_iface_t *iface,
     if (strcmp(cfg_iface->address, "dhcp") == 0) {
         iface->mode   = JZ_IP_MODE_DHCP;
         iface->active = true;
+        if (iface_has_external_dhcp(cfg_iface->name))
+            iface->os_ip_adopted = true;
         return;
     }
 
@@ -1016,6 +1020,51 @@ static bool check_existing_ip(jz_ip_iface_t *iface, uint32_t subnet, uint32_t ma
     return false;
 }
 
+/* Adopt the first IPv4 address already present on the interface (subnet-
+ * agnostic).  Used for DHCP interfaces when the config subnet is not yet
+ * known — avoids running a second DHCP client against an OS-managed IP. */
+static bool adopt_any_existing_ip(jz_ip_iface_t *iface)
+{
+    struct ifaddrs *ifap, *ifa;
+    if (getifaddrs(&ifap) < 0)
+        return false;
+
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET)
+            continue;
+        if (strcmp(ifa->ifa_name, iface->name) != 0)
+            continue;
+
+        uint32_t addr = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
+        if (addr == htonl(INADDR_LOOPBACK) || addr == 0)
+            continue;
+
+        uint8_t prefix = 24;
+        uint32_t mask = htonl(0xFFFFFF00U);
+        if (ifa->ifa_netmask && ifa->ifa_netmask->sa_family == AF_INET) {
+            mask = ((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr.s_addr;
+            prefix = 0;
+            uint32_t m_host = ntohl(mask);
+            while (m_host & 0x80000000) { prefix++; m_host <<= 1; }
+        }
+
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+        jz_log_info("ip_mgr: %s already has %s/%d (OS-managed), adopting",
+                    iface->name, ip_str, prefix);
+
+        iface->ip         = addr;
+        iface->prefix_len = prefix;
+        iface->mask       = mask;
+        iface->ip_applied = true;
+        iface->os_ip_adopted = true;
+        freeifaddrs(ifap);
+        return true;
+    }
+    freeifaddrs(ifap);
+    return false;
+}
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 int jz_ip_mgr_init(jz_ip_mgr_t *mgr, const jz_config_t *cfg)
@@ -1042,6 +1091,9 @@ int jz_ip_mgr_init(jz_ip_mgr_t *mgr, const jz_config_t *cfg)
             uint32_t subnet_net, subnet_mask;
             if (parse_subnet(ci->subnet, &subnet_net, &subnet_mask) &&
                 check_existing_ip(iface, subnet_net, subnet_mask)) {
+                mgr->new_ip_applied = true;
+            } else if (iface->mode == JZ_IP_MODE_DHCP &&
+                       adopt_any_existing_ip(iface)) {
                 mgr->new_ip_applied = true;
             } else if (iface->mode == JZ_IP_MODE_STATIC) {
                 if (apply_ip(mgr->nl_sock, iface,
@@ -1081,10 +1133,13 @@ void jz_ip_mgr_tick(jz_ip_mgr_t *mgr)
         if (!iface->active)
             continue;
 
-        if (iface->mode == JZ_IP_MODE_DHCP && !iface->os_ip_adopted) {
+        if (iface->mode == JZ_IP_MODE_DHCP && iface->os_ip_adopted &&
+            !iface->ip_applied) {
+            if (adopt_any_existing_ip(iface))
+                mgr->new_ip_applied = true;
+        } else if (iface->mode == JZ_IP_MODE_DHCP && !iface->os_ip_adopted) {
             dhcp_tick(mgr, iface);
         }
-        /* Static IPs are applied once in init/update_config; no tick needed */
     }
 }
 
@@ -1119,6 +1174,9 @@ void jz_ip_mgr_update_config(jz_ip_mgr_t *mgr, const jz_config_t *cfg)
             uint32_t subnet_net, subnet_mask;
             if (parse_subnet(ci->subnet, &subnet_net, &subnet_mask) &&
                 check_existing_ip(iface, subnet_net, subnet_mask)) {
+                mgr->new_ip_applied = true;
+            } else if (iface->mode == JZ_IP_MODE_DHCP &&
+                       adopt_any_existing_ip(iface)) {
                 mgr->new_ip_applied = true;
             } else if (iface->mode == JZ_IP_MODE_STATIC) {
                 if (apply_ip(mgr->nl_sock, iface,

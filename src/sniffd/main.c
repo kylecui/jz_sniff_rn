@@ -339,7 +339,79 @@ static int discover_business_ifaces(const jz_config_t *cfg, int *ifindexes,
  * Without IFF_PROMISC the NIC hardware MAC filter drops unicast frames
  * destined to fake guard MACs (e.g. aa:bb:cc:*) before XDP sees them.
  * Also generates /etc/netplan/90-jz-monitors.yaml for reboot persistence.
+ * Interfaces that already have DHCP configured in another netplan file
+ * (e.g. 50-cloud-init.yaml) are skipped to avoid duplicate DHCP leases.
  */
+
+/* Check whether any existing netplan file (other than ours) already
+ * configures DHCP for the given interface name.  We do a simple line-
+ * based scan — good enough for machine-generated netplan yaml. */
+bool iface_has_external_dhcp(const char *ifname)
+{
+    DIR *d;
+    struct dirent *ent;
+    const char *np_dir = "/etc/netplan";
+    const char *our_file = "90-jz-monitors.yaml";
+
+    d = opendir(np_dir);
+    if (!d)
+        return false;
+
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.')
+            continue;
+        if (strcmp(ent->d_name, our_file) == 0)
+            continue;
+        const char *ext = strrchr(ent->d_name, '.');
+        if (!ext || (strcmp(ext, ".yaml") != 0 && strcmp(ext, ".yml") != 0))
+            continue;
+
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", np_dir, ent->d_name);
+
+        FILE *f = fopen(path, "r");
+        if (!f)
+            continue;
+
+        bool in_iface = false;
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            size_t len = strlen(line);
+            while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'
+                               || line[len - 1] == ' '))
+                line[--len] = '\0';
+
+            if (!in_iface) {
+                char pat[64];
+                snprintf(pat, sizeof(pat), "%s:", ifname);
+                if (strstr(line, pat))
+                    in_iface = true;
+                continue;
+            }
+
+            /* New top-level key = left the interface block */
+            if (len > 0 && line[0] != ' ' && line[0] != '#') {
+                in_iface = false;
+                continue;
+            }
+
+            if (strstr(line, "dhcp4:") && strstr(line, "true")) {
+                fclose(f);
+                closedir(d);
+                return true;
+            }
+
+            if (strstr(line, "dhcp4:") && strstr(line, "false")) {
+                in_iface = false;
+                continue;
+            }
+        }
+        fclose(f);
+    }
+    closedir(d);
+    return false;
+}
+
 static void prepare_monitor_interfaces(const jz_config_t *cfg,
                                        const char names[][32], int count)
 {
@@ -409,6 +481,13 @@ static void prepare_monitor_interfaces(const jz_config_t *cfg,
 
             if (strcmp(iface->role, "monitor") != 0)
                 continue;
+
+            if (strcmp(iface->address, "dhcp") == 0 &&
+                iface_has_external_dhcp(iface->name)) {
+                jz_log_info("prepare_monitor: %s already has DHCP in system "
+                            "netplan, skipping", iface->name);
+                continue;
+            }
 
             fprintf(fp, "    %s:\n", iface->name);
 
