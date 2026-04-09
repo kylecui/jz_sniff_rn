@@ -22,6 +22,7 @@
 #include "bpf_loader.h"
 #include "discovery.h"
 #include "guard_auto.h"
+#include "ip_mgr.h"
 #include "guard_mgr.h"
 #include "policy_mgr.h"
 #include "arp_spoof.h"
@@ -358,6 +359,12 @@ done:
     if (db)
         sqlite3_close(db);
     return out;
+}
+
+static int api_query_db_count(jz_api_t *api, const char *sql)
+{
+    int r = api_query_db(api, sql, NULL);
+    return r < 0 ? 0 : r;
 }
 
 static cJSON *api_guard_entry_json(uint32_t ip, const uint8_t mac[6], uint8_t guard_type,
@@ -2969,9 +2976,9 @@ static void handle_stats(struct mg_connection *c, struct mg_http_message *hm, jz
     cJSON_AddNumberToObject(root, "guards_dynamic", dynamic_count);
     cJSON_AddNumberToObject(root, "whitelist_total", whitelist_count);
 
-    attacks_total = (int)api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11)", NULL);
-    attacks_today = (int)api_query_db(api,
-        "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11) AND timestamp >= strftime('%s','now','start of day')", NULL);
+    attacks_total = api_query_db_count(api, "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11)");
+    attacks_today = api_query_db_count(api,
+        "SELECT COUNT(*) FROM attack_log WHERE event_type IN (1,2,10,11) AND timestamp >= strftime('%s','now','start of day')");
     cJSON_AddNumberToObject(root, "attacks_total", attacks_total);
     cJSON_AddNumberToObject(root, "attacks_today", attacks_today);
 
@@ -3016,9 +3023,9 @@ static void handle_stats_threats(struct mg_connection *c, struct mg_http_message
     (void) hm;
     root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "threat_events",
-                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5", NULL));
+                            api_query_db_count(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5"));
     cJSON_AddNumberToObject(root, "high_or_above",
-                            api_query_db(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5 AND threat_level >= 3", NULL));
+                            api_query_db_count(api, "SELECT COUNT(*) FROM attack_log WHERE event_type = 5 AND threat_level >= 3"));
     api_json_reply(c, 200, root);
 }
 
@@ -3027,11 +3034,11 @@ static void handle_stats_background(struct mg_connection *c, struct mg_http_mess
     cJSON *root;
     (void) hm;
     root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "records", api_query_db(api, "SELECT COUNT(*) FROM bg_capture", NULL));
+    cJSON_AddNumberToObject(root, "records", api_query_db_count(api, "SELECT COUNT(*) FROM bg_capture"));
     cJSON_AddNumberToObject(root, "total_packets",
-                            api_query_db(api, "SELECT COALESCE(SUM(packet_count),0) FROM bg_capture", NULL));
+                            api_query_db_count(api, "SELECT COALESCE(SUM(packet_count),0) FROM bg_capture"));
     cJSON_AddNumberToObject(root, "total_bytes",
-                            api_query_db(api, "SELECT COALESCE(SUM(byte_count),0) FROM bg_capture", NULL));
+                            api_query_db_count(api, "SELECT COALESCE(SUM(byte_count),0) FROM bg_capture"));
     api_json_reply(c, 200, root);
 }
 
@@ -3639,11 +3646,50 @@ static void handle_guards_auto_config_put(struct mg_connection *c, struct mg_htt
     cJSON_Delete(body);
 }
 
+static bool is_rswitch_internal_iface(const char *name);
+
+static void config_iface_to_json(cJSON *arr, const jz_config_interface_t *iface)
+{
+    cJSON *obj = cJSON_CreateObject();
+    int vi;
+
+    cJSON_AddStringToObject(obj, "name", iface->name);
+    cJSON_AddStringToObject(obj, "role", iface->role);
+    cJSON_AddStringToObject(obj, "subnet", iface->subnet);
+    cJSON_AddStringToObject(obj, "address", iface->address);
+    cJSON_AddStringToObject(obj, "gateway", iface->gateway);
+    cJSON_AddStringToObject(obj, "dns1", iface->dns1);
+    cJSON_AddStringToObject(obj, "dns2", iface->dns2);
+
+    {
+        cJSON *varr = cJSON_AddArrayToObject(obj, "vlans");
+        for (vi = 0; vi < iface->vlan_count && vi < JZ_CONFIG_MAX_VLANS; vi++) {
+            cJSON *vo = cJSON_CreateObject();
+            cJSON_AddNumberToObject(vo, "id", iface->vlans[vi].id);
+            cJSON_AddStringToObject(vo, "name", iface->vlans[vi].name);
+            cJSON_AddStringToObject(vo, "subnet", iface->vlans[vi].subnet);
+            cJSON_AddItemToArray(varr, vo);
+        }
+    }
+
+    {
+        cJSON *dyn = cJSON_AddObjectToObject(obj, "dynamic");
+        cJSON_AddNumberToObject(dyn, "auto_discover", iface->guard_auto_discover);
+        cJSON_AddNumberToObject(dyn, "max_entries", iface->guard_max_entries);
+        cJSON_AddNumberToObject(dyn, "ttl_hours", iface->guard_ttl_hours);
+        cJSON_AddNumberToObject(dyn, "max_ratio", iface->guard_max_ratio);
+        cJSON_AddNumberToObject(dyn, "warmup_mode", iface->guard_warmup_mode);
+    }
+
+    cJSON_AddItemToArray(arr, obj);
+}
+
 static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http_message *hm, jz_api_t *api)
 {
     cJSON *root;
     cJSON *arr;
     int i;
+    struct ifaddrs *ifap = NULL, *ifa;
 
     (void) hm;
     if (!api || !api->config) {
@@ -3654,40 +3700,43 @@ static void handle_config_interfaces_get(struct mg_connection *c, struct mg_http
     root = cJSON_CreateObject();
     arr = cJSON_AddArrayToObject(root, "interfaces");
 
+    /* 1. Emit all configured interfaces. */
     for (i = 0; i < api->config->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
-        const jz_config_interface_t *iface = &api->config->system.interfaces[i];
-        cJSON *obj = cJSON_CreateObject();
+        config_iface_to_json(arr, &api->config->system.interfaces[i]);
+    }
 
-        cJSON_AddStringToObject(obj, "name", iface->name);
-        cJSON_AddStringToObject(obj, "role", iface->role);
-        cJSON_AddStringToObject(obj, "subnet", iface->subnet);
-        cJSON_AddStringToObject(obj, "address", iface->address);
-        cJSON_AddStringToObject(obj, "gateway", iface->gateway);
-        cJSON_AddStringToObject(obj, "dns1", iface->dns1);
-        cJSON_AddStringToObject(obj, "dns2", iface->dns2);
+    /* 2. Append system NICs not yet in the config with default values. */
+    if (getifaddrs(&ifap) == 0) {
+        for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+            int already = 0;
 
-        {
-            int vi;
-            cJSON *varr = cJSON_AddArrayToObject(obj, "vlans");
-            for (vi = 0; vi < iface->vlan_count && vi < JZ_CONFIG_MAX_VLANS; vi++) {
-                cJSON *vo = cJSON_CreateObject();
-                cJSON_AddNumberToObject(vo, "id", iface->vlans[vi].id);
-                cJSON_AddStringToObject(vo, "name", iface->vlans[vi].name);
-                cJSON_AddStringToObject(vo, "subnet", iface->vlans[vi].subnet);
-                cJSON_AddItemToArray(varr, vo);
+            if (!ifa->ifa_addr) continue;
+            if (ifa->ifa_addr->sa_family != AF_PACKET) continue;
+            if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+            if (is_rswitch_internal_iface(ifa->ifa_name)) continue;
+
+            for (i = 0; i < api->config->system.interface_count && i < JZ_CONFIG_MAX_INTERFACES; i++) {
+                if (strcmp(api->config->system.interfaces[i].name, ifa->ifa_name) == 0) {
+                    already = 1;
+                    break;
+                }
+            }
+            if (already) continue;
+
+            {
+                jz_config_interface_t def;
+                memset(&def, 0, sizeof(def));
+                snprintf(def.name, sizeof(def.name), "%s", ifa->ifa_name);
+                snprintf(def.role, sizeof(def.role), "monitor");
+                def.guard_auto_discover = -1;
+                def.guard_max_entries   = -1;
+                def.guard_ttl_hours     = -1;
+                def.guard_max_ratio     = -1;
+                def.guard_warmup_mode   = -1;
+                config_iface_to_json(arr, &def);
             }
         }
-
-        {
-            cJSON *dyn = cJSON_AddObjectToObject(obj, "dynamic");
-            cJSON_AddNumberToObject(dyn, "auto_discover", iface->guard_auto_discover);
-            cJSON_AddNumberToObject(dyn, "max_entries", iface->guard_max_entries);
-            cJSON_AddNumberToObject(dyn, "ttl_hours", iface->guard_ttl_hours);
-            cJSON_AddNumberToObject(dyn, "max_ratio", iface->guard_max_ratio);
-            cJSON_AddNumberToObject(dyn, "warmup_mode", iface->guard_warmup_mode);
-        }
-
-        cJSON_AddItemToArray(arr, obj);
+        freeifaddrs(ifap);
     }
 
     cJSON_AddStringToObject(root, "mode", api->config->system.mode);
@@ -3747,11 +3796,14 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
             return;
         }
         if (strcmp(role->valuestring, "mirror") != 0) {
-            /* manage role accepts "dhcp" as a special subnet value */
-            bool manage_dhcp = strcmp(role->valuestring, "manage") == 0 &&
+            bool is_manage = strcmp(role->valuestring, "manage") == 0;
+            bool manage_dhcp = is_manage &&
                                subnet && cJSON_IsString(subnet) &&
                                strcmp(subnet->valuestring, "dhcp") == 0;
-            if (!manage_dhcp &&
+            bool monitor_empty = !is_manage &&
+                                 (!subnet || !cJSON_IsString(subnet) ||
+                                  subnet->valuestring[0] == '\0');
+            if (!manage_dhcp && !monitor_empty &&
                 (!subnet || !cJSON_IsString(subnet) || !strchr(subnet->valuestring, '/'))) {
                 cJSON_Delete(body);
                 api_error_reply(c, 400, "monitor/manage role requires CIDR subnet (or 'dhcp' for manage)");
@@ -3876,6 +3928,9 @@ static void handle_config_interfaces_put(struct mg_connection *c, struct mg_http
 
     if (api->guard_auto)
         jz_guard_auto_update_config(api->guard_auto, api->config);
+
+    if (api->ip_mgr)
+        jz_ip_mgr_update_config(api->ip_mgr, api->config);
 
     api_audit_log(api, "config_interfaces_update", NULL, NULL, "success");
     cJSON_Delete(body);
@@ -5327,6 +5382,7 @@ int jz_api_init(jz_api_t *api, int port,
     jz_db_t *db;
     jz_arp_spoof_t *arp_spoof;
     jz_capture_mgr_t *capture_mgr;
+    jz_ip_mgr_t *ip_mgr;
     char *cert_pem = NULL;
     char *key_pem = NULL;
     char *ca_pem = NULL;
@@ -5346,6 +5402,7 @@ int jz_api_init(jz_api_t *api, int port,
     db = api->db;
     arp_spoof = api->arp_spoof;
     capture_mgr = api->capture_mgr;
+    ip_mgr = api->ip_mgr;
 
     memset(api, 0, sizeof(*api));
     api->loader = loader;
@@ -5357,6 +5414,7 @@ int jz_api_init(jz_api_t *api, int port,
     api->db = db;
     api->arp_spoof = arp_spoof;
     api->capture_mgr = capture_mgr;
+    api->ip_mgr = ip_mgr;
 
     api->port = port > 0 ? port : 8443;
     api->enabled = false;

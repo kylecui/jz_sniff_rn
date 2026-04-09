@@ -43,6 +43,10 @@ typedef struct jz_policy_mgr jz_policy_mgr_t;
 typedef struct jz_arp_spoof jz_arp_spoof_t;
 #endif
 
+#ifndef JZ_IP_MGR_H
+typedef struct jz_ip_mgr jz_ip_mgr_t;
+#endif
+
 #ifndef JZ_CAPTURE_MGR_H
 typedef struct jz_capture_mgr jz_capture_mgr_t;
 #endif
@@ -76,6 +80,7 @@ typedef struct jz_api {
     jz_db_t *db;
     jz_arp_spoof_t *arp_spoof;
     jz_capture_mgr_t *capture_mgr;
+    jz_ip_mgr_t *ip_mgr;
 } jz_api_t;
 
 int jz_api_init(jz_api_t *api, int port,

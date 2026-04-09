@@ -1179,8 +1179,9 @@ int main(int argc, char *argv[])
         g_ctx.api.policy_mgr = &g_ctx.policy_mgr;
         g_ctx.api.config = &g_ctx.config;
         g_ctx.api.db = &g_ctx.db;
-        g_ctx.api.arp_spoof = &g_ctx.arp_spoof;
-        g_ctx.api.capture_mgr = &g_ctx.capture_mgr;
+    g_ctx.api.arp_spoof = &g_ctx.arp_spoof;
+    g_ctx.api.capture_mgr = &g_ctx.capture_mgr;
+    g_ctx.api.ip_mgr = &g_ctx.ip_mgr;
         /* Set DB path from config so API can query logs readonly */
         if (g_ctx.config.collector.db_path[0])
             (void) snprintf(g_ctx.db.path, sizeof(g_ctx.db.path),
@@ -1242,6 +1243,21 @@ int main(int argc, char *argv[])
                     if (ent->d_name[0] == '.')
                         continue;
                     snprintf(path, sizeof(path), "/var/run/jz/%s", ent->d_name);
+                    if (chown(path, u, g) < 0) { }
+                }
+                closedir(d);
+            }
+
+            /* Chown data dir so jz user can read the SQLite DB */
+            if (chown("/var/lib/jz", u, g) < 0) { }
+            d = opendir("/var/lib/jz");
+            if (d) {
+                struct dirent *ent;
+                char path[512];
+                while ((ent = readdir(d)) != NULL) {
+                    if (ent->d_name[0] == '.')
+                        continue;
+                    snprintf(path, sizeof(path), "/var/lib/jz/%s", ent->d_name);
                     if (chown(path, u, g) < 0) { }
                 }
                 closedir(d);

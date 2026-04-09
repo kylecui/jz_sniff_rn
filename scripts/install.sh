@@ -190,6 +190,9 @@ setup_runtime_dirs() {
     install -d -m 0750 "$DATADIR"
     install -d -m 0750 "$RUNDIR"
     install -d -m 0750 "$SYSCONFDIR"
+    if id -u jz >/dev/null 2>&1; then
+        chown -R jz:jz "$DATADIR"
+    fi
     ok "Runtime directories ready"
 }
 
@@ -201,6 +204,15 @@ setup_services() {
         systemctl enable "$d" 2>/dev/null
     done
     ok "Services enabled (sniffd, configd, collectord, uploadd)"
+}
+
+cleanup_stale_bpf_maps() {
+    info "Cleaning stale BPF maps..."
+    rm -rf "$BPFFS/jz"
+    rm -f "$BPFFS"/jz_* "$BPFFS/rs_ctx_map" "$BPFFS/rs_progs" \
+          "$BPFFS/rs_prog_chain" "$BPFFS/rs_event_bus"
+    mkdir -p "$BPFFS/jz"
+    ok "Stale BPF maps cleaned"
 }
 
 start_services() {
@@ -293,6 +305,7 @@ fi
 setup_services
 
 if ! $NO_START; then
+    cleanup_stale_bpf_maps
     start_services
     verify
 else

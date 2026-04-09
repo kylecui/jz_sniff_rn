@@ -192,6 +192,32 @@ static bool get_interface_ip(const char *ifname, uint32_t *ip)
     return true;
 }
 
+static bool get_interface_netmask(const char *ifname, uint32_t *mask)
+{
+    struct ifreq ifr;
+    struct sockaddr_in *sin;
+    int sock;
+
+    if (!ifname || !mask)
+        return false;
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+        return false;
+
+    memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
+    if (ioctl(sock, SIOCGIFNETMASK, &ifr) < 0) {
+        close(sock);
+        return false;
+    }
+
+    sin = (struct sockaddr_in *)&ifr.ifr_netmask;
+    *mask = sin->sin_addr.s_addr;
+    close(sock);
+    return true;
+}
+
 static int find_monitor_interfaces(jz_discovery_t *disc, const jz_config_t *cfg)
 {
     int i;
@@ -236,9 +262,19 @@ static int find_monitor_interfaces(jz_discovery_t *disc, const jz_config_t *cfg)
             continue;
         }
         if (!parse_subnet_cidr(iface->subnet, &dst->scan_subnet, &dst->scan_mask)) {
-            jz_log_warn("Discovery skip monitor iface %s: invalid subnet CIDR %s",
-                        iface->name, iface->subnet);
-            continue;
+            /* Config subnet missing/invalid (e.g. DHCP interface with empty
+             * subnet).  Fall back to the live kernel netmask so that
+             * discovery still works once the interface has an IP. */
+            uint32_t live_mask;
+            if (!get_interface_netmask(iface->name, &live_mask) || live_mask == 0) {
+                jz_log_warn("Discovery skip monitor iface %s: no subnet in config"
+                            " and cannot read live netmask", iface->name);
+                continue;
+            }
+            dst->scan_mask = live_mask;
+            dst->scan_subnet = dst->src_ip & live_mask;
+            jz_log_info("Discovery iface %s: using live netmask (no config subnet)",
+                        iface->name);
         }
 
         set_scan_cursor_start(dst);

@@ -201,34 +201,59 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
      * object name.  If that path doesn't match what bpf_map__pin()
      * receives, the pin call fails with -EINVAL.  Override every map's
      * pin_path to our canonical directory before load so that post-load
-     * bpf_map__pin(map, NULL) always succeeds. */
+     * bpf_map__pin(map, NULL) always succeeds.
+     *
+     * We handle two families of maps:
+     *   jz_*  — our own maps, pinned under /sys/fs/bpf/jz/<name>
+     *   rs_*  — rSwitch shared maps, pinned flat at /sys/fs/bpf/<name>
+     *
+     * For rs_* maps, a stale pin from a different rSwitch version may
+     * have a mismatched value_size (e.g. rs_ctx_map).  If reuse_fd
+     * fails we unlink the stale pin and let libbpf create a fresh one. */
     struct bpf_map *map;
     bpf_object__for_each_map(map, obj) {
         const char *map_name = bpf_map__name(map);
-        if (!map_name || strncmp(map_name, "jz_", 3) != 0)
+        if (!map_name)
             continue;
-        /* Skip internal ELF section maps (.rodata, .bss, .data) that
-         * libbpf manages internally — setting pin_path on these breaks
-         * the load when the section content changes between builds. */
+        /* Skip internal ELF section maps (.rodata, .bss, .data) */
         if (strchr(map_name, '.'))
             continue;
 
+        int is_jz = (strncmp(map_name, "jz_", 3) == 0);
+        int is_rs = (strncmp(map_name, "rs_", 3) == 0);
+        if (!is_jz && !is_rs)
+            continue;
+
+        /* jz_* maps pin under our subdirectory; rs_* maps pin flat */
         char pin[512];
-        snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+        if (is_jz)
+            snprintf(pin, sizeof(pin), "%s/%s", loader->pin_path, map_name);
+        else
+            snprintf(pin, sizeof(pin), "/sys/fs/bpf/%s", map_name);
+
         bpf_map__set_pin_path(map, pin);
 
         int existing_fd = bpf_obj_get(pin);
         if (existing_fd >= 0) {
             if (bpf_map__reuse_fd(map, existing_fd) < 0) {
-                jz_log_warn("Cannot reuse pinned map %s: %s",
+                jz_log_warn("Cannot reuse pinned map %s: %s — removing stale pin",
                              map_name, strerror(errno));
+                close(existing_fd);
+                if (unlink(pin) < 0)
+                    jz_log_warn("Failed to unlink stale pin %s: %s",
+                                 pin, strerror(errno));
+            } else {
+                close(existing_fd);
             }
-            close(existing_fd);
         }
 
-        char flat[512];
-        snprintf(flat, sizeof(flat), "/sys/fs/bpf/%s", map_name);
-        unlink(flat);
+        /* Clean any flat-namespace duplicate for jz_* maps (libbpf's
+         * LIBBPF_PIN_BY_NAME may have left one at /sys/fs/bpf/<name>) */
+        if (is_jz) {
+            char flat[512];
+            snprintf(flat, sizeof(flat), "/sys/fs/bpf/%s", map_name);
+            unlink(flat);
+        }
     }
 
     /* Load (verify + load into kernel) */
@@ -257,7 +282,10 @@ int jz_bpf_loader_load(jz_bpf_loader_t *loader, jz_mod_id_t mod_id)
     /* Pin maps that aren't already pinned (reused maps are already on disk) */
     bpf_object__for_each_map(map, obj) {
         const char *map_name = bpf_map__name(map);
-        if (!map_name || strncmp(map_name, "jz_", 3) != 0)
+        if (!map_name)
+            continue;
+        if (strncmp(map_name, "jz_", 3) != 0 &&
+            strncmp(map_name, "rs_", 3) != 0)
             continue;
 
         const char *cur_pin = bpf_map__pin_path(map);

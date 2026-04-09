@@ -13,6 +13,7 @@ StartLimitBurst=5
 
 [Service]
 Type=forking
+ExecStartPre=/bin/sh -c 'rm -rf /sys/fs/bpf/jz && rm -f /sys/fs/bpf/jz_* /sys/fs/bpf/rs_ctx_map /sys/fs/bpf/rs_progs /sys/fs/bpf/rs_prog_chain /sys/fs/bpf/rs_event_bus && mkdir -p /sys/fs/bpf/jz'
 ExecStart=/usr/local/sbin/sniffd --daemon --config /etc/jz/base.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/jz/sniffd.pid
@@ -27,7 +28,7 @@ LimitNOFILE=65536
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/jz /run/jz /sys/fs/bpf/jz /sys/fs/bpf
+ReadWritePaths=/var/lib/jz /run/jz /sys/fs/bpf/jz /sys/fs/bpf /etc/netplan
 ProtectHome=yes
 PrivateTmp=yes
 

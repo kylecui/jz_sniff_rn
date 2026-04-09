@@ -119,12 +119,12 @@ onMounted(fetchData)
           </el-col>
           <el-col :span="6">
             <el-card shadow="hover" class="stat-card" @click="router.push('/logs')">
-              <el-statistic :title="t('dashboard.attacksToday')" :value="stats.attacks_today ?? 0" />
+              <el-statistic :title="t('dashboard.attacksToday')" :value="Math.max(stats.attacks_today ?? 0, 0)" />
             </el-card>
           </el-col>
           <el-col :span="6">
             <el-card shadow="hover" class="stat-card" @click="router.push('/logs')">
-              <el-statistic :title="t('dashboard.threatsDetected')" :value="stats.attacks_total ?? 0" />
+              <el-statistic :title="t('dashboard.threatsDetected')" :value="Math.max(stats.attacks_total ?? 0, 0)" />
             </el-card>
           </el-col>
         </el-row>

@@ -439,6 +439,9 @@ setup_runtime_dirs() {
     install -d -m 0750 "$DATADIR"
     install -d -m 0750 "$DATADIR/captures"
     install -d -m 0750 "$RUNDIR"
+    if id -u jz >/dev/null 2>&1; then
+        chown -R jz:jz "$DATADIR"
+    fi
     ok "Runtime directories ready"
 }
 
@@ -450,15 +453,21 @@ setup_services() {
     ok "Services enabled"
 }
 
+cleanup_stale_bpf_maps() {
+    info "Cleaning stale BPF maps..."
+    rm -rf "$BPFFS/jz"
+    rm -f "$BPFFS"/jz_* "$BPFFS/rs_ctx_map" "$BPFFS/rs_progs" \
+          "$BPFFS/rs_prog_chain" "$BPFFS/rs_event_bus"
+    mkdir -p "$BPFFS/jz"
+    ok "Stale BPF maps cleaned"
+}
+
 start_services() {
     info "Starting services..."
 
-    # configd first (config manager), then sniffd (main), then the rest
-    systemctl restart configd 2>/dev/null || true
-    sleep 1
     systemctl restart sniffd
     sleep 2
-    for d in collectord uploadd captd; do
+    for d in configd collectord uploadd captd; do
         systemctl restart "$d" 2>/dev/null || true
     done
     sleep 1
@@ -541,6 +550,7 @@ setup_tls
 setup_services
 
 if ! $NO_START; then
+    cleanup_stale_bpf_maps
     start_services
     verify
 else
