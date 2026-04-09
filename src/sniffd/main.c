@@ -482,8 +482,7 @@ static void prepare_monitor_interfaces(const jz_config_t *cfg,
             if (strcmp(iface->role, "monitor") != 0)
                 continue;
 
-            if (strcmp(iface->address, "dhcp") == 0 &&
-                iface_has_external_dhcp(iface->name)) {
+            if (iface_has_external_dhcp(iface->name)) {
                 jz_log_info("prepare_monitor: %s already has DHCP in system "
                             "netplan, skipping", iface->name);
                 continue;
